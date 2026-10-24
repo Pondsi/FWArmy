@@ -1,0 +1,8 @@
+data/
+dist/
+.build/
+*.log
+sea-prep.blob
+
+# 测试临时文件
+.tmp-*

@@ -1,0 +1,855 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FWArmy · WArmy专属服务器</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{--bg:#0f1419;--panel:#171d24;--panel2:#1c242d;--line:#2a3441;--text:#e6edf3;--muted:#8b98a5;--accent:#4cc38a;--accent2:#58a6ff;--danger:#f85149;--warn:#d29922;--radius:10px}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif}
+body{padding:20px 20px 48px}
+.wrap{max-width:1240px;margin:0 auto}
+header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px}
+.brand{display:flex;align-items:center;gap:10px}
+.brand img{width:40px;height:40px;object-fit:contain}
+.brand b{font-size:24px;letter-spacing:.5px}
+.brand span{color:var(--muted);font-size:13px}
+.pills{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.pill{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:4px 10px;font-size:12px;color:var(--muted)}
+.pill.ok{color:var(--accent);border-color:#24553c}
+.pill.warn{color:var(--warn);border-color:#5a4414}
+.pill.bad{color:var(--danger);border-color:#5c2626}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:16px 0 18px;overflow:auto}
+.tab{background:none;border:0;color:var(--muted);padding:10px 14px;cursor:pointer;font:inherit;border-bottom:2px solid transparent;white-space:nowrap}
+.tab.active{color:var(--text);border-bottom-color:var(--accent)}
+section{display:none}section.active{display:block}
+.banner{border:1px solid #5a4414;background:#221c0d;border-radius:var(--radius);padding:14px 16px;margin-bottom:16px}
+.banner h3{margin:0 0 6px;font-size:15px;color:var(--warn)}
+.banner p{margin:0 0 10px;color:#d8c48a;font-size:13px}
+.tokenbox{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+[hidden]{display:none!important}
+.tokenbox code{background:#0b0f13;border:1px solid var(--line);padding:8px 10px;border-radius:8px;max-width:100%;overflow:auto;font-size:12px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px}
+.card .k{color:var(--muted);font-size:12px;margin-bottom:6px}
+.card .v{font-size:20px;font-weight:650;letter-spacing:.2px}
+.card .s{color:var(--muted);font-size:11px;margin-top:4px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-bottom:16px}
+.panel h2{font-size:15px;margin:0 0 12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.panel h2 small{color:var(--muted);font-weight:400;font-size:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+label.f{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--muted)}
+input,select{background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:8px 10px;font:inherit;min-width:0}
+input:focus,select:focus{outline:2px solid #1f6feb55;border-color:#1f6feb}
+input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent)}
+button{background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:8px 12px;font:inherit;cursor:pointer;white-space:nowrap}
+button:hover{border-color:#3d4b5c;background:#222c37}
+button.primary{background:#1f6feb;border-color:#1f6feb;color:#fff}
+button.good{background:#1a7f4b;border-color:#1a7f4b;color:#fff}
+button.danger{background:#8e1f1f;border-color:#8e1f1f;color:#fff}
+button.ghost{background:transparent}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.sm{padding:5px 9px;font-size:12px}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.tablewrap{overflow:auto;border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;min-width:980px}
+th,td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;font-size:12.5px}
+th{color:var(--muted);font-weight:600;background:#131920;position:sticky;top:0;white-space:nowrap}
+tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.cell-main{font-variant-numeric:tabular-nums}
+.cell-sub{color:var(--muted);font-size:11px;margin-top:2px}
+.tag{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:2px 8px;font-size:11px;color:var(--muted)}
+.tag.on{color:var(--accent);border-color:#24553c}
+.tag.off{color:var(--danger);border-color:#5c2626}
+.tag.inherit{color:var(--accent2);border-color:#1f4a7a}
+.muted{color:var(--muted)}
+.right{text-align:right}
+.empty{padding:22px;text-align:center;color:var(--muted)}
+pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;max-height:60vh;font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;color:#b9c7d4;white-space:pre}
+.foot{color:var(--muted);font-size:12px;margin-top:14px;line-height:1.7}
+.modal{position:fixed;inset:0;background:#000000aa;display:none;align-items:center;justify-content:center;padding:18px;z-index:20}
+.modal.open{display:flex}
+.modal .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;width:min(560px,100%);max-height:90vh;overflow:auto;box-shadow:0 20px 60px #0008}
+.modal h3{margin:0 0 6px;font-size:17px}
+.modal p{margin:0 0 12px;color:var(--muted);font-size:13px}
+.modal .row{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
+.hint{color:var(--muted);font-size:11.5px;line-height:1.6;margin-top:6px}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#222c37;border:1px solid var(--line);border-radius:9px;padding:10px 16px;font-size:13px;box-shadow:0 10px 30px #0008;opacity:0;pointer-events:none;transition:.2s;z-index:40;max-width:90vw}
+.toast.show{opacity:1}
+.toast.err{border-color:#5c2626;color:#ffb4b4}
+@media(max-width:620px){body{padding:14px 12px 40px}.brand b{font-size:20px}.card .v{font-size:17px}}
+</style>
+<div class="wrap">
+<header>
+  <div class="brand"><img src="/assets/logo.svg" alt="FWArmy logo"><b>FWArmy</b><span>WArmy专属服务器</span></div>
+  <div class="pills"><div class="pills" id="pills"></div><button id="toggleService" class="good" disabled>加载业务状态…</button><button class="danger" id="shutdown">退出进程</button></div>
+</header>
+
+<div id="firstRun" class="banner" hidden>
+  <h3>旧版遗留凭据待保存</h3>
+  <p>把它填进 WArmy 客户端的「服务器凭据」即可。明文只在本机显示；保存后请点下面的按钮，服务器会删除明文引导文件。</p>
+  <div class="tokenbox"><code id="firstRunToken"></code><button class="sm" id="firstRunCopy">复制</button><button class="sm good" id="firstRunAck">我已保存，删除明文</button></div>
+</div>
+
+<div class="tabs" id="tabs">
+  <button class="tab active" data-tab="overview">总览</button>
+  <button class="tab" data-tab="expand">扩网</button>
+  <button class="tab" data-tab="logs">日志</button>
+</div>
+
+<section id="tab-overview" class="active">
+  <div class="cards" id="cards"></div>
+  <div class="panel">
+    <h2>用量汇总 <small>按本机时区累计；字节 = 信封上行 + 下行</small></h2>
+    <div class="tablewrap"><table id="totalTable"></table></div>
+  </div>
+  <div class="panel">
+    <h2>凭据与用量 <small>日 / 月 / 总次数与流量，分钟限速及年流量</small></h2>
+    <div class="toolbar">
+      <button class="primary" id="newCred">生成凭据</button>
+      <button id="refreshCreds">刷新</button>
+      <span class="muted" id="credCount"></span>
+    </div>
+    <div class="tablewrap"><table id="credTable"></table></div>
+    <div class="hint">首次不会自动生成凭据；点击生成，可创建多个。留空 = 继承全局默认；分钟次数和流量必须大于 0，其余额度填 0 = 不限。服务器只存 sha256，明文仅生成时显示。删除需输入名称确认。</div>
+    <div class="hint">次数 = 有效凭据的业务请求（含拒绝/失败）；流量 = 实际入队与取走的 UTF-8 信封字节之和，不含 HTTP 开销。失败只记实际发生的用量；分钟限速与速度统计共用最近 60 秒窗口。重启清空分钟窗口，不清累计额度。</div>
+  </div>
+  <div class="panel" id="configPanel">
+    <h2>全局默认 <small>只影响“留空继承”的凭据</small></h2>
+    <div class="grid">
+      <label class="f">每分钟次数（不可不限）<input id="cfgRate" type="number" min="1" step="1"></label>
+      <label class="f">每分钟流量（MB，不可不限）<input id="cfgBytesRate" type="number" min="0.00000095367431640625" step="any"></label>
+      <label class="f">每日次数（0=不限）<input id="cfgDailyRequests" type="number" min="0" step="1"></label>
+      <label class="f">每日流量（MB，0=不限）<input id="cfgDaily" type="number" min="0" step="any"></label>
+      <label class="f">每月次数（0=不限）<input id="cfgMonthlyRequests" type="number" min="0" step="1"></label>
+      <label class="f">每月流量（MB，0=不限）<input id="cfgMonthly" type="number" min="0" step="any"></label>
+      <label class="f">总次数（0=不限）<input id="cfgTotalRequests" type="number" min="0" step="1"></label>
+      <label class="f">总流量（MB，0=不限）<input id="cfgTotal" type="number" min="0" step="any"></label>
+      <label class="f">每年流量（MB，0=不限）<input id="cfgYearly" type="number" min="0" step="any"></label>
+      <label class="f">单信封上限（KB）<input id="cfgEnv" type="number" min="1" step="1"></label>
+      <label class="f">每收件人队列上限<input id="cfgQueue" type="number" min="1" step="1"></label>
+      <label class="f">在线 TTL（秒）<input id="cfgTtl" type="number" min="0.1" step="1"></label>
+    </div>
+    <div class="toolbar" style="margin-top:12px">
+      <button class="primary" id="saveCfg">保存设置</button>
+      <button id="pip">探测公网 IP</button>
+    </div>
+    <div class="hint">保存立即生效，不重置已有用量。顶部暂停/恢复只控制业务，管理页仍可用；退出进程后需手动重新启动程序，页面不能自启动。公网 IP 探测不会改绑定地址。</div>
+  </div>
+  <div class="panel">
+    <h2>TLS / 证书 <small>默认自签 + 指纹固定；改动需重启</small></h2>
+    <div class="grid">
+      <label class="f">模式
+        <select id="tlsMode">
+          <option value="self-signed">自签证书 + 指纹固定（默认）</option>
+          <option value="user-cert">用户证书（CA 校验证书链）</option>
+          <option value="off">关闭 TLS（危险）</option>
+        </select>
+      </label>
+      <label class="f">用户证书 cert 路径<input id="tlsCert" placeholder="C:\\certs\\fullchain.pem"></label>
+      <label class="f">用户私钥 key 路径<input id="tlsKey" placeholder="C:\\certs\\privkey.pem"></label>
+      <label class="f">自签证书额外主机名（逗号分隔）<input id="tlsHosts" placeholder="relay.example.com"></label>
+    </div>
+    <div class="toolbar" style="margin-top:10px">
+      <label class="f" style="flex-direction:row;align-items:center;gap:6px"><input id="tlsPlain" type="checkbox"> 允许非回环明文（不建议）</label>
+      <button class="primary" id="tlsSave">保存（需重启）</button>
+      <button id="tlsRegen">重新生成自签证书…</button>
+    </div>
+    <div class="hint" id="tlsHint">当前指纹：—</div>
+  </div>
+  <div class="panel">
+    <h2>消息安全 <small>唯一 ID · 24h 最多 2 次 · 黑名单 30 天</small></h2>
+    <div class="cards" id="secCards"></div>
+    <div class="tablewrap"><table id="secTable"></table></div>
+    <div class="hint">同一 messageId 在本实例 24 小时内最多转发 2 次；第 3 次或首次出现已超过 24 小时 ⇒ 丢弃并写入黑名单（重启后仍生效）。黑名单 30 天未再出现自动清理。来源实例用 Ed25519 签名固定，改信封/换公钥会被拒绝。</div>
+    <div class="toolbar"><button id="secGc">清理过期条目</button><button class="danger sm" id="secClear">清空黑名单…</button></div>
+  </div>
+  <div class="panel">
+    <h2>安全边界</h2>
+    <div class="foot">
+      本机管理：管理页只接受本机回环直连（127.0.0.1 / ::1），Host 必须是回环名，拒绝跨站请求；管理写操作必须是 JSON。
+      业务面仍需 <code>Authorization: Bearer &lt;凭据&gt;</code>，心跳/取信/下线还需 Ed25519 签名。消息只在内存队列停留 30 秒，不落盘。
+      TLS 默认自签并固定指纹；非回环的明文业务请求一律 426。磁盘不保存凭据明文：被扩网凭据只存 sha256，出网凭据 AES-256-GCM 加密（密钥在本机 secret.key 或 FWARMY_MASTER_KEY）。
+      最坏情况：拿到整机文件系统（或 secret.key）的人可解密出网凭据；同一台机器上的其它本地进程/用户可以调用本机管理接口。不要把服务器放在多人共用机器上，也不要把管理端口映射到公网。
+    </div>
+  </div>
+</section>
+
+<section id="tab-expand">
+  <div class="panel">
+    <h2>扩网 · 我连接别人 <small>本机送不到的消息，按顺序转发给这些 FWArmy</small></h2>
+    <div class="grid">
+      <label class="f">名称（可选）<input id="exName" maxlength="40" placeholder="例如：家里的 FWArmy"></label>
+      <label class="f">地址（IP 或域名）<input id="exAddr" placeholder="example.com 或 example.com:59600"></label>
+      <label class="f">对方的被扩网凭据<input id="exCred" type="password" autocomplete="off" placeholder="对方「被扩网」页生成"></label>
+      <label class="f">传输安全
+        <select id="exTls">
+          <option value="pin">TLS 自签 + 指纹固定（推荐）</option>
+          <option value="verify">TLS 用户证书（校验证书链）</option>
+          <option value="off">明文 HTTP（仅回环/VPN）</option>
+        </select>
+      </label>
+      <label class="f">证书指纹（可留空，添加后点「识别指纹」）<input id="exFp" placeholder="sha256 十六进制，64 位"></label>
+    </div>
+    <div class="toolbar" style="margin-top:10px">
+      <button class="primary" id="exAdd">添加</button>
+      <span class="muted" id="exMsg"></span>
+    </div>
+    <div class="hint">不填端口就是默认 59599；在域名或 IP 后面加 <code>:端口</code> 可以指定（例如 <code>1.2.3.4:60000</code>）。凭据由对方在「被扩网」里一键生成。
+      TLS 默认「自签 + 指纹固定」：添加后先点「识别指纹」，核对对方屏幕上/管理页里的指纹一致，再点「信任」。**未信任前不会发送凭据**。对方用正式证书时选「用户证书」，按系统 CA 校验域名。</div>
+    <div class="cards" id="exOutCards"></div>
+    <div class="tablewrap"><table id="exOutTable"></table></div>
+    <div class="tablewrap" style="margin-top:10px"><table id="exOutTotals"></table></div>
+    <div class="hint">这里只统计「我转发出去」的次数、字节、成功/失败；对方是否真正投递由对方再尝试并把结果返回。</div>
+  </div>
+
+  <div class="panel">
+    <h2>被扩网 · 别人连接我 <small>生成凭据，让别的 FWArmy 把送不到的消息转给我</small></h2>
+    <div class="toolbar">
+      <input id="exInName" maxlength="40" placeholder="凭据名称（可选）" style="max-width:220px">
+      <button class="primary" id="exGen">生成接入凭据</button>
+      <span class="muted" id="exInState">加载中…</span>
+    </div>
+    <div id="exInTokenBox" class="tokenbox" hidden>
+      <code id="exInToken"></code>
+      <button class="sm" id="exInCopy">复制</button>
+      <span class="hint" style="margin:0">只显示这一次；每个实例可有多条，可单独停用/删除。</span>
+    </div>
+    <div class="hint" id="exAddrHint">对方填写：你的域名或公网 IP:端口（以本机实际监听端口为准）。</div>
+    <div class="tablewrap" style="margin-bottom:10px"><table id="exInCredTable"></table></div>
+    <div class="cards" id="exInCards"></div>
+    <div class="tablewrap"><table id="exInTable"></table></div>
+    <div class="tablewrap" style="margin-top:10px"><table id="exInTotals"></table></div>
+    <div class="hint">这里只统计「别人交给我」的次数、字节、成功/失败；我会尝试投递，并把结果（无论是否成功）返回给对方。</div>
+  </div>
+
+  <div class="panel">
+    <h2>公网可达性 <small>NAT-PMP 只读探针 / 显式映射 / STUN；只报证据</small></h2>
+    <div class="cards" id="reachCards"></div>
+    <div class="grid">
+      <label class="f">STUN 服务器（逗号分隔，留空=不探测）<input id="reachStun" placeholder="stun.example.com:3478"></label>
+      <label class="f">映射租期（秒）<input id="reachLease" type="number" min="60" max="86400" value="7200"></label>
+    </div>
+    <div class="toolbar" style="margin-top:10px">
+      <button id="reachProbe">检测 NAT-PMP（只读）</button>
+      <button id="reachStunBtn">STUN 探测</button>
+      <button class="primary" id="reachMap">申请端口映射…</button>
+      <button id="reachUnmap">取消映射</button>
+    </div>
+    <div class="hint" id="reachHint">申请映射会改路由器状态，必须你显式点击；不内置任何公网 STUN 服务器。verdict=confirmed-inbound 只来自真实外部实例连进来过。</div>
+  </div>
+</section>
+
+<section id="tab-logs">
+  <div class="panel">
+    <h2>运行日志 <small>最近 200 行 · 不含消息明文/凭据明文</small></h2>
+    <div class="toolbar"><button id="refreshLog">刷新</button><span class="muted" id="logFile"></span></div>
+    <pre class="log" id="logBox">加载中…</pre>
+    <div class="hint">日志文件在数据目录的 server.log；超过 5 MB 会在下次启动时轮转为 server.log.1。</div>
+  </div>
+</section>
+
+<div class="foot">
+  FWArmy · WArmy专属服务器，和 WArmy 主应用分开安装。数据目录：<code id="dataDir">—</code>。暂停期间内存消息仍按 30 秒 TTL 过期；退出进程会清空队列，需手动重启。
+</div>
+</div>
+
+<!-- 新建/编辑 -->
+<div class="modal" id="credModal">
+  <div class="box">
+    <h3 id="credModalTitle">新建凭据</h3>
+    <p>留空 = 继承全局默认；填 0 = 不限制。名称最多 40 字。</p>
+    <div class="grid">
+      <label class="f">名称<input id="fName" maxlength="40" placeholder="例如：家里的电脑"></label>
+      <label class="f">请求速度（次/分钟）<input id="fRate" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f">流量速度（MB/分钟）<input id="fByteRate" type="number" min="0" step="0.1" placeholder="继承全局"></label>
+      <label class="f">每日次数上限（次）<input id="fDailyReq" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f">每日流量上限（MB）<input id="fDaily" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f">每月次数上限（次）<input id="fMonthlyReq" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f">每月流量上限（MB）<input id="fMonthly" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f">总次数上限（次）<input id="fTotalReq" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f">总流量上限（MB）<input id="fTotal" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f">每年流量上限（MB）<input id="fYearly" type="number" min="0" step="1" placeholder="继承全局"></label>
+    </div>
+    <div class="row"><button class="ghost" data-close="credModal">取消</button><button class="primary" id="saveCred">保存</button></div>
+  </div>
+</div>
+
+<!-- 删除 -->
+<div class="modal" id="delModal">
+  <div class="box">
+    <h3>删除凭据</h3>
+    <p>删除后使用它的设备立即无法连接，且无法恢复。请输入凭据名称 <b id="delName"></b> 确认：</p>
+    <input id="delConfirm" autocomplete="off" placeholder="输入完整名称">
+    <div class="row"><button class="ghost" data-close="delModal">取消</button><button class="danger" id="doDelete" disabled>永久删除</button></div>
+  </div>
+</div>
+
+<!-- 新凭据明文 -->
+<div class="modal" id="tokenModal">
+  <div class="box">
+    <h3>凭据已生成</h3>
+    <p>明文只显示这一次，请立即保存到 WArmy 的服务器设置里。</p>
+    <div class="tokenbox"><code id="newToken" style="flex:1"></code><button class="sm" id="copyToken">复制</button></div>
+    <div class="row"><button class="primary" data-close="tokenModal">我已保存</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => Array.from(document.querySelectorAll(s));
+let S = null, E = null, SEC = null, R = null, firstRun = null, editing = null, deleting = null, cfgDirty = false, activeTab = 'overview';
+
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const num = (n) => Number(n || 0).toLocaleString('zh-CN');
+const fmtBytes = (n) => {
+  n = Number(n) || 0;
+  if (n < 1024) return n + ' B';
+  const u = ['KB', 'MB', 'GB', 'TB', 'PB'];
+  let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return n.toFixed(n >= 100 ? 0 : n >= 10 ? 1 : 2) + ' ' + u[i];
+};
+const fmtDur = (sec) => {
+  sec = Math.max(0, Math.floor(Number(sec) || 0));
+  const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return d ? `${d}天 ${h}时` : h ? `${h}时 ${m}分` : m ? `${m}分 ${s}秒` : `${s}秒`;
+};
+const fmtTime = (ms) => {
+  if (!ms) return '—';
+  const d = new Date(Number(ms));
+  if (Number.isNaN(d.getTime())) return '—';
+  const p = (x) => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+const mb = (bytes) => {
+  const n = Number(bytes) || 0;
+  return n === 0 ? 0 : +(n / 1048576).toFixed(2);
+};
+const fromMb = (v) => {
+  if (v === '' || v === null || v === undefined) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) throw new Error('请输入 ≥ 0 的数字');
+  return n === 0 ? 0 : Math.round(n * 1048576);
+};
+function toast(msg, err) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (err ? ' err' : '');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { t.className = 'toast'; }, 3200);
+}
+async function api(path, body) {
+  const r = await fetch(path, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: body === undefined ? {} : { 'content-type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  let j;
+  try { j = await r.json(); } catch { throw new Error('服务器返回了非 JSON（HTTP ' + r.status + '）'); }
+  if (!j || j.ok !== true) throw new Error((j && j.error) || ('HTTP ' + r.status));
+  return j;
+}
+function switchTab(name) {
+  activeTab = name;
+  $$('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
+  $$('section').forEach((s) => s.classList.toggle('active', s.id === 'tab-' + name));
+  if (name === 'logs') loadLogs();
+  if (name === 'expand') loadExpand();
+  if (name === 'settings') fillCfg();
+}
+function usageCell(b) {
+  return `<div class="cell-main">${num(b.requests)} 次</div><div class="cell-sub">${fmtBytes(b.bytes)}</div>`;
+}
+function limTag(v, text) {
+  return v === null || v === undefined ? `<span class="tag inherit">继承 ${text}</span>` : esc(text);
+}
+function limText(c) {
+  const e = c.effective, l = c.limits;
+  const rl = l.ratePerMin === null ? `<span class="tag inherit">继承</span>` : (e.ratePerMin ? `${num(e.ratePerMin)}/分` : '不限');
+  const bl = l.bytesPerMin === null ? `<span class="tag inherit">继承</span>` : (e.bytesPerMin ? `${fmtBytes(e.bytesPerMin)}/分` : '不限');
+  const dl = l.dailyBytes === null ? `<span class="tag inherit">继承</span>` : (e.dailyBytes ? fmtBytes(e.dailyBytes) : '不限');
+  const ml = l.monthlyBytes === null ? `<span class="tag inherit">继承</span>` : (e.monthlyBytes ? fmtBytes(e.monthlyBytes) : '不限');
+  const yl = l.yearlyBytes === null ? `<span class="tag inherit">继承</span>` : (e.yearlyBytes ? fmtBytes(e.yearlyBytes) : '不限');
+  const req = (k) => l[k + 'Requests'] === null ? `<span class="tag inherit">继承</span>` : (e[k + 'Requests'] ? num(e[k + 'Requests']) + '次' : '不限');
+  const dt = l.totalBytes === null ? `<span class="tag inherit">继承</span>` : (e.totalBytes ? fmtBytes(e.totalBytes) : '不限');
+  return `<div class="cell-sub">速度 ${rl} · ${bl}</div><div class="cell-sub">日 ${req('daily')} / ${dl} · 月 ${req('monthly')} / ${ml}</div><div class="cell-sub">总 ${req('total')} / ${dt} · 年 ${yl}</div>`;
+}
+function render() {
+  if (!S) return;
+  const t = S.totals;
+  const tlsPill = S.tls && S.tls.secure
+    ? `<span class="pill ok" title="${esc(S.tls.fingerprint)}">TLS ${esc(S.tls.mode)}</span>`
+    : `<span class="pill bad">明文 HTTP</span>`;
+  $('#pills').innerHTML = tlsPill +
+    `<span class="pill ${S.accepting ? 'ok' : 'warn'}">${S.accepting ? '接客中' : '已暂停接客'}</span>` +
+    `<span class="pill">在线 ${num(S.users)}</span>` +
+    `<span class="pill">队列 ${num(S.queued)}</span>` +
+    `<span class="pill">运行 ${fmtDur(S.uptimeSec)}</span>` +
+    `<span class="pill">v${esc(S.version)}</span>`;
+  $('#cards').innerHTML = [
+    ['当前速度', `${num(t.speed.reqPerMin)} 次/分`, `${fmtBytes(t.speed.bytesPerMin)}/分`],
+    ['峰值（每分钟）', `${num(t.peakPerMin)} 次`, t.peakAt ? fmtTime(t.peakAt) : '—'],
+    ['今日', `${num(t.today.requests)} 次`, fmtBytes(t.today.bytes)],
+    ['本月', `${num(t.month.requests)} 次`, fmtBytes(t.month.bytes)],
+    ['今年', `${num(t.year.requests)} 次`, fmtBytes(t.year.bytes)],
+    ['累计', `${num(t.requests)} 次`, fmtBytes(t.bytes)],
+    ['上行 / 下行', fmtBytes(t.bytesIn), fmtBytes(t.bytesOut)],
+    ['未授权尝试', num(S.unauthorized), '不归属任何凭据'],
+  ].map(([k, v, s]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join('');
+
+  $('#totalTable').innerHTML =
+    `<tr><th>范围</th><th class="num">请求</th><th class="num">上行</th><th class="num">下行</th><th class="num">合计</th><th class="num">转发</th><th class="num">投递</th><th class="num">拒绝</th><th class="num">离线</th></tr>` +
+    [['今日', t.today], ['本月', t.month], ['今年', t.year], ['累计', t]].map(([k, b]) =>
+      `<tr><td>${k}</td><td class="num">${num(b.requests)}</td><td class="num">${fmtBytes(b.bytesIn)}</td><td class="num">${fmtBytes(b.bytesOut)}</td><td class="num">${fmtBytes(b.bytes)}</td><td class="num">${num(b.relayed)}</td><td class="num">${num(b.delivered)}</td><td class="num">${num(b.rejected)}</td><td class="num">${num(b.offline)}</td></tr>`).join('');
+
+  const ov = S.perCredential.map((c) =>
+    `<tr><td>${esc(c.name)}</td><td>${c.disabled ? '<span class="tag off">已停用</span>' : '<span class="tag on">有效</span>'}</td><td class="num">${num(c.speed.reqPerMin)}/分<div class="cell-sub">${fmtBytes(c.speed.bytesPerMin)}/分</div></td><td>${usageCell(c.today)}</td><td>${usageCell(c.month)}</td><td>${usageCell(c.year)}</td><td>${usageCell(c.total)}</td><td class="num">${num(c.peakPerMin)}</td><td>${limText(c)}</td><td class="muted">${fmtTime(c.lastUsed)}</td></tr>`).join('');
+
+  $('#credTable').innerHTML =
+    `<tr><th>名称</th><th>状态</th><th class="num">速度（最近 60s）</th><th>今日</th><th>本月</th><th>今年</th><th>累计</th><th class="num">峰值/分</th><th>限额</th><th>最近使用</th><th>操作</th></tr>` +
+    (S.perCredential.map((c) =>
+      `<tr><td>${esc(c.name)}<div class="cell-sub"><code>${esc(c.hash8)}…</code> · 建于 ${fmtTime(Date.parse(c.createdAt))}</div></td>` +
+      `<td>${c.disabled ? '<span class="tag off">已停用</span>' : '<span class="tag on">有效</span>'}</td>` +
+      `<td class="num">${num(c.speed.reqPerMin)} 次/分<div class="cell-sub">${fmtBytes(c.speed.bytesPerMin)}/分</div></td>` +
+      `<td>${usageCell(c.today)}</td><td>${usageCell(c.month)}</td><td>${usageCell(c.year)}</td><td>${usageCell(c.total)}</td>` +
+      `<td class="num">${num(c.peakPerMin)}</td><td>${limText(c)}</td><td class="muted">${fmtTime(c.lastUsed)}</td>` +
+      `<td><div class="toolbar" style="margin:0"><button class="sm" data-act="edit" data-id="${esc(c.id)}">编辑</button>` +
+      `<button class="sm" data-act="toggle" data-id="${esc(c.id)}">${c.disabled ? '启用' : '停用'}</button>` +
+      `<button class="sm danger" data-act="del" data-id="${esc(c.id)}">删除</button></div></td></tr>`).join('') || `<tr><td colspan="11" class="empty">还没有凭据。点“新建凭据”生成一个。</td></tr>`);
+  $('#credCount').textContent = `共 ${S.perCredential.length} 个 · 有效 ${S.perCredential.filter((c) => !c.disabled).length} 个`;
+  $('#dataDir').textContent = S.dataDir || '—';
+  const sec = S.security || {};
+  $('#secCards').innerHTML = [
+    ['黑名单', num(sec.blacklist || 0), '消息 ID 哈希'],
+    ['24h 窗口', num(sec.replay || 0), '已见过的 messageId'],
+    ['固定来源', num(sec.origins || 0), 'Ed25519 公钥'],
+    ['TLS 指纹', S.tls && S.tls.secure ? '已启用' : '未启用', S.tls && S.tls.fingerprint ? S.tls.fingerprint.slice(0, 24) + '…' : '—'],
+  ].map(([k, v, s]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join('');
+  const recent = (SEC && SEC.blacklist && SEC.blacklist.recent) || [];
+  $('#secTable').innerHTML =
+    `<tr><th>消息 ID</th><th>原因</th><th class="num">次数</th><th>首次</th><th>最近</th><th>来源</th></tr>` +
+    (recent.map((b) => `<tr><td><code>${esc(b.key)}…</code></td><td>${esc(b.reason)}</td><td class="num">${num(b.hits)}</td><td class="muted">${fmtTime(b.firstAt)}</td><td class="muted">${fmtTime(b.lastAt)}</td><td class="muted">${esc(b.origin || '—')}</td></tr>`).join('')
+      || `<tr><td colspan="6" class="empty">黑名单为空。</td></tr>`);
+  if (activeTab === 'settings' && !cfgDirty) fillCfg();
+  if (S.firstRunPending && !firstRun) loadFirstRun();
+  if (firstRun && firstRun.pending) showFirstRun();
+}
+function fillCfg() {
+  if (!S) return;
+  const c = S.config;
+  $('#cfgRate').value = c.ratePerMin;
+  $('#cfgBytesRate').value = (Number(c.bytesPerMin) / 1048576).toFixed(2);
+  $('#cfgDaily').value = (Number(c.dailyBytes) / 1048576).toFixed(2);
+  $('#cfgMonthly').value = (Number(c.monthlyBytes) / 1048576).toFixed(2);
+  $('#cfgYearly').value = (Number(c.yearlyBytes) / 1048576).toFixed(2);
+  $('#cfgEnv').value = Math.round(Number(c.maxEnvelope) / 1024);
+  $('#cfgQueue').value = c.queuePerUser;
+  $('#cfgTtl').value = Math.round(Number(c.presenceTtlMs) / 1000);
+  $('#cfgAccept').checked = !!c.accepting;
+}
+async function loadFirstRun() {
+  try { firstRun = await api('/api/admin/first-credential'); } catch { firstRun = null; }
+  if (firstRun && firstRun.pending) showFirstRun();
+}
+function showFirstRun() {
+  $('#firstRun').hidden = false;
+  $('#firstRunToken').textContent = firstRun.token || '';
+}
+async function refresh() {
+  try {
+    S = await api('/api/admin/stats');
+    SEC = await api('/api/admin/security').catch(() => null);
+    render();
+  } catch (e) { toast('连不上服务器：' + e.message, true); }
+}
+async function loadLogs() {
+  try {
+    const j = await api('/api/admin/log?tail=200');
+    $('#logBox').textContent = (j.lines || []).join('\n') || '（空）';
+    $('#logFile').textContent = j.file || '';
+    $('#logBox').scrollTop = $('#logBox').scrollHeight;
+  } catch (e) { $('#logBox').textContent = '读取失败：' + e.message; }
+}
+/* ── 扩网 / 被扩网 ─────────────────────────────────────────────────── */
+function exCards(side) {
+  const t = side.total || {};
+  return [
+    ['今日', `${num(side.today.requests)} 次`, fmtBytes(side.today.bytes)],
+    ['本月', `${num(side.month.requests)} 次`, fmtBytes(side.month.bytes)],
+    ['累计', `${num(t.requests)} 次`, fmtBytes(t.bytes)],
+    ['成功 / 失败', `${num(t.delivered)} / ${num((t.rejected || 0) + (t.offline || 0))}`, '投递成功 / 失败'],
+  ].map(([k, v, s]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join('');
+}
+function exTotalsTable(side) {
+  const row = (k, b) => `<tr><td>${k}</td><td class="num">${num(b.requests)}</td><td class="num">${fmtBytes(b.bytes)}</td><td class="num">${num(b.delivered)}</td><td class="num">${num(b.rejected)}</td><td class="num">${num(b.offline)}</td><td class="muted">${esc(side.lastResult || '—')}</td></tr>`;
+  return `<tr><th>范围</th><th class="num">请求</th><th class="num">流量</th><th class="num">成功</th><th class="num">拒绝</th><th class="num">离线</th><th>最近结果</th></tr>`
+    + row('今日', side.today) + row('本月', side.month) + row('累计', side.total);
+}
+function exPeerUsage(side) {
+  return `<div class="cell-main">${num(side.today.requests)} 次</div><div class="cell-sub">${fmtBytes(side.today.bytes)}</div>`;
+}
+function tlsTag(p) {
+  const t = p.tls || {};
+  if (t.mode === 'off') return '<span class="tag off">明文</span>';
+  if (t.mode === 'verify') return '<span class="tag on">CA 验证</span>';
+  return p.trusted ? '<span class="tag on">指纹固定</span>' : '<span class="tag off">未信任</span>';
+}
+function renderExpand() {
+  if (!E) return;
+  $('#exOutCards').innerHTML = exCards(E.stats.outbound);
+  $('#exOutTotals').innerHTML = exTotalsTable(E.stats.outbound);
+  $('#exOutTable').innerHTML =
+    `<tr><th>名称</th><th>地址</th><th>传输</th><th>状态</th><th>今日</th><th>本月</th><th>累计</th><th class="num">成功/失败</th><th>最近结果</th><th>最近测试</th><th>操作</th></tr>` +
+    (E.outbound.map((p) => {
+      const st = p.stats;
+      const ok = st.total.delivered || 0;
+      const fail = (st.total.rejected || 0) + (st.total.offline || 0);
+      return `<tr><td>${esc(p.name)}</td><td><code>${esc(p.host)}:${p.port}</code><div class="cell-sub">${esc(p.credentialMasked)}</div></td>` +
+        `<td>${tlsTag(p)}<div class="cell-sub">${p.tls && p.tls.fingerprint ? esc(p.tls.fingerprint.slice(0, 16)) + '…' : '—'}</div></td>` +
+        `<td>${p.enabled ? '<span class="tag on">启用</span>' : '<span class="tag off">停用</span>'}</td>` +
+        `<td>${exPeerUsage(st)}</td><td>${num(st.month.requests)} 次<div class="cell-sub">${fmtBytes(st.month.bytes)}</div></td><td>${num(st.total.requests)} 次<div class="cell-sub">${fmtBytes(st.total.bytes)}</div></td>` +
+        `<td class="num">${num(ok)} / ${num(fail)}</td><td class="muted">${esc(st.lastResult || '—')}</td>` +
+        `<td class="muted">${p.lastTest ? (p.lastTestOk ? '通 ' : '不通 ') + fmtTime(p.lastTest) : '—'}</td>` +
+        `<td><div class="toolbar" style="margin:0"><button class="sm" data-ex-act="test" data-id="${esc(p.id)}">测试</button>` +
+        `<button class="sm" data-ex-act="identify" data-id="${esc(p.id)}">识别指纹</button>` +
+        (p.tls && p.tls.mode === 'pin' && !p.trusted ? `<button class="sm good" data-ex-act="trust" data-id="${esc(p.id)}">信任</button>` : '') +
+        `<button class="sm" data-ex-act="toggle" data-id="${esc(p.id)}">${p.enabled ? '停用' : '启用'}</button>` +
+        `<button class="sm danger" data-ex-act="remove" data-id="${esc(p.id)}">移除</button></div></td></tr>`;
+    }).join('') || `<tr><td colspan="11" class="empty">还没有扩网地址。把对方的地址与「被扩网凭据」加进来。</td></tr>`);
+
+  const inb = E.inbound;
+  $('#exInCards').innerHTML = exCards(E.stats.inbound);
+  $('#exInTotals').innerHTML = exTotalsTable(E.stats.inbound);
+  const creds = inb.credentials || [];
+  $('#exInCredTable').innerHTML =
+    `<tr><th>名称</th><th>前缀</th><th>状态</th><th class="num">请求</th><th>最近使用</th><th>最近结果</th><th>操作</th></tr>` +
+    (creds.map((c) => `<tr><td>${esc(c.name)}</td><td><code>${esc(c.prefix)}</code></td>` +
+      `<td>${c.disabled ? '<span class="tag off">已停用</span>' : '<span class="tag on">有效</span>'}</td>` +
+      `<td class="num">${num(c.stats && c.stats.total ? c.stats.total.requests : 0)}</td>` +
+      `<td class="muted">${c.lastAt ? fmtTime(c.lastAt) : '—'}</td><td class="muted">${esc(c.lastResult || '—')}</td>` +
+      `<td><div class="toolbar" style="margin:0"><button class="sm" data-in-act="toggle" data-id="${esc(c.id)}">${c.disabled ? '启用' : '停用'}</button>` +
+      `<button class="sm danger" data-in-act="remove" data-id="${esc(c.id)}" data-name="${esc(c.name)}">删除</button></div></td></tr>`).join('')
+      || `<tr><td colspan="7" class="empty">还没有接入凭据。点「生成接入凭据」。</td></tr>`);
+  const src = Object.entries(inb.sources || {}).sort((a, b) => (b[1].lastAt || 0) - (a[1].lastAt || 0));
+  $('#exInTable').innerHTML =
+    `<tr><th>来源</th><th class="num">请求</th><th class="num">流量</th><th class="num">成功</th><th class="num">失败</th><th>最近结果</th><th>最近时间</th></tr>` +
+    (src.map(([k, s]) => `<tr><td><code>${esc(k)}</code></td><td class="num">${num(s.total.requests)}</td><td class="num">${fmtBytes(s.total.bytes)}</td>` +
+      `<td class="num">${num(s.total.delivered)}</td><td class="num">${num((s.total.rejected || 0) + (s.total.offline || 0))}</td>` +
+      `<td class="muted">${esc(s.lastResult || '—')}</td><td class="muted">${s.lastAt ? fmtTime(s.lastAt) : '—'}</td></tr>`).join('')
+      || `<tr><td colspan="7" class="empty">还没有其他 FWArmy 连进来。</td></tr>`);
+  $('#exInState').textContent = inb.configured
+    ? `已配置 ${num(inb.count || creds.length)} 条 · 有效 ${num(creds.filter((c) => !c.disabled).length)} 条`
+    : '尚未生成（别人无法连接）';
+  $('#exAddrHint').textContent = Number(E.port) === 59599
+    ? '对方填写：你的域名或公网 IP（默认端口 59599，可省略）。传输请选 TLS 并核对指纹。'
+    : `对方填写：你的域名或公网 IP:${E.port}。对方不写端口会按默认 59599 连接，所以请明确带上 :${E.port}；传输请选 TLS 并核对指纹。`;
+  renderReach();
+}
+function renderReach() {
+  if (!R) return;
+  const v = R.verdict || 'unknown';
+  const text = {
+    'confirmed-inbound': '已有外部实例连入（实测证据）',
+    mapped: '已申请端口映射（尚未外部实测）',
+    'stun-visible': 'STUN 可见公网地址（尚未外部实测）',
+    'lan-only': '仅本机/局域网',
+    unknown: '未知',
+  }[v] || v;
+  $('#reachCards').innerHTML = [
+    ['判决', text, `verdict=${v}`],
+    ['监听', `${R.listening.scheme}://${R.listening.host}:${R.listening.port}`, R.listening.tls && R.listening.tls.fingerprint ? R.listening.tls.fingerprint.slice(0, 20) + '…' : ''],
+    ['NAT-PMP', R.natpmp ? (R.natpmp.alive ? '支持' : '无应答') : '未检测', R.natpmp ? (R.natpmp.detail || '') : '只读探针不会建映射'],
+    ['映射', R.mapping ? `外部 ${R.mapping.externalPort}` : '无', R.mapping ? (R.mapping.valid ? '有效' : '已过期') : '—'],
+    ['STUN', R.stun ? (R.stun.ok ? `${R.stun.publicAddress.host}:${R.stun.publicAddress.port}` : R.stun.reason) : '未探测', R.stun && R.stun.via ? R.stun.via : '不内置公网服务器'],
+    ['最近外部来源', R.evidence && R.evidence.at ? fmtTime(R.evidence.at) : '—', R.evidence ? (R.evidence.from || '') : ''],
+  ].map(([k, val, s]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(val)}</div><div class="s">${esc(s)}</div></div>`).join('');
+  $('#reachHint').textContent = (R.hints || []).join(' ');
+}
+async function loadExpand() {
+  try { E = await api('/api/admin/expand'); R = await api('/api/admin/reach').catch(() => null); renderExpand(); }
+  catch (e) { toast('扩网页读取失败：' + e.message, true); }
+}
+async function addExpandPeer() {
+  const msg = $('#exMsg');
+  try {
+    const address = $('#exAddr').value.trim();
+    const credential = $('#exCred').value.trim();
+    if (!address) throw new Error('请填写地址');
+    if (!credential) throw new Error('请填写对方的被扩网凭据');
+    const name = $('#exName').value.trim();
+    const mode = $('#exTls').value;
+    const fp = $('#exFp').value.trim();
+    if (mode === 'pin' && fp && !/^[0-9a-fA-F]{64}$/.test(fp)) throw new Error('证书指纹必须是 64 位十六进制');
+    await api('/api/admin/expand-outbound', { name, address, credential, tls: { mode, fingerprint: fp } });
+    $('#exName').value = ''; $('#exAddr').value = ''; $('#exCred').value = ''; $('#exFp').value = '';
+    msg.textContent = fp ? '已添加' : '已添加；请点「识别指纹」并核对后信任';
+    toast(fp ? '已添加扩网地址' : '已添加；未信任前不会发送凭据');
+    await loadExpand();
+  } catch (e) { msg.textContent = ''; toast(e.message, true); }
+}
+async function genInbound() {
+  try {
+    const r = await api('/api/admin/expand-inbound', { name: $('#exInName').value.trim() });
+    $('#exInName').value = '';
+    $('#exInToken').textContent = r.token || '';
+    $('#exInTokenBox').hidden = false;
+    toast('已生成；请立即复制给对方');
+    await loadExpand();
+  } catch (e) { toast(e.message, true); }
+}
+
+function openCredModal(c) {
+  editing = c || null;
+  $('#credModalTitle').textContent = c ? '编辑凭据' : '新建凭据';
+  $('#fName').value = c ? c.name : '';
+  $('#fRate').value = c && c.limits.ratePerMin !== null ? c.limits.ratePerMin : '';
+  $('#fByteRate').value = c && c.limits.bytesPerMin !== null ? mb(c.limits.bytesPerMin) : '';
+  $('#fDailyReq').value = c && c.limits.dailyRequests != null ? c.limits.dailyRequests : '';
+  $('#fDaily').value = c && c.limits.dailyBytes !== null ? mb(c.limits.dailyBytes) : '';
+  $('#fMonthlyReq').value = c && c.limits.monthlyRequests != null ? c.limits.monthlyRequests : '';
+  $('#fMonthly').value = c && c.limits.monthlyBytes !== null ? mb(c.limits.monthlyBytes) : '';
+  $('#fTotalReq').value = c && c.limits.totalRequests != null ? c.limits.totalRequests : '';
+  $('#fTotal').value = c && c.limits.totalBytes != null ? mb(c.limits.totalBytes) : '';
+  $('#fYearly').value = c && c.limits.yearlyBytes !== null ? mb(c.limits.yearlyBytes) : '';
+  $('#credModal').classList.add('open');
+  setTimeout(() => $('#fName').focus(), 30);
+}
+function readLimits() {
+  const rate = $('#fRate').value.trim();
+  const byteRate = $('#fByteRate').value.trim();
+  const lim = { ratePerMin: null, bytesPerMin: null, dailyRequests: null, dailyBytes: null, monthlyRequests: null, monthlyBytes: null, totalRequests: null, totalBytes: null, yearlyBytes: null };
+  if (rate !== '') { const n = Number(rate); if (!Number.isFinite(n) || n < 0) throw new Error('请求速度必须是 ≥0 的数字'); lim.ratePerMin = Math.round(n); }
+  lim.bytesPerMin = fromMb(byteRate);
+  const ci = (v) => { const s = String(v || '').trim(); if (!s) return null; const n = Number(s); if (!Number.isFinite(n) || n < 0) throw new Error('次数必须是 ≥0 的数字'); return Math.round(n); };
+  lim.dailyRequests = ci($('#fDailyReq').value);
+  lim.dailyBytes = fromMb($('#fDaily').value.trim());
+  lim.monthlyRequests = ci($('#fMonthlyReq').value);
+  lim.monthlyBytes = fromMb($('#fMonthly').value.trim());
+  lim.totalRequests = ci($('#fTotalReq').value);
+  lim.totalBytes = fromMb($('#fTotal').value.trim());
+  lim.yearlyBytes = fromMb($('#fYearly').value.trim());
+  return lim;
+}
+async function saveCred() {
+  try {
+    const name = $('#fName').value.trim();
+    if (!name) throw new Error('请填写名称');
+    const limits = readLimits();
+    if (editing) {
+      await api('/api/admin/credential-update', { id: editing.id, name, limits });
+      toast('已保存');
+      $('#credModal').classList.remove('open');
+      await refresh();
+    } else {
+      const r = await api('/api/admin/credentials', { name, limits });
+      $('#newToken').textContent = r.token;
+      $('#credModal').classList.remove('open');
+      $('#tokenModal').classList.add('open');
+      await refresh();
+    }
+  } catch (e) { toast(e.message, true); }
+}
+async function toggleCred(c) {
+  try {
+    await api('/api/admin/credential-update', { id: c.id, disabled: !c.disabled });
+    toast(c.disabled ? '已启用' : '已停用');
+    await refresh();
+  } catch (e) { toast(e.message, true); }
+}
+function openDelete(c) {
+  deleting = c;
+  $('#delName').textContent = c.name;
+  $('#delConfirm').value = '';
+  $('#doDelete').disabled = true;
+  $('#delModal').classList.add('open');
+  setTimeout(() => $('#delConfirm').focus(), 30);
+}
+async function doDelete() {
+  if (!deleting) return;
+  try {
+    await api('/api/admin/credential-delete', { id: deleting.id, confirmName: $('#delConfirm').value.trim() });
+    toast('已删除');
+    $('#delModal').classList.remove('open');
+    deleting = null;
+    await refresh();
+  } catch (e) { toast(e.message, true); }
+}
+async function saveCfg() {
+  try {
+    const body = {
+      ratePerMin: Number($('#cfgRate').value),
+      bytesPerMin: Math.round(Number($('#cfgBytesRate').value) * 1048576),
+      dailyBytes: Math.round(Number($('#cfgDaily').value) * 1048576),
+      monthlyBytes: Math.round(Number($('#cfgMonthly').value) * 1048576),
+      yearlyBytes: Math.round(Number($('#cfgYearly').value) * 1048576),
+      maxEnvelope: Math.round(Number($('#cfgEnv').value) * 1024),
+      queuePerUser: Number($('#cfgQueue').value),
+      presenceTtlMs: Math.round(Number($('#cfgTtl').value) * 1000),
+      accepting: $('#cfgAccept').checked,
+    };
+    for (const [k, v] of Object.entries(body)) if (k !== 'accepting' && !Number.isFinite(v)) throw new Error('设置项必须是数字：' + k);
+    await api('/api/admin/config', body);
+    cfgDirty = false;
+    toast('设置已保存');
+    await refresh();
+  } catch (e) { toast(e.message, true); }
+}
+async function copyText(s) {
+  try { await navigator.clipboard.writeText(s); toast('已复制'); }
+  catch { toast('复制失败，请手动选中', true); }
+}
+
+$$('.tab').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+$$('[data-close]').forEach((b) => b.addEventListener('click', () => { $('#' + b.dataset.close).classList.remove('open'); }));
+$('#newCred').addEventListener('click', () => openCredModal(null));
+$('#refreshCreds').addEventListener('click', refresh);
+$('#exAdd').addEventListener('click', addExpandPeer);
+$('#exGen').addEventListener('click', genInbound);
+$('#exInCopy').addEventListener('click', () => copyText($('#exInToken').textContent));
+$('#exOutTable').addEventListener('click', async (ev) => {
+  const b = ev.target.closest('button[data-ex-act]');
+  if (!b || !E) return;
+  const id = b.dataset.id;
+  const p = E.outbound.find((x) => x.id === id);
+  if (!p) return;
+  const act = b.dataset.exAct;
+  try {
+    if (act === 'test') {
+      const r = await api('/api/admin/expand-test', { id });
+      if (r.needsTrust) {
+        toast('尚未信任证书；指纹 ' + String(r.fingerprint || '').slice(0, 32) + '…');
+        if (r.fingerprint && confirm('核对指纹一致后点确定信任：\n' + r.fingerprint)) {
+          await api('/api/admin/expand-trust', { id, fingerprint: r.fingerprint });
+          toast('已信任；再点测试');
+        }
+      } else {
+        toast(r.reachable ? '对方可达' : ('对方不可达：' + (r.error || r.status || '')), !r.reachable);
+      }
+      await loadExpand();
+    } else if (act === 'identify') {
+      const r = await api('/api/admin/expand-identify', { id });
+      if (r.fingerprint) {
+        toast('指纹 ' + r.fingerprint.slice(0, 32) + '…');
+        if (confirm('对方实例 ' + (r.instanceId || '?') + '\n证书指纹：\n' + r.fingerprint + '\n\n与对方管理页核对一致后才信任。')) {
+          await api('/api/admin/expand-trust', { id, fingerprint: r.fingerprint });
+          toast('已信任该指纹');
+        }
+      } else toast('未取到指纹：' + (r.error || r.status || ''), true);
+      await loadExpand();
+    } else if (act === 'trust') {
+      const fp = p.tls && p.tls.fingerprint;
+      if (!fp) { toast('请先点「识别指纹」', true); return; }
+      await api('/api/admin/expand-trust', { id, fingerprint: fp });
+      toast('已信任该指纹');
+      await loadExpand();
+    } else if (act === 'toggle') {
+      await api('/api/admin/expand-update', { id, enabled: !p.enabled });
+      toast(p.enabled ? '已停用' : '已启用');
+      await loadExpand();
+    } else if (act === 'remove') {
+      if (!confirm('移除这个扩网地址？已有统计会保留。')) return;
+      await api('/api/admin/expand-remove', { id });
+      toast('已移除');
+      await loadExpand();
+    }
+  } catch (e) { toast(e.message, true); }
+});
+$('#exInCredTable').addEventListener('click', async (ev) => {
+  const b = ev.target.closest('button[data-in-act]');
+  if (!b || !E) return;
+  const id = b.dataset.id;
+  const c = (E.inbound.credentials || []).find((x) => x.id === id);
+  if (!c) return;
+  try {
+    if (b.dataset.inAct === 'toggle') {
+      await api('/api/admin/expand-inbound-update', { id, disabled: !c.disabled });
+      toast(c.disabled ? '已启用' : '已停用');
+    } else if (b.dataset.inAct === 'remove') {
+      if (!confirm('删除接入凭据「' + c.name + '」？用它的实例会立即被拒绝。')) return;
+      await api('/api/admin/expand-inbound-remove', { id });
+      toast('已删除');
+    }
+    await loadExpand();
+  } catch (e) { toast(e.message, true); }
+});
+$('#secGc').addEventListener('click', async () => {
+  try { const r = await api('/api/admin/security-gc', {}); toast(`清理完成：黑名单 -${r.blacklistRemoved}，窗口 -${r.replayRemoved}`); await refresh(); }
+  catch (e) { toast(e.message, true); }
+});
+$('#secClear').addEventListener('click', async () => {
+  if (!confirm('清空黑名单会让之前被限制的消息再次被接受。确定？')) return;
+  try { await api('/api/admin/security-clear-blacklist', { confirm: true }); toast('黑名单已清空'); await refresh(); }
+  catch (e) { toast(e.message, true); }
+});
+$('#reachProbe').addEventListener('click', async () => {
+  try { const r = await api('/api/admin/reach', { action: 'natpmp-probe' }); R = r.view; renderReach(); toast(r.natpmp && r.natpmp.alive ? '网关支持 NAT-PMP' : 'NAT-PMP 无应答', !(r.natpmp && r.natpmp.alive)); }
+  catch (e) { toast(e.message, true); }
+});
+$('#reachStunBtn').addEventListener('click', async () => {
+  const servers = $('#reachStun').value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
+  try { const r = await api('/api/admin/reach', { action: 'stun', servers }); R = r.view; renderReach(); toast(r.stun && r.stun.ok ? ('公网映射 ' + r.stun.publicAddress.host + ':' + r.stun.publicAddress.port) : ('STUN 未取得：' + (r.stun ? r.stun.reason : '')), !(r.stun && r.stun.ok)); }
+  catch (e) { toast(e.message, true); }
+});
+$('#reachMap').addEventListener('click', async () => {
+  if (!confirm('申请端口映射会修改路由器状态。继续？')) return;
+  const gateway = (R && R.natpmp && R.natpmp.gateway) || '';
+  const leaseSec = Number($('#reachLease').value) || 7200;
+  try { const r = await api('/api/admin/reach', { action: 'natpmp-map', confirm: true, gateway, leaseSec }); R = r.view || R; renderReach(); toast(r.mapped ? ('已映射，外部端口 ' + r.result.externalPort) : ('映射失败：' + (r.result ? r.result.reason : '')), !r.mapped); }
+  catch (e) { toast(e.message, true); }
+});
+$('#reachUnmap').addEventListener('click', async () => {
+  if (!confirm('取消本机申请的 NAT-PMP 映射？')) return;
+  try { const r = await api('/api/admin/reach', { action: 'natpmp-unmap' }); R = r.view || R; renderReach(); toast(r.unmapped ? '已取消映射' : '没有可取消的映射', !r.unmapped); }
+  catch (e) { toast(e.message, true); }
+});
+$('#saveCred').addEventListener('click', saveCred);
+$('#saveCfg').addEventListener('click', saveCfg);
+$('#refreshLog').addEventListener('click', loadLogs);
+$('#delConfirm').addEventListener('input', () => { $('#doDelete').disabled = !deleting || $('#delConfirm').value.trim() !== deleting.name; });
+$('#doDelete').addEventListener('click', doDelete);
+$('#firstRunCopy').addEventListener('click', () => copyText($('#firstRunToken').textContent));
+$('#firstRunAck').addEventListener('click', async () => {
+  try { await api('/api/admin/first-credential-ack', {}); firstRun = { pending: false }; $('#firstRun').hidden = true; toast('已删除明文引导文件'); await refresh(); }
+  catch (e) { toast(e.message, true); }
+});
+$('#copyToken').addEventListener('click', () => copyText($('#newToken').textContent));
+$('#pip').addEventListener('click', async () => {
+  try { const j = await api('/api/admin/public-ip', {}); toast('公网 IP：' + (j.publicIp || '未探测到')); }
+  catch (e) { toast(e.message, true); }
+});
+$('#shutdown').addEventListener('click', async () => {
+  if (!confirm('确定关闭服务器？关闭后所有客户端都会断开。')) return;
+  try { await api('/api/admin/shutdown', {}); toast('服务器已关闭'); S = null; $('#pills').innerHTML = '<span class="pill bad">已关闭</span>'; }
+  catch (e) { toast(e.message, true); }
+});
+$('#cfgRate').addEventListener('input', () => { cfgDirty = true; });
+$('#cfgBytesRate').addEventListener('input', () => { cfgDirty = true; });
+$('#cfgDaily').addEventListener('input', () => { cfgDirty = true; });
+$('#cfgMonthly').addEventListener('input', () => { cfgDirty = true; });
+$('#cfgYearly').addEventListener('input', () => { cfgDirty = true; });
+$('#cfgEnv').addEventListener('input', () => { cfgDirty = true; });
+$('#cfgQueue').addEventListener('input', () => { cfgDirty = true; });
+$('#cfgTtl').addEventListener('input', () => { cfgDirty = true; });
+$('#credTable').addEventListener('click', (ev) => {
+  const b = ev.target.closest('button[data-act]');
+  if (!b || !S) return;
+  const c = S.perCredential.find((x) => x.id === b.dataset.id);
+  if (!c) return;
+  if (b.dataset.act === 'edit') openCredModal(c);
+  else if (b.dataset.act === 'toggle') toggleCred(c);
+  else if (b.dataset.act === 'del') openDelete(c);
+});
+$('#delModal').addEventListener('click', (ev) => { if (ev.target === $('#delModal')) $('#delModal').classList.remove('open'); });
+$('#credModal').addEventListener('click', (ev) => { if (ev.target === $('#credModal')) $('#credModal').classList.remove('open'); });
+$('#tokenModal').addEventListener('click', (ev) => { if (ev.target === $('#tokenModal')) $('#tokenModal').classList.remove('open'); });
+
+refresh().then(loadFirstRun);
+setInterval(() => { refresh(); if (activeTab === 'logs') loadLogs(); if (activeTab === 'expand') loadExpand(); }, 5000);
+</script>
+</html>

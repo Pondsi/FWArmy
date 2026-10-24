@@ -1,0 +1,19 @@
+{
+  "name": "fwarmy",
+  "version": "0.4.0",
+  "private": true,
+  "description": "FWArmy standalone relay/rendezvous server: presence + opaque envelope forwarding, no message storage, per-credential usage stats and limits, multi-FWArmy expand network.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "ctl": "node ctl.mjs",
+    "stop": "node ctl.mjs stop",
+    "status": "node ctl.mjs status",
+    "table": "node ctl.mjs table",
+    "test:expand": "node verify-expand.mjs",
+    "build": "node build-sea.mjs"
+  }
+}
