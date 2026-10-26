@@ -249,6 +249,12 @@ try {
     const ping = await getJson(base1 + '/api/expand/ping', { authorization: 'Bearer ' + inbToken });
     jian('扩网 ping 走真实凭据并返回实例信息', ping.status === 200 && ping.json?.ok === true && ping.json?.product === 'FWArmy' && ping.json?.version === VERSION, JSON.stringify(ping.json));
 
+    const uv = await getJson(base1 + '/api/admin/update');
+    jian('更新状态：单文件/当前版本/平台可读', uv.status === 200 && uv.json?.ok === true && uv.json.current === VERSION && uv.json.singleFile === true && !!uv.json.platform, JSON.stringify({ current: uv.json?.current, singleFile: uv.json?.singleFile, platform: uv.json?.platform }));
+    const uc = await postJson(base1 + '/api/admin/update-config', { auto: 'check', intervalHours: 6 });
+    jian('更新设置：auto/interval 可保存', uc.status === 200 && uc.json?.update?.auto === 'check' && uc.json?.update?.intervalHours === 6, JSON.stringify(uc.json?.update));
+    jian('管理页带「更新」标签与容器', /data-tab=["']?update/.test(html) && /id=["']?updCards/.test(html));
+
     const table = spawnSync(BIN, ['table', `--data=${data1}`], { encoding: 'utf8', timeout: 30_000, windowsHide: true });
     jian('CLI table 能读出刚建的凭据', table.status === 0 && /binary-gate/.test(String(table.stdout)), `${table.status} ${table.stdout} ${table.stderr}`);
 

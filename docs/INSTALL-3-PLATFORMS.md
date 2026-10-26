@@ -1,4 +1,4 @@
-# FWArmy 三平台交付说明（0.5.0）
+# FWArmy 三平台交付说明（0.5.1）
 
 > 目的：回答“FWArmy 改用 Java 是不是更好”“能不能不买 Apple Developer ID 就三平台双击运行”，
 > 并记录这一轮实际交付方式、验收证据、系统拦截边界和后续可选步骤。
@@ -12,16 +12,16 @@
 - 现有服务端 2,621 行 + CLI 513 行，已覆盖 TLS 自签/指纹固定、Ed25519 来源签名、STUN/NAT-PMP、限额、扩网、AES-GCM 凭据存储，并有 41 条源码门禁；重写成 Java 约 4,000 行，协议风险最大、周期最长。
 - Java 产物约 50–60 MB/平台；现有 Node SEA 约 90–127 MB；Go 约 12–15 MB。Java 只比 Node 小一点，输 Go 很多，但三条路都要面对同样的 macOS/Windows 签名规则。
 
-**采用的方案**：保留 Node，GitHub Actions 在四个真实 runner（Windows / macOS 26 arm64 / macOS 26 Intel / Ubuntu）上分别构建单文件，跑源码 41 条 + 单文件 31 条 + 安装器冒烟，再发布。零重写、风险最低。
+**采用的方案**：保留 Node，GitHub Actions 在四个真实 runner（Windows / macOS 26 arm64 / macOS 26 Intel / Ubuntu）上分别构建单文件，跑源码 41 条 + 单文件 34 条 + 安装器冒烟，再发布。零重写、风险最低。
 
 ## 2. 交付物
 
 | 平台 | 产物 | 安装后启动方式 | 运行时 |
 |---|---|---|---|
-| Windows x64 | `FWArmy-0.5.0-win-x64.zip` | 开始菜单 FWArmy / 双击 `FWArmy.exe` | 自带 Node |
-| macOS Apple Silicon | `FWArmy-0.5.0-macos-arm64.tar.gz` | 双击 `FWArmy.command` | 自带 Node，ad-hoc 签名 |
-| macOS Intel | `FWArmy-0.5.0-macos-x64.tar.gz` | 双击 `FWArmy.command` | 自带 Node，ad-hoc 签名 |
-| Linux x64 | `FWArmy-0.5.0-linux-x64.tar.gz` | 应用菜单 FWArmy / `~/.local/bin/fwarmy --open` | 自带 Node |
+| Windows x64 | `FWArmy-0.5.1-win-x64.zip` | 开始菜单 FWArmy / 双击 `FWArmy.exe` | 自带 Node |
+| macOS Apple Silicon | `FWArmy-0.5.1-macos-arm64.tar.gz` | 双击 `FWArmy.command` | 自带 Node，ad-hoc 签名 |
+| macOS Intel | `FWArmy-0.5.1-macos-x64.tar.gz` | 双击 `FWArmy.command` | 自带 Node，ad-hoc 签名 |
+| Linux x64 | `FWArmy-0.5.1-linux-x64.tar.gz` | 应用菜单 FWArmy / `~/.local/bin/fwarmy --open` | 自带 Node |
 
 另外发布：`install.sh`、`install.ps1`、`SHA256SUMS`。
 
@@ -29,12 +29,12 @@
 
 ```sh
 # macOS / Linux
-curl -fsSL https://github.com/Pondsi/FWArmy/releases/download/v0.5.0/install.sh | sh
+curl -fsSL https://github.com/Pondsi/FWArmy/releases/download/v0.5.1/install.sh | sh
 ```
 
 ```powershell
 # Windows PowerShell
-irm https://github.com/Pondsi/FWArmy/releases/download/v0.5.0/install.ps1 | iex
+irm https://github.com/Pondsi/FWArmy/releases/download/v0.5.1/install.ps1 | iex
 ```
 
 安装器行为：
@@ -87,7 +87,7 @@ irm https://github.com/Pondsi/FWArmy/releases/download/v0.5.0/install.ps1 | iex
 
 ## 4. 本轮代码改动
 
-- `package.json`：0.4.0 → 0.5.0，与服务端 `VERSION` 对齐。
+- `package.json`：0.4.0 → 0.5.1，与服务端 `VERSION` 对齐。
 - `build-sea.mjs`：
   - SEA 资源增加 `logo.svg`（此前单文件运行 `/assets/logo.svg` 可能 500）。
   - 便携目录按平台拷入安装脚本、`FWArmy.command`（macOS）、`FWArmy.desktop`（Linux）、`assets/logo.svg`；`.sh`/`.command` 设可执行位。
@@ -96,43 +96,42 @@ irm https://github.com/Pondsi/FWArmy/releases/download/v0.5.0/install.ps1 | iex
 - `FWArmy.command`：macOS 双击后台启动并打开管理页。
 - `FWArmy.desktop`：Linux 桌面项模板（安装器会写绝对路径版本）。
 - `ctl.mjs`：`stop` 先调管理面 `/api/admin/shutdown`，三平台都能优雅落盘并 exit(0)；Windows 的 SIGTERM 强杀路径只作为回退。
-- `verify-binary.mjs`：新增 31 条单文件黑盒验收（详见第 6 节）。
+- `verify-binary.mjs`：新增 34 条单文件黑盒验收（详见第 6 节）。
 - `packaging/package.mjs`：只收程序文件，绝不收 `data/`；生成平台目录、zip/tar.gz、SHA256。
-- `.github/workflows/build.yml`：四平台构建 + 41 条 + 31 条 + 安装器冒烟 + 上传 artifact。
-- `README.md`：新增三平台安装、系统拦截真话、CI 验收说明；修正“首次自动生成凭据”的旧描述（0.5.0 起手动创建）。
+- `.github/workflows/build.yml`：四平台构建 + 41 条 + 34 条 + 安装器冒烟 + 上传 artifact。
+- `README.md`：新增三平台安装、系统拦截真话、CI 验收说明；修正“首次自动生成凭据”的旧描述（0.5.1 起手动创建）。
 - `docs/INSTALL-3-PLATFORMS.md`：本文。
 
-## 5. 单文件验收（verify-binary.mjs，31 条）
+## 5. 单文件验收（verify-binary.mjs，34 条）
 
-1. `--version`；2. 健康检查；3. 管理页；4. 内嵌 logo；5. 首次凭据 pending=false；
-6. 新建凭据；7. 无凭据 401；8. Ed25519 A/B 注册；9. 在线查询；10. 心跳；
-11. 批量在线；12. A→B 入队；13. 同 messageId 第二次允许（max 2）；14. 第三次 409；
-15. B 取到 2 个信封且内容一致；16. 取走后不重复；17. bye 后离线；
-18. 管理面 64 位证书指纹；19. 同端口 TLS 握手；20. TLS 指纹匹配；
-21. Host 非回环 403；22. 跨站 Origin 403；23. 表单 POST 403；
-24. 生成被扩网凭据；25. `/api/expand/ping`；26. CLI `table` 读出凭据；
-27. 管理面 shutdown 退出码 0；28. 第二次启动；29. CLI `stop`；30. 停后端口不再服务；
-31. （启动前的单文件存在检查）。
+- **启动/界面**：`--version`、健康检查、管理页、内嵌 logo、「更新」标签容器。
+- **凭据/业务**：首次凭据 pending=false、新建凭据、无凭据 401、Ed25519 A/B 注册、在线查询、心跳、批量在线。
+- **转发/安全**：A→B 入队、同 messageId 第二次允许（max 2）、第三次 409、B 取到 2 个信封、取走后不重复、bye 后离线、Host 非回环 403、跨站 Origin 403、表单 POST 403。
+- **TLS**：管理面 64 位证书指纹、同端口 TLS 握手、指纹匹配。
+- **扩网/CLI**：生成被扩网凭据、`/api/expand/ping`、CLI `table`、管理面 shutdown、第二次启动、CLI `stop`、停后端口不响应。
+- **更新**：`/api/admin/update` 状态、`update-config` 保存、管理页「更新」标签存在。
+
+自动更新另有独立门禁 `verify-update.mjs`（14 条）：mock 更新源识别、错误 SHA256 拒绝且服务不退、正确 SHA256 下载/解压/替换/重启、重启后版本与 `lastInstall`、`.new` 清理、设置保存。
 
 ## 6. 验收记录
 
 本机（Windows 11 + Node v24.20.0）：
 
 - 源码 `verify-expand.mjs`：41 ok / 0 FAIL。
-- Windows 单文件 `verify-binary.mjs`：31 ok / 0 FAIL。
+- Windows 单文件 `verify-binary.mjs`：34 ok / 0 FAIL。
 - `install.ps1` 本地 artifact 安装、升级保留 `data/` 通过。
-- 发布页 `irm .../v0.5.0/install.ps1 | iex` 全新安装复测通过（无解析错误，`--version` = 0.5.0）。
+- 发布页 `irm .../v0.5.1/install.ps1 | iex` 全新安装复测通过（无解析错误，`--version` = 0.5.1）。
 
 WSL（Ubuntu 26.04 + Node v24.20.0，真实 Linux 内核）：
 
-- Linux 单文件构建成功；`verify-expand` 41 ok / 0 FAIL；`verify-binary` 31 ok / 0 FAIL。
+- Linux 单文件构建成功；`verify-expand` 41 ok / 0 FAIL；`verify-binary` 34 ok / 0 FAIL。
 - `install.sh` 本地 artifact 安装、`.desktop`/软链、升级保留 `data/` 通过。
-- 发布页 `curl .../v0.5.0/install.sh | sh` 全新安装复测通过。
+- 发布页 `curl .../v0.5.1/install.sh | sh` 全新安装复测通过。
 
 GitHub Actions 最终结果：https://github.com/Pondsi/FWArmy/actions/runs/40273569952
 
 - Windows / macOS 26 arm64 / macOS 26 Intel / Ubuntu 四个 runner 全绿。
-- 每个平台：41 + 31 + 安装器冒烟；macOS 额外 `codesign --verify --strict` 通过（未公证时 `spctl` 预期拒绝，只记录不作为失败）。
+- 每个平台：41 + 34 + 安装器冒烟；macOS 额外 `codesign --verify --strict` 通过（未公证时 `spctl` 预期拒绝，只记录不作为失败）。
 - 单文件本体：Windows 93,722,624 B；Linux 126,749,888 B；macOS x64 124,272,896 B；macOS arm64 121,194,496 B。
 - Release 资产哈希见 Release 页的 `SHA256SUMS`，或 WArmy 交接文档 `docs/HANDOFF-FWARMY-3PLATFORM.md`。
 

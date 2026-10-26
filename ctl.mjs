@@ -37,7 +37,7 @@ const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
 
 export const CLI_COMMANDS = new Set([
   'start', 'stop', 'status', 'open', 'table', 'console', 'cred-new', 'cred-list', 'cred-update',
-  'cred-disable', 'cred-enable', 'cred-revoke', 'cred-delete', 'cred-default', 'stats', 'ip', 'switch', 'version', 'help',
+  'cred-disable', 'cred-enable', 'cred-revoke', 'cred-delete', 'cred-default', 'stats', 'ip', 'switch', 'update', 'version', 'help',
 ]);
 
 const flag = (argv, name, d = '') => {
@@ -465,6 +465,40 @@ async function runCredCommand(cmd, argv) {
   return -1;
 }
 
+async function cmdUpdate(argv) {
+  if (has(argv, 'auto') || has(argv, 'interval')) {
+    const body = {};
+    if (has(argv, 'auto')) body.auto = String(flag(argv, 'auto', ''));
+    if (has(argv, 'interval')) body.intervalHours = Number(flag(argv, 'interval', 0));
+    const r = await api(argv, '/api/admin/update-config', body);
+    console.log(`更新设置：auto=${r.update.auto} interval=${r.update.intervalHours}h`);
+    return 0;
+  }
+  if (has(argv, 'status')) {
+    console.log(JSON.stringify(await api(argv, '/api/admin/update'), null, 2));
+    return 0;
+  }
+  const u = await api(argv, '/api/admin/update-check', {});
+  const latest = u.latest && u.latest.version ? u.latest.version : '未知';
+  console.log(`当前 v${u.current} · 最新 v${latest} · ${u.updateAvailable ? '有新版本' : '已是最新'}`);
+  if (u.latest && u.latest.name) console.log(`发布：${u.latest.name}`);
+  if (u.queue) console.log(`内存队列还有 ${u.queue} 条消息；更新重启会丢失队列（TTL 30 秒）`);
+  if (u.lastError) console.log(`上次错误：${u.lastError}`);
+  if (!(has(argv, 'install') || has(argv, 'yes'))) return 0;
+  if (!u.updateAvailable && !has(argv, 'force')) {
+    console.log('没有可安装的新版本（要强制重装同版本请加 --force）。');
+    return 0;
+  }
+  try {
+    await api(argv, '/api/admin/update-install', { force: has(argv, 'force') });
+    console.log('已提交更新，服务器将在约 1 秒后重启；稍后用 status 或管理页确认。');
+    return 0;
+  } catch (e) {
+    console.log('更新提交失败：' + String(e && e.message || e));
+    return 1;
+  }
+}
+
 export async function runCli(argv) {
   const cmd = String(argv[0] || '').toLowerCase();
   try {
@@ -476,7 +510,8 @@ export async function runCli(argv) {
         '  cred-new <名称> [--rate=] [--bytes-rate=] [--daily=] [--monthly=] [--yearly=]（用量单位 MB）\n' +
         '  cred-list | cred-update <id|哈希前缀> [--name=] [--rate=] [--daily=] [--disable|--enable]\n' +
         '  cred-disable <id> | cred-enable <id> | cred-delete <id> --yes | cred-default\n' +
-        '  stats | ip | switch | version\n' +
+        '  stats | ip | switch | update [--check] [--install] [--force] | update --auto=off|check|install [--interval=小时]\n' +
+        '  version\n' +
         '\n数据目录：--data=<目录> 或环境变量 FWARMY_DATA（兼容旧名 WARMY_RELAY_DATA），默认是程序旁的 data/。');
       return 0;
     }
@@ -511,6 +546,7 @@ export async function runCli(argv) {
       console.log(`接客已${r.config.accepting ? '打开' : '暂停'}`);
       return 0;
     }
+    if (cmd === 'update') return await cmdUpdate(argv);
     console.error('未知命令：' + cmd + '（运行 FWArmy help 查看用法）');
     return 1;
   } catch (e) {

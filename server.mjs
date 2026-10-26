@@ -47,6 +47,9 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
@@ -68,7 +71,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.5.0';
+export const VERSION = '0.5.1';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -849,8 +852,10 @@ export async function startServer(options = {}) {
   const FIRST_CRED_ENC = path.join(DATA, 'first-credential.enc');
   const EXPAND_FILE = path.join(DATA, 'expand.json');
   const SECURITY_FILE = path.join(DATA, 'security.json');
+  const UPDATE_FILE = path.join(DATA, 'update.json');
   const TLS_DIR = path.join(DATA, 'tls');
   const STARTED = Date.now();
+  let actualPort = 0;
   /** 安全判定（24h 窗口/30 天黑名单）用可注入时钟，门禁才能跑“一天后/三十天后”；队列 TTL 仍用真实时间。 */
   const now = () => (typeof options.clock === 'function' ? Number(options.clock()) : Date.now());
 
@@ -1939,12 +1944,389 @@ export async function startServer(options = {}) {
         origins: Object.keys(security.origins).length,
         lastInbound: security.lastInbound,
       },
+      update: updateSummary(),
     };
+  }
+
+  // ── 自动更新（只在单文件运行时可执行替换；源码运行只允许检查）──
+  function emptyUpdate() {
+    return { auto: 'check', intervalHours: 6, lastCheck: 0, latest: null, lastError: '', lastInstall: null, triedVersion: '' };
+  }
+  function normUpdate(raw) {
+    const o = emptyUpdate();
+    if (!raw || typeof raw !== 'object') return o;
+    if (['off', 'check', 'install'].includes(raw.auto)) o.auto = raw.auto;
+    const h = Number(raw.intervalHours);
+    if (Number.isFinite(h) && h >= 1 && h <= 168) o.intervalHours = Math.round(h);
+    o.lastCheck = Number(raw.lastCheck) || 0;
+    o.lastError = String(raw.lastError || '').slice(0, 400);
+    o.triedVersion = String(raw.triedVersion || '');
+    if (raw.lastInstall && typeof raw.lastInstall === 'object') {
+      o.lastInstall = {
+        version: String(raw.lastInstall.version || ''), at: Number(raw.lastInstall.at) || 0,
+        ok: !!raw.lastInstall.ok, error: String(raw.lastInstall.error || '').slice(0, 300),
+      };
+    }
+    if (raw.latest && typeof raw.latest === 'object') {
+      const a = raw.latest.asset && typeof raw.latest.asset === 'object' ? raw.latest.asset : null;
+      o.latest = {
+        version: String(raw.latest.version || ''), tag: String(raw.latest.tag || ''),
+        name: String(raw.latest.name || '').slice(0, 160), publishedAt: String(raw.latest.publishedAt || ''),
+        notes: String(raw.latest.notes || '').slice(0, 6000), url: String(raw.latest.url || ''),
+        sumsUrl: String(raw.latest.sumsUrl || ''),
+        asset: a ? {
+          name: String(a.name || ''), size: Number(a.size) || 0, url: String(a.url || ''),
+          sha256: String(a.sha256 || '').toLowerCase().replace(/^sha256:/, ''),
+        } : null,
+      };
+    }
+    return o;
+  }
+  let upd = emptyUpdate();
+  try { upd = normUpdate(JSON.parse(fs.readFileSync(UPDATE_FILE, 'utf8'))); }
+  catch (e) {
+    if (e && e.code !== 'ENOENT') {
+      try { fs.renameSync(UPDATE_FILE, `${UPDATE_FILE}.corrupt-${Date.now()}`); } catch { /* noop */ }
+      log('WARN', 'update.json 损坏，按默认设置启动（原文件已改名保留）');
+    }
+  }
+  let updateTimer = null;
+  let updateRetryTimer = null;
+  let updateChecking = false;
+  let updateInstalling = false;
+  let updateClosed = false;
+  function saveUpdate() {
+    try { writeJsonAtomic(UPDATE_FILE, upd); }
+    catch (e) { log('WARN', '写 update.json 失败：' + (e && e.message || e)); }
+  }
+  function updatePlatform() {
+    if (process.platform === 'win32' && process.arch === 'x64') return 'win-x64';
+    if (process.platform === 'darwin' && (process.arch === 'x64' || process.arch === 'arm64')) return 'macos-' + process.arch;
+    if (process.platform === 'linux' && process.arch === 'x64') return 'linux-x64';
+    return '';
+  }
+  function verParts(v) {
+    return String(v || '').replace(/^v/i, '').split(/[.+-]/).map((x) => (/^\d+$/.test(x) ? Number(x) : x));
+  }
+  function compareVersion(a, b) {
+    const A = verParts(a), B = verParts(b);
+    for (let i = 0; i < Math.max(A.length, B.length); i++) {
+      const x = A[i], y = B[i];
+      if (x === undefined) return -1;
+      if (y === undefined) return 1;
+      if (typeof x === 'number' && typeof y === 'number') { if (x !== y) return x < y ? -1 : 1; continue; }
+      const sx = String(x), sy = String(y);
+      if (sx !== sy) return sx < sy ? -1 : 1;
+    }
+    return 0;
+  }
+  function queuedTotal() {
+    const t = Date.now();
+    let n = 0;
+    for (const v of ren.values()) n += v.queue.filter((x) => x.exp > t).length;
+    return n;
+  }
+  function updateSummary() {
+    const latest = upd.latest;
+    return {
+      available: !!(latest && compareVersion(latest.version, VERSION) > 0),
+      latest: latest ? latest.version : '',
+      auto: upd.auto,
+      lastCheck: upd.lastCheck,
+      lastError: upd.lastError,
+    };
+  }
+  function updateView() {
+    const latest = upd.latest;
+    const available = !!(latest && compareVersion(latest.version, VERSION) > 0);
+    const platform = updatePlatform();
+    const assetOk = !!(latest && latest.asset && latest.asset.name && latest.asset.url);
+    const staged = IS_SEA && fs.existsSync(process.execPath + '.new');
+    return {
+      ok: true,
+      current: VERSION,
+      platform,
+      singleFile: IS_SEA,
+      auto: upd.auto,
+      intervalHours: upd.intervalHours,
+      lastCheck: upd.lastCheck,
+      lastError: upd.lastError,
+      latest,
+      updateAvailable: available,
+      canInstall: !!(IS_SEA && platform && available && assetOk && !updateInstalling),
+      installing: updateInstalling,
+      checking: updateChecking,
+      staged,
+      queue: queuedTotal(),
+      lastInstall: upd.lastInstall,
+    };
+  }
+  function allowedUpdateUrl(raw) {
+    try {
+      const u = new URL(String(raw));
+      if (process.env.FWARMY_UPDATE_TEST === '1') return u.protocol === 'http:' || u.protocol === 'https:';
+      return u.protocol === 'https:' && u.hostname === 'github.com';
+    } catch { return false; }
+  }
+  async function fetchText(url, timeout = 15_000) {
+    if (!allowedUpdateUrl(url)) throw new Error('update-url-not-allowed');
+    const r = await fetch(url, {
+      headers: { 'user-agent': `FWArmy/${VERSION}`, accept: 'application/vnd.github+json' },
+      signal: AbortSignal.timeout(timeout),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.text();
+  }
+  async function fetchToFile(url, dest) {
+    if (!allowedUpdateUrl(url)) throw new Error('update-url-not-allowed');
+    const r = await fetch(url, {
+      headers: { 'user-agent': `FWArmy/${VERSION}` },
+      signal: AbortSignal.timeout(10 * 60_000),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (!r.body) {
+      fs.writeFileSync(dest, Buffer.from(await r.arrayBuffer()));
+      return;
+    }
+    await pipeline(Readable.fromWeb(r.body), fs.createWriteStream(dest));
+  }
+  function hashFile(file) {
+    return new Promise((resolve, reject) => {
+      const h = crypto.createHash('sha256');
+      const s = fs.createReadStream(file);
+      s.on('error', reject);
+      s.on('data', (d) => h.update(d));
+      s.on('end', () => resolve(h.digest('hex')));
+    });
+  }
+  function findUpdateBinary(dir, name, depth = 0) {
+    let ents = [];
+    try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return ''; }
+    for (const e of ents) if (e.isFile() && e.name === name) return path.join(dir, e.name);
+    if (depth >= 3) return '';
+    for (const e of ents) {
+      if (!e.isDirectory()) continue;
+      const hit = findUpdateBinary(path.join(dir, e.name), name, depth + 1);
+      if (hit) return hit;
+    }
+    return '';
+  }
+  async function checkUpdate(manual = false, allowAuto = true) {
+    if (updateChecking || updateClosed) return updateView();
+    updateChecking = true;
+    try {
+      const apiBase = String(process.env.FWARMY_UPDATE_API || 'https://api.github.com/repos/Pondsi/FWArmy').replace(/\/+$/, '');
+      if (process.env.FWARMY_UPDATE_TEST !== '1' && apiBase !== 'https://api.github.com/repos/Pondsi/FWArmy') {
+        throw new Error('update-api-not-allowed');
+      }
+      const r = await fetch(`${apiBase}/releases/latest`, {
+        headers: { 'user-agent': `FWArmy/${VERSION}`, accept: 'application/vnd.github+json' },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status + (r.status === 403 ? '（GitHub 限流，稍后再试）' : ''));
+      const j = await r.json();
+      const tag = String(j.tag_name || '').trim();
+      const version = tag.replace(/^v/i, '');
+      if (!version) throw new Error('release 没有 tag_name');
+      const platform = updatePlatform();
+      const suffix = platform === 'win-x64' ? `-${platform}.zip` : (platform ? `-${platform}.tar.gz` : '');
+      const assets = Array.isArray(j.assets) ? j.assets : [];
+      const asset = suffix ? assets.find((a) => String(a.name || '').endsWith(suffix)) : null;
+      const sums = assets.find((a) => String(a.name || '') === 'SHA256SUMS');
+      upd.latest = {
+        version, tag,
+        name: String(j.name || '').slice(0, 160),
+        publishedAt: String(j.published_at || ''),
+        notes: String(j.body || '').slice(0, 6000),
+        url: String(j.html_url || ''),
+        sumsUrl: sums ? String(sums.browser_download_url || '') : '',
+        asset: asset ? {
+          name: String(asset.name || ''), size: Number(asset.size) || 0,
+          url: String(asset.browser_download_url || ''),
+          sha256: String(asset.digest || '').replace(/^sha256:/i, '').toLowerCase(),
+        } : null,
+      };
+      upd.lastCheck = Date.now();
+      upd.lastError = '';
+      saveUpdate();
+      const available = compareVersion(version, VERSION) > 0;
+      log('INFO', `更新检查：当前 ${VERSION}，最新 ${version}${available ? '（有新版本）' : ''}${manual ? '（手动）' : ''}`);
+      if (allowAuto && upd.auto === 'install' && available && upd.triedVersion !== version && !updateInstalling) {
+        if (queuedTotal() === 0) {
+          upd.triedVersion = version;
+          saveUpdate();
+          setImmediate(() => installUpdate(false).catch((e) => log('WARN', '自动更新失败：' + String(e && e.message || e).slice(0, 200))));
+        } else {
+          log('INFO', '自动更新暂缓：队列还有消息，60 秒后重试');
+          if (updateRetryTimer) clearTimeout(updateRetryTimer);
+          updateRetryTimer = setTimeout(() => {
+            updateRetryTimer = null;
+            if (!updateClosed && upd.auto === 'install') checkUpdate(false);
+          }, 60_000);
+          updateRetryTimer.unref?.();
+        }
+      }
+    } catch (e) {
+      upd.lastCheck = Date.now();
+      upd.lastError = String(e && e.message || e).slice(0, 300);
+      saveUpdate();
+      log('WARN', '更新检查失败：' + upd.lastError);
+    } finally {
+      updateChecking = false;
+    }
+    return updateView();
+  }
+  function scheduleUpdateCheck(delayMs) {
+    if (updateTimer) { clearTimeout(updateTimer); updateTimer = null; }
+    if (updateClosed || upd.auto === 'off') return;
+    updateTimer = setTimeout(() => {
+      updateTimer = null;
+      checkUpdate(false).finally(() => scheduleUpdateCheck(upd.intervalHours * 3600_000));
+    }, Math.max(1000, Number(delayMs) || 0));
+    updateTimer.unref?.();
+  }
+  async function installUpdate(force = false) {
+    if (updateInstalling) throw new Error('update-in-progress');
+    if (!IS_SEA) throw new Error('not-single-file');
+    const platform = updatePlatform();
+    if (!platform) throw new Error('unsupported-platform');
+    if (!upd.latest || !upd.latest.asset) await checkUpdate(true, false);
+    const latest = upd.latest;
+    if (!latest || !latest.asset) throw new Error('no-update-asset');
+    if (process.env.FWARMY_UPDATE_TEST !== '1' && compareVersion(latest.version, VERSION) <= 0) throw new Error('already-latest');
+    if (!force && queuedTotal() > 0) throw new Error('queue-not-empty');
+    updateInstalling = true;
+    upd.lastError = '';
+    saveUpdate();
+    const work = path.join(DATA, 'updates', latest.version.replace(/[^0-9A-Za-z._-]/g, '_'));
+    try {
+      fs.rmSync(work, { recursive: true, force: true });
+      fs.mkdirSync(work, { recursive: true });
+      const archive = path.join(work, String(latest.asset.name).replace(/[\\/:*?"<>|]/g, '_'));
+      log('INFO', `更新：下载 ${latest.version} ${latest.asset.name}`);
+      await fetchToFile(latest.asset.url, archive);
+      if (latest.asset.size && fs.statSync(archive).size !== latest.asset.size) throw new Error('size-mismatch');
+      let want = String(latest.asset.sha256 || '').toLowerCase();
+      if (!want && latest.sumsUrl) {
+        const sums = await fetchText(latest.sumsUrl);
+        const line = String(sums).split(/\r?\n/).find((x) => x.trim().split(/\s+/)[1] === latest.asset.name);
+        if (line) want = line.trim().split(/\s+/)[0].toLowerCase();
+      }
+      if (!want) throw new Error('sha256-missing');
+      const got = await hashFile(archive);
+      if (got !== want) throw new Error('sha256-mismatch');
+      const extract = path.join(work, 'extract');
+      fs.mkdirSync(extract, { recursive: true });
+      let x;
+      if (process.platform === 'win32') {
+        const tarExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+        if (fs.existsSync(tarExe)) x = spawnSync(tarExe, ['-xf', archive, '-C', extract], { timeout: 120_000, encoding: 'utf8' });
+        if (!x || x.status !== 0) {
+          const q = (s) => String(s).replace(/'/g, "''");
+          x = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath '${q(archive)}' -DestinationPath '${q(extract)}' -Force`], { timeout: 120_000, encoding: 'utf8' });
+        }
+      } else {
+        x = spawnSync('tar', ['-xzf', archive, '-C', extract], { timeout: 120_000, encoding: 'utf8' });
+      }
+      if (!x || x.status !== 0) throw new Error('extract-failed: ' + String((x && (x.stderr || x.stdout)) || '').slice(0, 120));
+      const binName = process.platform === 'win32' ? 'FWArmy.exe' : 'FWArmy';
+      const found = findUpdateBinary(extract, binName);
+      if (!found) throw new Error('binary-not-found');
+      if (process.platform !== 'win32') fs.chmodSync(found, 0o755);
+      const newVer = spawnSync(found, ['--version'], { timeout: 30_000, encoding: 'utf8', windowsHide: true });
+      if (newVer.status !== 0 || !/FWArmy/.test(String(newVer.stdout))) throw new Error('new-binary-cannot-run');
+      if (process.env.FWARMY_UPDATE_TEST !== '1' && !String(newVer.stdout).includes(`FWArmy ${latest.version}`)) {
+        throw new Error('new-binary-version-mismatch');
+      }
+      const staged = process.execPath + '.new';
+      fs.rmSync(staged, { force: true });
+      fs.copyFileSync(found, staged);
+      if (process.platform !== 'win32') fs.chmodSync(staged, 0o755);
+      upd.lastInstall = { version: latest.version, at: Date.now(), ok: true, error: '' };
+      upd.lastError = '';
+      saveUpdate();
+      log('INFO', `更新：${latest.version} 已下载并校验，准备重启`);
+      setTimeout(() => { applyUpdate().catch((e) => log('ERROR', '重启应用更新失败：' + String(e && e.message || e).slice(0, 200))); }, 500).unref?.();
+      return updateView();
+    } catch (e) {
+      const msg = String(e && e.message || e).slice(0, 300);
+      upd.lastError = msg;
+      upd.lastInstall = { version: latest.version, at: Date.now(), ok: false, error: msg };
+      saveUpdate();
+      log('WARN', '更新失败：' + msg);
+      throw e;
+    } finally {
+      updateInstalling = false;
+    }
+  }
+  async function applyUpdate() {
+    if (!IS_SEA) return;
+    const current = process.execPath;
+    const staged = current + '.new';
+    if (!fs.existsSync(staged)) { log('WARN', '更新：找不到待替换文件'); return; }
+    const args = ['--server', `--port=${actualPort || opt.port}`, `--host=${opt.host}`, `--data=${DATA}`, '--no-open'];
+    if (opt.quiet) args.push('--quiet');
+    if (opt.logFile) args.push(`--log-file=${opt.logFile}`);
+    const old = `${current}.old-${Date.now()}`;
+    log('INFO', `更新：关闭服务并重启以应用 ${upd.latest ? upd.latest.version : '新版本'}`);
+    try { await close(); } catch { /* noop */ }
+    let movedOld = false, movedNew = false;
+    try {
+      fs.renameSync(current, old); movedOld = true;
+      fs.renameSync(staged, current); movedNew = true;
+      const child = spawn(current, args, { detached: true, stdio: 'ignore', cwd: path.dirname(current), windowsHide: true });
+      if (!child.pid) throw new Error('spawn-failed');
+      child.on('error', (e) => log('ERROR', '新版本启动失败：' + String(e && e.message || e).slice(0, 200)));
+      child.unref();
+      setTimeout(() => process.exit(0), 600);
+    } catch (e) {
+      try {
+        if (movedNew) { fs.renameSync(current, staged); movedNew = false; }
+        if (movedOld) { fs.renameSync(old, current); movedOld = false; }
+      } catch { /* noop */ }
+      upd.lastError = 'restart-failed: ' + String(e && e.message || e).slice(0, 200);
+      upd.lastInstall = { version: upd.latest ? upd.latest.version : '', at: Date.now(), ok: false, error: upd.lastError };
+      saveUpdate();
+      log('ERROR', '更新替换失败：' + upd.lastError);
+      try { spawn(current, args, { detached: true, stdio: 'ignore', cwd: path.dirname(current), windowsHide: true }).unref(); } catch { /* noop */ }
+      setTimeout(() => process.exit(1), 500);
+    }
   }
 
   async function adminApi(req, res, u) {
     const p = u.pathname;
     if (req.method === 'GET' && p === '/api/admin/stats') return send(res, 200, buildStats());
+    if (req.method === 'GET' && p === '/api/admin/update') return send(res, 200, updateView());
+    if (req.method === 'POST' && p === '/api/admin/update-check') {
+      await checkUpdate(true);
+      return send(res, 200, updateView());
+    }
+    if (req.method === 'POST' && p === '/api/admin/update-config') {
+      const j = await body(req);
+      if (j.auto !== undefined) {
+        if (!['off', 'check', 'install'].includes(j.auto)) return send(res, 400, { ok: false, error: 'bad-update-auto' });
+        upd.auto = j.auto;
+      }
+      if (j.intervalHours !== undefined) {
+        const h = Number(j.intervalHours);
+        if (!Number.isFinite(h) || h < 1 || h > 168) return send(res, 400, { ok: false, error: 'bad-update-interval' });
+        upd.intervalHours = Math.round(h);
+      }
+      upd.triedVersion = '';
+      saveUpdate();
+      scheduleUpdateCheck(upd.auto === 'off' ? 0 : 5000);
+      log('INFO', `更新设置：auto=${upd.auto} interval=${upd.intervalHours}h`);
+      return send(res, 200, { ok: true, update: updateView() });
+    }
+    if (req.method === 'POST' && p === '/api/admin/update-install') {
+      const j = await body(req);
+      try {
+        const view = await installUpdate(j && j.force === true);
+        return send(res, 200, { ok: true, restarting: true, update: view });
+      } catch (e) {
+        return send(res, 400, { ok: false, error: String(e && e.message || e).slice(0, 200), update: updateView() });
+      }
+    }
     if (req.method === 'GET' && p === '/api/admin/expand') return send(res, 200, expandView());
     if (req.method === 'POST' && p === '/api/admin/expand-inbound') {
       const j = await body(req);
@@ -2523,6 +2905,7 @@ export async function startServer(options = {}) {
   }
   if (!boundPort) throw new Error('找不到可用端口（8787 起试了 20 个）');
   port = boundPort;
+  actualPort = boundPort;
 
   const scheme = tlsInfo ? 'https' : 'http';
   try {
@@ -2538,6 +2921,21 @@ export async function startServer(options = {}) {
   log('INFO', `[fwarmy] ${PRODUCT} ${VERSION} 已启动 ${scheme}://${opt.host}:${port}  管理页 ${adminUrl}（本机直接打开，无需密钥）`);
   log('INFO', `[fwarmy] 数据目录 ${DATA}；只存凭据哈希/配置/统计/消息ID哈希，不存消息；队列 TTL ${TTL_MS / 1000}s`);
   if (firstRunPending()) log('INFO', '[fwarmy] 首次启动凭据待保存：打开管理页查看（不会写进日志）');
+  /** 上一版更新留下的 .old/.new：新进程稳定后清掉；Windows 上旧进程退出前文件仍被锁，失败就下次再清。 */
+  if (IS_SEA) {
+    setTimeout(() => {
+      try {
+        const dir = path.dirname(process.execPath);
+        const base = path.basename(process.execPath);
+        for (const f of fs.readdirSync(dir)) {
+          if (f === base + '.new' || f.startsWith(base + '.old-')) {
+            try { fs.rmSync(path.join(dir, f), { force: true }); } catch { /* 下次再清 */ }
+          }
+        }
+      } catch { /* noop */ }
+    }, 15_000).unref();
+  }
+  scheduleUpdateCheck(60_000);
 
   function openBrowser(url) {
     try {
@@ -2571,6 +2969,9 @@ export async function startServer(options = {}) {
   }
   /** 门禁/嵌入用：停监听、清定时器、落盘，但**不**结束进程（shutdown 才 exit）。 */
   async function close() {
+    updateClosed = true;
+    if (updateTimer) { clearTimeout(updateTimer); updateTimer = null; }
+    if (updateRetryTimer) { clearTimeout(updateRetryTimer); updateRetryTimer = null; }
     clearInterval(statsInterval);
     clearInterval(pruneTimer);
     clearInterval(queueClean);

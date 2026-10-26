@@ -97,6 +97,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
   <button class="tab active" data-tab="overview">总览</button>
   <button class="tab" data-tab="expand">扩网</button>
   <button class="tab" data-tab="logs">日志</button>
+  <button class="tab" data-tab="update">更新</button>
 </div>
 
 <section id="tab-overview" class="active">
@@ -251,6 +252,35 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
   </div>
 </section>
 
+<section id="tab-update">
+  <div class="panel">
+    <h2>自动更新 <small>只替换程序，不动 data/；单文件运行时才可安装</small></h2>
+    <div class="cards" id="updCards"></div>
+    <div class="grid">
+      <label class="f">策略
+        <select id="updAuto">
+          <option value="off">关闭（不检查）</option>
+          <option value="check">检查并提示（默认）</option>
+          <option value="install">自动下载并重启</option>
+        </select>
+      </label>
+      <label class="f">检查间隔（小时）<input id="updInterval" type="number" min="1" max="168" step="1"></label>
+    </div>
+    <div class="toolbar" style="margin-top:10px">
+      <button class="primary" id="updCheck">检查更新</button>
+      <button id="updInstall">下载并重启</button>
+      <span class="muted" id="updMsg"></span>
+    </div>
+    <div class="hint" id="updHint">默认只检查并提示；自动安装需要你显式切换。重启会清空内存队列（消息 TTL 30 秒），队列非空时默认不带 force 的安装会被拒绝。</div>
+    <pre class="log" id="updNotes" style="max-height:260px">尚未检查更新。</pre>
+    <div class="hint"><a id="updLink" target="_blank" rel="noopener" hidden>打开发布页</a></div>
+  </div>
+  <div class="panel">
+    <h2>更新记录 <small>最近一次检查 / 安装</small></h2>
+    <div class="tablewrap"><table id="updTable"></table></div>
+  </div>
+</section>
+
 <div class="foot">
   FWArmy · WArmy专属服务器，和 WArmy 主应用分开安装。数据目录：<code id="dataDir">—</code>。暂停期间内存消息仍按 30 秒 TTL 过期；退出进程会清空队列，需手动重启。
 </div>
@@ -303,7 +333,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
 'use strict';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
-let S = null, E = null, SEC = null, R = null, firstRun = null, editing = null, deleting = null, cfgDirty = false, activeTab = 'overview';
+let S = null, E = null, SEC = null, R = null, U = null, firstRun = null, editing = null, deleting = null, cfgDirty = false, activeTab = 'overview';
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const num = (n) => Number(n || 0).toLocaleString('zh-CN');
@@ -361,6 +391,7 @@ function switchTab(name) {
   $$('section').forEach((s) => s.classList.toggle('active', s.id === 'tab-' + name));
   if (name === 'logs') loadLogs();
   if (name === 'expand') loadExpand();
+  if (name === 'update') loadUpdate();
   if (name === 'settings') fillCfg();
 }
 function usageCell(b) {
@@ -391,7 +422,8 @@ function render() {
     `<span class="pill">在线 ${num(S.users)}</span>` +
     `<span class="pill">队列 ${num(S.queued)}</span>` +
     `<span class="pill">运行 ${fmtDur(S.uptimeSec)}</span>` +
-    `<span class="pill">v${esc(S.version)}</span>`;
+    `<span class="pill">v${esc(S.version)}</span>` +
+    (S.update && S.update.available ? `<span class="pill warn">更新 ${esc(S.update.latest)}</span>` : '');
   $('#cards').innerHTML = [
     ['当前速度', `${num(t.speed.reqPerMin)} 次/分`, `${fmtBytes(t.speed.bytesPerMin)}/分`],
     ['峰值（每分钟）', `${num(t.peakPerMin)} 次`, t.peakAt ? fmtTime(t.peakAt) : '—'],
@@ -475,6 +507,71 @@ async function loadLogs() {
     $('#logFile').textContent = j.file || '';
     $('#logBox').scrollTop = $('#logBox').scrollHeight;
   } catch (e) { $('#logBox').textContent = '读取失败：' + e.message; }
+}
+
+/* ── 自动更新 ─────────────────────────────────────────────────────── */
+function updAutoText(v) {
+  return v === 'install' ? '自动下载并重启' : v === 'check' ? '检查并提示' : '关闭';
+}
+function renderUpdate() {
+  if (!U) return;
+  const l = U.latest || {};
+  const a = l.asset || {};
+  const cards = [
+    ['当前版本', 'v' + U.current, U.platform || '源码/不支持自动替换'],
+    ['最新版本', l.version ? 'v' + l.version : '—', l.publishedAt ? fmtTime(Date.parse(l.publishedAt)) : '—'],
+    ['更新状态', U.updateAvailable ? '有新版本' : (U.lastCheck ? '已是最新' : '尚未检查'), U.singleFile ? '单文件运行' : '源码运行（只检查）'],
+    ['自动策略', updAutoText(U.auto), '每 ' + U.intervalHours + ' 小时'],
+    ['本机队列', String(U.queue || 0), '重启会丢失内存队列'],
+    ['上次检查', U.lastCheck ? fmtTime(U.lastCheck) : '—', U.lastError ? '错误：' + U.lastError : ''],
+  ];
+  $('#updCards').innerHTML = cards.map(([k, v, s]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join('');
+  $('#updAuto').value = U.auto;
+  $('#updInterval').value = U.intervalHours;
+  $('#updInstall').disabled = !U.canInstall;
+  let msg = '';
+  if (U.installing) msg = '正在下载/校验…';
+  else if (U.staged) msg = '已下载，等待重启';
+  else if (U.updateAvailable) msg = '发现 v' + l.version + '，可以下载并重启';
+  else if (U.lastCheck) msg = '已是最新';
+  else msg = '尚未检查';
+  $('#updMsg').textContent = msg;
+  $('#updNotes').textContent = (l.notes && String(l.notes).trim()) || (U.lastCheck ? '（这次发布没有说明）' : '尚未检查更新。');
+  const link = $('#updLink');
+  if (l.url && /^https:\/\/github\.com\/Pondsi\/FWArmy\/releases\//.test(l.url)) { link.hidden = false; link.href = l.url; }
+  else { link.hidden = true; link.removeAttribute('href'); }
+  const rows = [
+    ['当前版本', 'v' + U.current],
+    ['运行形态', U.singleFile ? '单文件（可自动替换）' : '源码（不可自动替换）'],
+    ['平台', U.platform || '不支持'],
+    ['最新版本', l.version ? ('v' + l.version + ' · ' + (l.tag || '')) : '—'],
+    ['产物', a.name ? `${a.name}（${fmtBytes(a.size)}）` : '—'],
+    ['SHA256', a.sha256 || '—'],
+    ['发布页', l.url || '—'],
+    ['上次检查', U.lastCheck ? fmtTime(U.lastCheck) : '—'],
+    ['上次安装', U.lastInstall ? (U.lastInstall.version + ' · ' + (U.lastInstall.ok ? '成功' : '失败') + ' · ' + fmtTime(U.lastInstall.at) + (U.lastInstall.error ? (' · ' + U.lastInstall.error) : '')) : '—'],
+    ['错误', U.lastError || '—'],
+  ];
+  $('#updTable').innerHTML = '<tr><th>项目</th><th>值</th></tr>' +
+    rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('');
+}
+async function loadUpdate() {
+  try {
+    U = await api('/api/admin/update');
+    renderUpdate();
+  } catch (e) {
+    $('#updMsg').textContent = '读取更新状态失败：' + e.message;
+  }
+}
+async function saveUpdPrefs() {
+  try {
+    U = await api('/api/admin/update-config', {
+      auto: $('#updAuto').value,
+      intervalHours: Number($('#updInterval').value),
+    });
+    renderUpdate();
+    toast('更新设置已保存');
+  } catch (e) { toast(e.message, true); }
 }
 /* ── 扩网 / 被扩网 ─────────────────────────────────────────────────── */
 function exCards(side) {
@@ -810,6 +907,52 @@ $('#reachUnmap').addEventListener('click', async () => {
 });
 $('#saveCred').addEventListener('click', saveCred);
 $('#saveCfg').addEventListener('click', saveCfg);
+$('#updCheck').addEventListener('click', async () => {
+  const b = $('#updCheck');
+  b.disabled = true;
+  $('#updMsg').textContent = '正在检查…';
+  try {
+    U = await api('/api/admin/update-check', {});
+    renderUpdate();
+    toast(U.updateAvailable ? ('发现 v' + (U.latest && U.latest.version)) : '已是最新', false);
+  } catch (e) {
+    $('#updMsg').textContent = '检查失败：' + e.message;
+    toast(e.message, true);
+  } finally { b.disabled = false; }
+});
+$('#updInstall').addEventListener('click', async () => {
+  if (!U || !U.canInstall) return;
+  const note = U.queue
+    ? `内存队列还有 ${U.queue} 条消息，重启会丢失（TTL 30 秒）。仍要更新到 v${U.latest.version}？`
+    : `下载 v${U.latest.version}、替换程序并重启服务器？data/ 不会被改动。`;
+  if (!confirm(note)) return;
+  const b = $('#updInstall');
+  b.disabled = true;
+  $('#updMsg').textContent = '开始下载并校验…';
+  try {
+    await api('/api/admin/update-install', { force: U.queue > 0 });
+    toast('已开始更新，服务器正在重启…');
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 800));
+      try {
+        const h = await fetch('/api/health', { cache: 'no-store' });
+        if (h.ok) {
+          await refresh();
+          await loadUpdate();
+          toast('更新完成');
+          return;
+        }
+      } catch { /* 等重启 */ }
+    }
+    toast('等待重启超时；请刷新页面或查看 data/server.log', true);
+  } catch (e) {
+    toast('更新失败：' + e.message, true);
+    b.disabled = false;
+    await loadUpdate();
+  }
+});
+$('#updAuto').addEventListener('change', saveUpdPrefs);
+$('#updInterval').addEventListener('change', saveUpdPrefs);
 $('#refreshLog').addEventListener('click', loadLogs);
 $('#delConfirm').addEventListener('input', () => { $('#doDelete').disabled = !deleting || $('#delConfirm').value.trim() !== deleting.name; });
 $('#doDelete').addEventListener('click', doDelete);

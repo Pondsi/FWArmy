@@ -1,18 +1,18 @@
 #!/bin/sh
 # FWArmy 无证书安装器（macOS / Linux）
 #
-#   curl -fsSL https://github.com/Pondsi/FWArmy/releases/download/v0.5.0/install.sh | sh
+#   curl -fsSL https://github.com/Pondsi/FWArmy/releases/download/v0.5.1/install.sh | sh
 #
 # 做四件事：下载本平台单文件、校验 SHA256、装到用户目录、生成可双击入口。
 # 不请求管理员权限，不启动服务，不覆盖已有的 data/（凭据/统计/日志）。
 #
 # 可用环境变量：
-#   FWARMY_VERSION  指定版本（默认 0.5.0）
+#   FWARMY_VERSION  指定版本（默认 0.5.1）
 #   FWARMY_HOME     指定安装目录
 #   FWARMY_BASE     指定下载源（默认 GitHub Release；本地测试可传目录）
 set -eu
 
-VERSION="${FWARMY_VERSION:-0.5.0}"
+VERSION="${FWARMY_VERSION:-0.5.1}"
 REPO="${FWARMY_REPO:-Pondsi/FWArmy}"
 BASE="${FWARMY_BASE:-https://github.com/$REPO/releases/download/v$VERSION}"
 

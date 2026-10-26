@@ -46,7 +46,7 @@ jobs:
       - name: Source expand/security gate (41 checks)
         run: node verify-expand.mjs
 
-      - name: Binary acceptance (31 checks)
+      - name: Binary acceptance (34 checks)
         run: node verify-binary.mjs dist/${{ matrix.bin }}
 
       - name: macOS ad-hoc signature check
@@ -59,6 +59,17 @@ jobs:
 
       - name: Package
         run: node packaging/package.mjs --platform=${{ matrix.platform }}
+
+      - name: Auto-update gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          V=$(node -p "require('./package.json').version")
+          case "${{ matrix.platform }}" in
+            win-x64) A="out/FWArmy-$V-win-x64.zip"; B="dist/FWArmy.exe" ;;
+            *) A="out/FWArmy-$V-${{ matrix.platform }}.tar.gz"; B="dist/FWArmy" ;;
+          esac
+          node verify-update.mjs "$B" "$A"
 
       - name: Installer smoke (macOS/Linux)
         if: runner.os != 'Windows'

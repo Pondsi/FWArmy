@@ -1,17 +1,17 @@
 # FWArmy installer for Windows x64 (no code-signing certificate required)
 #
-#   irm https://github.com/Pondsi/FWArmy/releases/download/v0.5.0/install.ps1 | iex
+#   irm https://github.com/Pondsi/FWArmy/releases/download/v0.5.1/install.ps1 | iex
 #
 # Downloads the single-file zip, verifies SHA256SUMS, extracts to %LOCALAPPDATA%\FWArmy,
 # and creates a Start Menu shortcut. No admin rights, no auto-start, and never deletes data\.
 #
 # Environment variables:
-#   FWARMY_VERSION        override version (default 0.5.0)
+#   FWARMY_VERSION        override version (default 0.5.1)
 #   FWARMY_BASE           override download base (a URL or a local directory; for tests)
 #   FWARMY_SKIP_SHORTCUT  set to 1 to skip the Start Menu shortcut (for tests)
 $ErrorActionPreference = 'Stop'
 
-$Version = if ($env:FWARMY_VERSION) { $env:FWARMY_VERSION } else { '0.5.0' }
+$Version = if ($env:FWARMY_VERSION) { $env:FWARMY_VERSION } else { '0.5.1' }
 $Repo = if ($env:FWARMY_REPO) { $env:FWARMY_REPO } else { 'Pondsi/FWArmy' }
 $Base = if ($env:FWARMY_BASE) { $env:FWARMY_BASE } else { "https://github.com/$Repo/releases/download/v$Version" }
 $Asset = "FWArmy-$Version-win-x64.zip"

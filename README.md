@@ -6,19 +6,19 @@
 > 它和 WArmy 主应用**分开安装、分开运行**：服务器可以放在一台常开的电脑/云主机上，主应用只把它当“可选服务器”填地址和凭据。
 > 目录旧名是 `relay-server/`，第 64 轮起统一改名 `fwarmy/`；协议和加密没有变。
 
-验证：`node verify-expand.mjs`（41 条）+ `node verify-binary.mjs <单文件>`（31 条）。
+验证：`node verify-expand.mjs`（41 条）+ `node verify-binary.mjs <单文件>`（34 条）。
 
-## 0. 三平台直接安装（0.5.0）
+## 0. 三平台直接安装（0.5.1）
 
 单文件自带运行时，**不装 Node、不要管理员权限、不需要付费证书**。安装器会先校验 `SHA256SUMS`，不会覆盖已有的 `data/`。
 
 | 平台 | 一行安装 | 安装后启动 |
 |---|---|---|
-| Windows x64 | `irm https://github.com/Pondsi/FWArmy/releases/download/v0.5.0/install.ps1 \| iex` | 开始菜单搜索 **FWArmy**（或双击安装目录里的 `FWArmy.exe`） |
-| macOS arm64 / Intel | `curl -fsSL https://github.com/Pondsi/FWArmy/releases/download/v0.5.0/install.sh \| sh` | 双击 `~/Applications/FWArmy/FWArmy.command` |
-| Linux x64 | `curl -fsSL https://github.com/Pondsi/FWArmy/releases/download/v0.5.0/install.sh \| sh` | 应用菜单搜索 **FWArmy**（或 `~/.local/bin/fwarmy --open`） |
+| Windows x64 | `irm https://github.com/Pondsi/FWArmy/releases/download/v0.5.1/install.ps1 \| iex` | 开始菜单搜索 **FWArmy**（或双击安装目录里的 `FWArmy.exe`） |
+| macOS arm64 / Intel | `curl -fsSL https://github.com/Pondsi/FWArmy/releases/download/v0.5.1/install.sh \| sh` | 双击 `~/Applications/FWArmy/FWArmy.command` |
+| Linux x64 | `curl -fsSL https://github.com/Pondsi/FWArmy/releases/download/v0.5.1/install.sh \| sh` | 应用菜单搜索 **FWArmy**（或 `~/.local/bin/fwarmy --open`） |
 
-直接下载便携包也可以：`FWArmy-0.5.0-win-x64.zip`、`FWArmy-0.5.0-macos-arm64.tar.gz`、`FWArmy-0.5.0-macos-x64.tar.gz`、`FWArmy-0.5.0-linux-x64.tar.gz`；解压后运行对应启动脚本。
+直接下载便携包也可以：`FWArmy-0.5.1-win-x64.zip`、`FWArmy-0.5.1-macos-arm64.tar.gz`、`FWArmy-0.5.1-macos-x64.tar.gz`、`FWArmy-0.5.1-linux-x64.tar.gz`；解压后运行对应启动脚本。
 
 **关于系统拦截（重要）**：用上面的 `irm` / `curl` 一行命令安装，文件不会带 macOS quarantine 或 Windows MOTW，安装后双击可直接启动。  
 如果先从**浏览器**下载压缩包再解压，macOS Gatekeeper 和 Windows SmartScreen 可能各拦一次：
@@ -27,11 +27,24 @@
 - Windows：SmartScreen 选“更多信息 → 仍要运行”；Windows 11 的 Smart App Control 开启时可能直接拦未签名程序，需要在“Windows 安全中心 → 应用和浏览器控制”里关闭后重试。
 - 要“浏览器下载后首次双击零警告”，只能 macOS 买 Apple Developer ID（99 美元/年）并公证，Windows 走 Microsoft Store（唯一保证）或签名+声誉（首次仍可能警告）。这与 Node/Java/Go 无关，是操作系统策略。详见 [docs/INSTALL-3-PLATFORMS.md](docs/INSTALL-3-PLATFORMS.md)。
 
-三平台产物由 GitHub Actions 在 Windows、macOS 26 arm64、macOS 26 Intel、Ubuntu 真机上分别构建并跑完 `verify-expand` 41 条 + `verify-binary` 31 条后才上传；不是“声称支持”，是每个平台真跑过。
+三平台产物由 GitHub Actions 在 Windows、macOS 26 arm64、macOS 26 Intel、Ubuntu 真机上分别构建并跑完 `verify-expand` 41 条 + `verify-binary` 34 条 + 自动更新门禁后才上传；不是“声称支持”，是每个平台真跑过。
+
+### 自动更新（0.5.1 起）
+
+- 管理页新增 **更新** 标签：当前/最新版本、检查更新、下载并重启、自动策略（关闭 / 检查并提示 / 自动下载并重启）、检查间隔（1–168 小时）。
+- 默认是 **检查并提示**；要无人值守更新，在管理页把策略切到「自动下载并重启」。
+- 更新源是 GitHub Release 的 latest；只下载当前平台产物，校验 GitHub 资产 sha256（缺失时回退 `SHA256SUMS`）后才替换。下载/校验失败不会动当前程序。
+- 重启会清空内存队列（消息 TTL 30 秒）。队列非空时，自动安装会延后 60 秒重试；手动「下载并重启」会提示并允许强制。
+- CLI：`FWArmy update`（检查）、`FWArmy update --yes`（安装并重启）、`FWArmy update --auto=install`、`FWArmy update --status`。
+- 更新只替换程序，保留 `data/`；旧文件 `.old-*` 会在新进程启动 15 秒后清理。新版本起不来时，可把最新的 `.old-*` 改名回 `FWArmy`/`FWArmy.exe` 回滚。
+- **0.5.0 没有更新器**：从 0.5.0 升到 0.5.1 需要手动跑一次安装器；从 0.5.1 起可自动更新到后续版本。
+- 检查 GitHub API 有频率限制（未登录约 60 次/小时）；默认 6 小时一次，手动检查失败会在页面显示原因，不影响服务。
 
 
 FWArmy 只做**撮合与转发**：帮两个客户端找到彼此、转发不透明密文；**不存消息、不解析内容**。
 消息只在内存队列停留最多 30 秒；磁盘上只有凭据哈希、配置、统计和运行日志。
+
+完整的三平台操作流程、联网/TLS/防火墙/扩网/更新/故障排查见 [docs/USAGE-3-PLATFORMS.md](docs/USAGE-3-PLATFORMS.md)。
 
 ---
 
@@ -53,11 +66,11 @@ FWArmy 只做**撮合与转发**：帮两个客户端找到彼此、转发不透
 ### 2.1 直接安装（推荐）
 
 ```powershell
-irm https://github.com/Pondsi/FWArmy/releases/download/v0.5.0/install.ps1 | iex
+irm https://github.com/Pondsi/FWArmy/releases/download/v0.5.1/install.ps1 | iex
 ```
 
 - 装到 `%LOCALAPPDATA%\FWArmy`，并创建开始菜单快捷方式；不需要管理员权限。
-- 安装器会下载 `FWArmy-0.5.0-win-x64.zip`、核对 `SHA256SUMS`，再解压；升级时**不会覆盖** `data\`。
+- 安装器会下载 `FWArmy-0.5.1-win-x64.zip`、核对 `SHA256SUMS`，再解压；升级时**不会覆盖** `data\`。
 - 用 `irm` 安装不会给文件打 MOTW，安装后双击不触发 SmartScreen；如果从浏览器下载 zip，可能触发“更多信息 → 仍要运行”。
 
 ### 2.2 便携包 / 自行构建
@@ -107,7 +120,7 @@ dist\FWArmy.exe stop
 ### 3.1 直接安装（推荐）
 
 ```bash
-curl -fsSL https://github.com/Pondsi/FWArmy/releases/download/v0.5.0/install.sh | sh
+curl -fsSL https://github.com/Pondsi/FWArmy/releases/download/v0.5.1/install.sh | sh
 ```
 
 - macOS 装到 `~/Applications/FWArmy`，生成可双击的 `FWArmy.command`；Intel / Apple Silicon 都支持。
@@ -131,7 +144,7 @@ node ctl.mjs stop
 - macOS：构建脚本会先 `codesign --remove-signature`，注入后 `codesign --sign -`（ad-hoc）。
 - Linux：产物是普通 ELF 可执行文件；安装后的 `.desktop` 负责菜单入口，不需要 `.deb`/AppImage。
 - 两个平台都提供 `start.sh` / `stop.sh` / `fwarmy-headless.sh` / `fwarmy-console.sh`；`start.sh` 会在后台启动单文件并用系统默认浏览器打开管理页。
-- **macOS arm64、macOS x64、Linux x64 都已在 GitHub Actions 真机上跑完 41 + 31 条验收**（见 `.github/workflows/build.yml`），不再只是“构建脚本写了但没跑”。
+- **macOS arm64、macOS x64、Linux x64 都已在 GitHub Actions 真机上跑完 41 + 34 条验收**（见 `.github/workflows/build.yml`），不再只是“构建脚本写了但没跑”。
 
 ### 3.3 构建期依赖（运行期零依赖）
 
@@ -157,9 +170,10 @@ node ctl.mjs stop
 
 ## 4. 管理页（本机打开即用，无登录）
 
-启动后打开 `http://127.0.0.1:8787/`（端口被占用会自动 +1，实际端口见 `data/instance.json`）。页面上可以：
+启动后打开 `https://127.0.0.1:8787/`（TLS 关闭时是 `http://`；端口被占用会自动 +1，实际端口见 `data/instance.json`）。页面上可以：
 
 - **总览**：运行时长、在线数、队列、当前速度（最近 60 秒）、峰值/分钟、今日/本月/今年/累计的请求数与上下行字节、未授权尝试。
+- **更新**：当前/最新版本、检查更新、下载并重启、自动策略与检查间隔、发布说明、最近检查/安装记录。
 - **凭据**：新建（名称 + 可选限额）、改名、改速度、停用/启用、删除（删除需再输入一次凭据名称）。
 - **设置**：全局默认的请求速度、流量速度、日/月/年字节上限、单信封上限、队列上限、在线 TTL、接客开关。
 - **日志**：最近 200 行运行日志（不含消息明文/凭据明文）。
@@ -272,7 +286,7 @@ fwarmy-console.bat      :: 控制台表格，每 2 秒刷新；Ctrl+C 退出
 - 顶层 `unauthorized`：没有有效凭据的尝试次数（不归属任何凭据）。
 
 `data/credentials.json` 只存 `sha256(token)`、名称、限额、停用状态、创建/最近使用时间；**不存明文 token**（首次引导文件除外，确认后删除）。
-`data/config.json` 存全局默认；`data/instance.json` / `server.pid` 用于单实例与 `stop` 识别；`data/.initialized` 防止删光凭据后重启又自动生成。
+`data/config.json` 存全局默认；`data/update.json` 存更新策略/最近检查/安装记录；`data/updates/` 暂存下载的更新包；`data/instance.json` / `server.pid` 用于单实例与 `stop` 识别；`data/.initialized` 防止删光凭据后重启又自动生成。
 
 删除整个 `data/` = 恢复出厂：所有凭据失效、统计清零。
 
@@ -328,8 +342,11 @@ node fwarmy/verify-binary.mjs fwarmy/dist/FWArmy       # macOS/Linux
 
 # 打包（CI 也是同一条命令）
 node packaging/package.mjs --platform=win-x64
+
+# 自动更新门禁（mock 更新源，不访问 GitHub）
+node fwarmy/verify-update.mjs fwarmy/dist/FWArmy.exe fwarmy/out/FWArmy-0.5.1-win-x64.zip
 ```
 
-三平台 CI：`.github/workflows/build.yml`（Windows / macOS 26 arm64 / macOS 26 Intel / Ubuntu）。每个 job 都先跑源码 41 条，再跑单文件 31 条，再做安装器冒烟；macOS 额外 `codesign --verify`。发布前用下载到的四个产物复核 `SHA256SUMS`。
+三平台 CI：`.github/workflows/build.yml`（Windows / macOS 26 arm64 / macOS 26 Intel / Ubuntu）。每个 job 都先跑源码 41 条，再跑单文件 34 条，再做安装器冒烟和自动更新门禁；macOS 额外 `codesign --verify`。发布前用下载到的四个产物复核 `SHA256SUMS`。
 
 协议细节：`docs/SERVER-RELAY.md`。第 63 轮及更早的交接文档里的 `relay-server/` 路径已同步改为 `fwarmy/`。
