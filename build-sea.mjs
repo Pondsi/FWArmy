@@ -70,7 +70,7 @@ const seaConfig = {
   disableExperimentalSEAWarning: true,
   useSnapshot: false,
   useCodeCache: false,
-  assets: { 'admin.html': 'admin.html' },
+  assets: { 'admin.html': 'admin.html', 'logo.svg': 'assets/logo.svg' },
 };
 fs.writeFileSync(path.join(BUILD, 'sea-config.json'), JSON.stringify(seaConfig, null, 2));
 run(process.execPath, ['--experimental-sea-config', path.join(BUILD, 'sea-config.json')]);
@@ -91,13 +91,22 @@ if (process.platform === 'darwin') run('codesign', ['--sign', '-', outExe]);
 if (process.platform !== 'win32') fs.chmodSync(outExe, 0o755);
 
 console.log('[4/5] 组装便携目录（启动脚本/说明）');
-for (const f of ['admin.html', 'README.md', 'start.bat', 'start.sh', 'stop.bat', 'stop.sh', 'fwarmy-headless.bat', 'fwarmy-console.bat', 'fwarmy-headless.sh', 'fwarmy-console.sh']) {
+const common = ['admin.html', 'README.md', 'install.ps1', 'install.sh', 'FWArmy.command', 'FWArmy.desktop'];
+const perPlatform = process.platform === 'win32'
+  ? ['start.bat', 'stop.bat', 'fwarmy-headless.bat', 'fwarmy-console.bat']
+  : ['start.sh', 'stop.sh', 'fwarmy-headless.sh', 'fwarmy-console.sh',
+    ...(process.platform === 'darwin' ? ['FWArmy.command'] : ['FWArmy.desktop'])];
+for (const f of [...common, ...perPlatform]) {
   const src = path.join(ROOT, f);
-  if (fs.existsSync(src)) {
-    const dst = path.join(OUT, f);
-    fs.copyFileSync(src, dst);
-    if (process.platform !== 'win32' && f.endsWith('.sh')) fs.chmodSync(dst, 0o755);
-  }
+  if (!fs.existsSync(src)) continue;
+  const dst = path.join(OUT, f);
+  fs.copyFileSync(src, dst);
+  if (process.platform !== 'win32' && (f.endsWith('.sh') || f.endsWith('.command'))) fs.chmodSync(dst, 0o755);
+}
+const logoSrc = path.join(ROOT, 'assets', 'logo.svg');
+if (fs.existsSync(logoSrc)) {
+  fs.mkdirSync(path.join(OUT, 'assets'), { recursive: true });
+  fs.copyFileSync(logoSrc, path.join(OUT, 'assets', 'logo.svg'));
 }
 const info = [
   `${'FWArmy'} ${JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version}`,

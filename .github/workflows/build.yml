@@ -1,0 +1,118 @@
+name: FWArmy three-platform build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fwarmy-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win-x64
+            bin: FWArmy.exe
+          - os: macos-26-intel
+            platform: macos-x64
+            bin: FWArmy
+          - os: macos-26
+            platform: macos-arm64
+            bin: FWArmy
+          - os: ubuntu-latest
+            platform: linux-x64
+            bin: FWArmy
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.20.0'
+
+      - name: Build single-file binary
+        run: node build-sea.mjs
+
+      - name: Source expand/security gate (41 checks)
+        run: node verify-expand.mjs
+
+      - name: Binary acceptance (31 checks)
+        run: node verify-binary.mjs dist/${{ matrix.bin }}
+
+      - name: macOS ad-hoc signature check
+        if: runner.os == 'macOS'
+        run: |
+          file dist/FWArmy
+          codesign --verify --strict --verbose=2 dist/FWArmy
+          # 未公证时 spctl 预期拒绝；这里只记录，不让它误判为构建失败。
+          spctl -a -vv dist/FWArmy || true
+
+      - name: Package
+        run: node packaging/package.mjs --platform=${{ matrix.platform }}
+
+      - name: Installer smoke (macOS/Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd out
+          ls *.sha256 | xargs cat > SHA256SUMS
+          TMPHOME="$RUNNER_TEMP/fwarmy-install-home"
+          TMPINST="$RUNNER_TEMP/fwarmy-install-dir"
+          rm -rf "$TMPHOME" "$TMPINST"
+          mkdir -p "$TMPHOME"
+          FWARMY_BASE="$PWD" FWARMY_HOME="$TMPINST" HOME="$TMPHOME" sh ../install.sh
+          test -x "$TMPINST/FWArmy"
+          "$TMPINST/FWArmy" --version
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            test -x "$TMPINST/FWArmy.command"
+            codesign --verify --strict --verbose=2 "$TMPINST/FWArmy"
+          else
+            test -f "$TMPHOME/.local/share/applications/fwarmy.desktop"
+            test -x "$TMPHOME/.local/bin/fwarmy"
+          fi
+          mkdir -p "$TMPINST/data"
+          echo keep > "$TMPINST/data/keep.txt"
+          FWARMY_BASE="$PWD" FWARMY_HOME="$TMPINST" HOME="$TMPHOME" sh ../install.sh >/dev/null
+          test -f "$TMPINST/data/keep.txt"
+
+      - name: Installer smoke (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-Location out
+          Get-ChildItem *.sha256 | ForEach-Object { Get-Content $_.FullName } | Set-Content SHA256SUMS
+          $tmp = Join-Path $env:RUNNER_TEMP 'fwarmy-install'
+          Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+          $env:FWARMY_BASE = (Get-Location).Path
+          $env:LOCALAPPDATA = $tmp
+          $env:FWARMY_SKIP_SHORTCUT = '1'
+          & ..\install.ps1
+          $exe = Join-Path $tmp 'FWArmy\FWArmy.exe'
+          & $exe --version
+          New-Item -ItemType Directory -Force (Join-Path $tmp 'FWArmy\data') | Out-Null
+          Set-Content (Join-Path $tmp 'FWArmy\data\keep.txt') 'keep'
+          & ..\install.ps1 | Out-Null
+          if (-not (Test-Path (Join-Path $tmp 'FWArmy\data\keep.txt'))) { throw 'upgrade lost data' }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FWArmy-${{ matrix.platform }}
+          path: |
+            out/*.zip
+            out/*.tar.gz
+            out/*.sha256
+          if-no-files-found: error
+          retention-days: 14

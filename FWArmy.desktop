@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=FWArmy
+Comment=FWArmy relay server
+Exec=FWArmy --open
+Icon=fwarmy
+Terminal=false
+Categories=Network;Utility;
+StartupNotify=false

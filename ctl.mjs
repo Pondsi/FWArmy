@@ -228,8 +228,8 @@ function cmdStop(argv) {
     const pid = Number(inst && inst.pid) || readPid(dir);
     const h = await health(port);
     const shiWoMen = !!(h && (h.server === 'fwarmy-relay' || h.server === 'warmy-relay'));
-    if (!pid) {
-      console.log(shiWoMen ? `端口 ${port} 上有 FWArmy，但没有 PID 文件；为安全起见不杀未知进程。` : '没有发现运行中的 FWArmy。');
+    if (!pid && !shiWoMen) {
+      console.log('没有发现运行中的 FWArmy。');
       return 0;
     }
     if (!shiWoMen && !has(argv, 'force')) {
@@ -237,13 +237,31 @@ function cmdStop(argv) {
       console.log('确认这是挂死的旧服务、仍要强杀时：FWArmy stop --force');
       return 1;
     }
+    /** 先走管理面 /api/admin/shutdown：三平台都能正常落盘并 exit(0)；Windows 的 SIGTERM 是强杀，不落盘。 */
+    if (shiWoMen) {
+      try { await request(localBase(port, h), '/api/admin/shutdown', {}, 2500); } catch { /* 回退到信号 */ }
+      for (let i = 0; i < 50; i++) {
+        if (!(await health(port, 300))) break;
+        await new Promise((r) => setTimeout(r, 150));
+      }
+    }
+    let still = await health(port, 300);
+    if (!still) {
+      try { fs.rmSync(path.join(dir, 'server.pid'), { force: true }); } catch { /* noop */ }
+      try { fs.rmSync(path.join(dir, 'instance.json'), { force: true }); } catch { /* noop */ }
+      console.log(`已停止 pid=${pid || '?'}`);
+      return 0;
+    }
+    if (!pid) {
+      console.log(`端口 ${port} 上有 FWArmy，但没有 PID 文件；为安全起见不杀未知进程。`);
+      return 0;
+    }
     try { process.kill(pid, 'SIGTERM'); } catch (e) { console.log('发送停止信号失败：' + String(e).slice(0, 120)); }
     for (let i = 0; i < 50; i++) {
-      const still = await health(port, 300);
+      still = await health(port, 300);
       if (!still) break;
       await new Promise((r) => setTimeout(r, 150));
     }
-    const still = await health(port, 300);
     if (still && has(argv, 'force')) {
       try { process.kill(pid, 'SIGKILL'); } catch { /* noop */ }
       await new Promise((r) => setTimeout(r, 300));
