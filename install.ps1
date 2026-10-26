@@ -1,14 +1,14 @@
-﻿# FWArmy 无证书安装器（Windows x64）
+# FWArmy installer for Windows x64 (no code-signing certificate required)
 #
 #   irm https://github.com/Pondsi/FWArmy/releases/download/v0.5.0/install.ps1 | iex
 #
-# 做四件事：下载单文件 zip、校验 SHA256、解压到 %LOCALAPPDATA%\FWArmy、建开始菜单快捷方式。
-# 不请求管理员权限，不启动服务，不覆盖已有的 data\（凭据/统计/日志）。
+# Downloads the single-file zip, verifies SHA256SUMS, extracts to %LOCALAPPDATA%\FWArmy,
+# and creates a Start Menu shortcut. No admin rights, no auto-start, and never deletes data\.
 #
-# 可用环境变量：
-#   FWARMY_VERSION        指定版本（默认 0.5.0）
-#   FWARMY_BASE           指定下载源（默认 GitHub Release；本地测试可传目录）
-#   FWARMY_SKIP_SHORTCUT  设为 1 时不建开始菜单快捷方式（测试用）
+# Environment variables:
+#   FWARMY_VERSION        override version (default 0.5.0)
+#   FWARMY_BASE           override download base (a URL or a local directory; for tests)
+#   FWARMY_SKIP_SHORTCUT  set to 1 to skip the Start Menu shortcut (for tests)
 $ErrorActionPreference = 'Stop'
 
 $Version = if ($env:FWARMY_VERSION) { $env:FWARMY_VERSION } else { '0.5.0' }
@@ -19,7 +19,7 @@ $Asset = "FWArmy-$Version-win-x64.zip"
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
 
 function Fail([string]$Message) {
-  Write-Host "FWArmy 安装失败：$Message" -ForegroundColor Red
+  Write-Host "FWArmy install failed: $Message" -ForegroundColor Red
   exit 1
 }
 
@@ -37,7 +37,7 @@ function Fetch([string]$Name, [string]$Dest) {
 $Tmp = Join-Path ([IO.Path]::GetTempPath()) ('fwarmy-install-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $Tmp -Force | Out-Null
 try {
-  Write-Host "下载 $Asset ..."
+  Write-Host "Downloading $Asset ..."
   Fetch 'SHA256SUMS' (Join-Path $Tmp 'SHA256SUMS')
   Fetch $Asset (Join-Path $Tmp $Asset)
 
@@ -47,14 +47,14 @@ try {
     $parts = @($l -split '\s+' | Where-Object { $_ })
     if ($parts.Count -ge 2 -and $parts[1] -eq $Asset) { $sumLine = $parts; break }
   }
-  if (-not $sumLine) { Fail "SHA256SUMS 里没有 $Asset" }
+  if (-not $sumLine) { Fail "SHA256SUMS has no entry for $Asset" }
   $want = $sumLine[0].ToLowerInvariant()
   $got = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash.ToLowerInvariant()
-  if ($got -ne $want) { Fail "SHA256 校验失败（期望 $want，实际 $got）" }
+  if ($got -ne $want) { Fail "SHA256 mismatch (expected $want, got $got)" }
 
   Expand-Archive -Path $zip -DestinationPath $Tmp -Force
   $src = Get-ChildItem $Tmp -Directory -Filter 'FWArmy-*' | Select-Object -First 1
-  if (-not $src) { Fail '压缩包里没有 FWArmy-* 目录' }
+  if (-not $src) { Fail 'archive has no FWArmy-* directory' }
 
   $root = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { [Environment]::GetFolderPath('LocalApplicationData') }
   $InstallDir = Join-Path $root 'FWArmy'
@@ -83,20 +83,20 @@ try {
       $sc.Description = 'FWArmy relay server'
       $sc.Save()
     } catch {
-      Write-Host "提示：开始菜单快捷方式创建失败（$($_.Exception.Message)）；可直接运行 $InstallDir\FWArmy.exe" -ForegroundColor Yellow
+      Write-Host "Note: could not create the Start Menu shortcut ($($_.Exception.Message)); run $InstallDir\FWArmy.exe directly." -ForegroundColor Yellow
     }
   }
 
   $v = & (Join-Path $InstallDir 'FWArmy.exe') --version
-  if (-not ($v -match 'FWArmy')) { Fail '装好的程序无法执行（可能被 Smart App Control 拦截）' }
+  if (-not ($v -match 'FWArmy')) { Fail 'installed binary cannot run (Smart App Control may have blocked it)' }
 
   Write-Host ''
-  Write-Host "FWArmy $Version 已安装到：$InstallDir" -ForegroundColor Green
-  Write-Host "启动：开始菜单搜索 FWArmy，或双击 $InstallDir\FWArmy.exe"
-  Write-Host "数据目录：$InstallDir\data（升级不会删除其中凭据/统计/日志）"
-  Write-Host '如果出现 SmartScreen：更多信息 → 仍要运行。'
-  Write-Host '如果 Windows 11 的 Smart App Control 直接拦截：Windows 安全中心 → 应用和浏览器控制 → Smart App Control；关闭后重试。'
-  Write-Host '卸载：删除安装目录和开始菜单快捷方式即可；不会留下系统服务。'
+  Write-Host "FWArmy $Version installed to: $InstallDir" -ForegroundColor Green
+  Write-Host "Start: search FWArmy in the Start Menu, or double-click $InstallDir\FWArmy.exe"
+  Write-Host "Data: $InstallDir\data (upgrades keep credentials, stats and logs)"
+  Write-Host 'If SmartScreen appears: More info -> Run anyway.'
+  Write-Host 'If Windows 11 Smart App Control blocks it: Windows Security -> App & browser control -> Smart App Control; turn it off and retry.'
+  Write-Host 'Uninstall: delete the install folder and the Start Menu shortcut. No system service is left behind.'
 } finally {
   Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyContinue
 }
