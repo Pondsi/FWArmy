@@ -2278,7 +2278,20 @@ export async function startServer(options = {}) {
       if (!child.pid) throw new Error('spawn-failed');
       child.on('error', (e) => log('ERROR', '新版本启动失败：' + String(e && e.message || e).slice(0, 200)));
       child.unref();
-      setTimeout(() => process.exit(0), 600);
+      /** 等新进程真的能服务再退出；否则回滚到旧文件，避免“更新完服务没了”。 */
+      let healthy = false;
+      for (let i = 0; i < 120; i++) {
+        await sleep(250);
+        try {
+          const r = await fetch(`http://127.0.0.1:${actualPort || opt.port}/api/health`, { signal: AbortSignal.timeout(700) });
+          if (r.ok) { healthy = true; break; }
+        } catch { /* 还没起来 */ }
+      }
+      if (!healthy) {
+        try { child.kill(); } catch { /* noop */ }
+        throw new Error('new-server-not-healthy');
+      }
+      setTimeout(() => process.exit(0), 100);
     } catch (e) {
       try {
         if (movedNew) { fs.renameSync(current, staged); movedNew = false; }

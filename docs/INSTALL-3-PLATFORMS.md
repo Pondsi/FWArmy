@@ -95,12 +95,14 @@ irm https://github.com/Pondsi/FWArmy/releases/download/v0.5.1/install.ps1 | iex
 - `install.ps1`：Windows 下载、SHA256 校验、解压、开始菜单快捷方式、升级保留 `data/`。脚本用**纯 ASCII 文案、无 BOM**，保证 Windows PowerShell 5.1 的 `-File` 和 `irm | iex` 都能解析；发布资产 `Content-Type` 设为 `text/plain`，避免 `irm` 返回 byte[]。
 - `FWArmy.command`：macOS 双击后台启动并打开管理页。
 - `FWArmy.desktop`：Linux 桌面项模板（安装器会写绝对路径版本）。
-- `ctl.mjs`：`stop` 先调管理面 `/api/admin/shutdown`，三平台都能优雅落盘并 exit(0)；Windows 的 SIGTERM 强杀路径只作为回退。
-- `verify-binary.mjs`：新增 34 条单文件黑盒验收（详见第 6 节）。
+- `ctl.mjs`：`stop` 先调管理面 `/api/admin/shutdown`，三平台都能优雅落盘并 exit(0)；Windows 的 SIGTERM 强杀路径只作为回退；新增 `update` 命令。
+- `verify-binary.mjs`：34 条单文件黑盒验收（含更新状态/设置/管理页标签）。
+- `verify-update.mjs`：14 条 mock 更新门禁（检查、错误哈希、下载/解压/替换/重启、设置）。
+- **自动更新**：管理页「更新」标签与 `/api/admin/update*`；检查 GitHub latest、平台资产选择、SHA256/SHA256SUMS 校验、原子替换、带原参数重启、队列非空保护、失败回滚与 `.old` 清理。
+- `docs/USAGE-3-PLATFORMS.md`：三平台完整操作流程、联网/TLS/防火墙/扩网/更新/排错。
 - `packaging/package.mjs`：只收程序文件，绝不收 `data/`；生成平台目录、zip/tar.gz、SHA256。
-- `.github/workflows/build.yml`：四平台构建 + 41 条 + 34 条 + 安装器冒烟 + 上传 artifact。
-- `README.md`：新增三平台安装、系统拦截真话、CI 验收说明；修正“首次自动生成凭据”的旧描述（0.5.1 起手动创建）。
-- `docs/INSTALL-3-PLATFORMS.md`：本文。
+- `.github/workflows/build.yml`：四平台构建 + 41 条 + 34 条 + 安装器冒烟 + 14 条更新门禁 + 上传 artifact。
+- `README.md`：新增三平台安装、自动更新、系统拦截真话、CI 验收说明；修正“首次自动生成凭据”的旧描述。
 
 ## 5. 单文件验收（verify-binary.mjs，34 条）
 
@@ -142,8 +144,8 @@ GitHub Actions 最终结果：https://github.com/Pondsi/FWArmy/actions/runs/4027
 3. **Linux 只提供 x64**：arm64 Linux 需要再加一个 CI runner/构建矩阵；目前会明确报“不支持的架构”，不会装错包。
 4. **没有 AppImage**：Linux 用 tar.gz + `.desktop`；AppImage 可在后续加，体积约 127 MB，且部分发行版缺 libfuse2。
 5. **macOS 双击是 `.command`（会弹终端）**：不是原生 `.app` 包。要做 `.app` 需要把数据目录改为 `~/Library/Application Support/FWArmy`，并处理 bundle 只读；本轮未做。
-6. **安装器不做自动更新**：升级重新跑一行命令；`data/` 保留。
-7. **没有系统服务/开机自启**：这是有意的，避免“程序自己启动”；需要常开可用计划任务/launchd/systemd，用户自行配置。
+6. **自动更新不是默认无人值守**：默认只检查提示；要自动安装需在管理页切换。首次从 0.5.0 到 0.5.1 仍需手动安装一次。Windows 的 Smart App Control/WDAC 可能拦住未签名新版本，更新会安全失败并保留旧版本。
+7. **没有系统服务/开机自启**：这是有意的，避免“程序自己启动”；需要常开可用计划任务/launchd/systemd，用户自行配置。systemd 用户服务与自更新同时使用时，建议 `Restart=on-failure`，避免旧进程退出时被重复拉起。
 8. **CI 的 macOS 验收是 headless**：跑了二进制、TLS、管理页、安装器、codesign；没有模拟 Finder 双击的 GUI 点击。真实双击行为靠 ad-hoc 签名 + 无 quarantine 的机制保证，并已在文档写明。
 
 ## 8. 最坏情况

@@ -162,10 +162,10 @@ try {
   const oldChild = child;
   r = await postJson(base + '/api/admin/update-install', { force: true });
   jian('提交安装并返回 restarting', r.status === 200 && r.json?.restarting === true, `${r.status} ${JSON.stringify(r.json && { error: r.json.error, restarting: r.json.restarting })}`);
-  const oldCode = await waitExit(oldChild, 20_000);
+  const oldCode = await waitExit(oldChild, 90_000);
   jian('旧进程退出', oldCode === 0, 'code=' + oldCode);
   child = null;
-  const h2 = await waitHealth(60_000);
+  const h2 = await waitHealth(120_000);
   jian('新进程接管同一端口', !!h2 && h2.version === VERSION, JSON.stringify(h2));
   const afterHash = fs.existsSync(BIN) ? fileHash(BIN) : '';
   jian('二进制已被归档内容替换（哈希一致）', afterHash === beforeHash, `${afterHash.slice(0, 12)} vs ${beforeHash.slice(0, 12)}`);
