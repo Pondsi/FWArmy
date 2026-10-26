@@ -2042,7 +2042,7 @@ export async function startServer(options = {}) {
     const available = !!(latest && compareVersion(latest.version, VERSION) > 0);
     const platform = updatePlatform();
     const assetOk = !!(latest && latest.asset && latest.asset.name && latest.asset.url);
-    const staged = IS_SEA && fs.existsSync(process.execPath + '.new');
+    const staged = IS_SEA && pendingUpdatePath && fs.existsSync(pendingUpdatePath);
     return {
       ok: true,
       current: VERSION,
@@ -2057,7 +2057,7 @@ export async function startServer(options = {}) {
       canInstall: !!(IS_SEA && platform && available && assetOk && !updateInstalling),
       installing: updateInstalling,
       checking: updateChecking,
-      staged,
+      staged: !!staged,
       queue: queuedTotal(),
       lastInstall: upd.lastInstall,
     };
@@ -2249,7 +2249,7 @@ export async function startServer(options = {}) {
       if (process.env.FWARMY_UPDATE_TEST !== '1' && !String(newVer.stdout).includes(`FWArmy ${latest.version}`)) {
         throw new Error('new-binary-version-mismatch');
       }
-      const staged = process.execPath + '.new';
+      const staged = path.join(work, binName + '.new');
       fs.rmSync(staged, { force: true });
       fs.copyFileSync(found, staged);
       if (process.platform !== 'win32') fs.chmodSync(staged, 0o755);
@@ -2290,10 +2290,17 @@ export async function startServer(options = {}) {
     const old = `${current}.old-${Date.now()}`;
     log('INFO', `更新：关闭服务并重启以应用 ${upd.latest ? upd.latest.version : '新版本'}`);
     try { await close(); } catch { /* noop */ }
-    let movedOld = false, movedNew = false;
+    let movedOld = false, movedNew = false, copyFallback = false;
     try {
       fs.renameSync(current, old); movedOld = true;
-      fs.renameSync(staged, current); movedNew = true;
+      try { fs.renameSync(staged, current); }
+      catch (e) {
+        if (!e || e.code !== 'EXDEV') throw e;
+        fs.copyFileSync(staged, current);
+        if (process.platform !== 'win32') fs.chmodSync(current, 0o755);
+        copyFallback = true;
+      }
+      movedNew = true;
       const child = spawn(current, args, { detached: true, stdio: 'ignore', cwd: path.dirname(current), windowsHide: true });
       if (!child.pid) throw new Error('spawn-failed');
       child.on('error', (e) => log('ERROR', '新版本启动失败：' + String(e && e.message || e).slice(0, 200)));
@@ -2313,7 +2320,15 @@ export async function startServer(options = {}) {
       setTimeout(() => process.exit(0), 100);
     } catch (e) {
       try {
-        if (movedNew) { fs.renameSync(current, staged); movedNew = false; }
+        if (movedNew) {
+          if (copyFallback) {
+            fs.copyFileSync(current, staged);
+            fs.rmSync(current, { force: true });
+          } else {
+            fs.renameSync(current, staged);
+          }
+          movedNew = false;
+        }
         if (movedOld) { fs.renameSync(old, current); movedOld = false; }
       } catch { /* noop */ }
       upd.lastError = 'restart-failed: ' + String(e && e.message || e).slice(0, 200);
