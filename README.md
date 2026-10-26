@@ -6,7 +6,9 @@
 > 它和 WArmy 主应用**分开安装、分开运行**：服务器可以放在一台常开的电脑/云主机上，主应用只把它当“可选服务器”填地址和凭据。
 > 目录旧名是 `relay-server/`，第 64 轮起统一改名 `fwarmy/`；协议和加密没有变。
 
-验证：`node verify-expand.mjs`（41 条）+ `node verify-binary.mjs <单文件>`（34 条）。
+验证：`node verify-expand.mjs`（41 条）+ `node verify-binary.mjs <单文件>`（34 条）+ `node verify-update.mjs`（14 条）。
+
+Release：https://github.com/Pondsi/FWArmy/releases/tag/v0.5.1
 
 ## 0. 三平台直接安装（0.5.1）
 
