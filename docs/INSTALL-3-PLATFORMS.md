@@ -92,7 +92,7 @@ irm https://github.com/Pondsi/FWArmy/releases/download/v0.5.0/install.ps1 | iex
   - SEA 资源增加 `logo.svg`（此前单文件运行 `/assets/logo.svg` 可能 500）。
   - 便携目录按平台拷入安装脚本、`FWArmy.command`（macOS）、`FWArmy.desktop`（Linux）、`assets/logo.svg`；`.sh`/`.command` 设可执行位。
 - `install.sh`：macOS/Linux 下载、SHA256 校验、安装、macOS `xattr` 清理、Linux `.desktop`/软链、升级保留 `data/`。
-- `install.ps1`：Windows 下载、SHA256 校验、解压、开始菜单快捷方式、升级保留 `data/`；已加 UTF-8 BOM（Windows PowerShell 5.1 读中文必需）。
+- `install.ps1`：Windows 下载、SHA256 校验、解压、开始菜单快捷方式、升级保留 `data/`。脚本用**纯 ASCII 文案、无 BOM**，保证 Windows PowerShell 5.1 的 `-File` 和 `irm | iex` 都能解析；发布资产 `Content-Type` 设为 `text/plain`，避免 `irm` 返回 byte[]。
 - `FWArmy.command`：macOS 双击后台启动并打开管理页。
 - `FWArmy.desktop`：Linux 桌面项模板（安装器会写绝对路径版本）。
 - `ctl.mjs`：`stop` 先调管理面 `/api/admin/shutdown`，三平台都能优雅落盘并 exit(0)；Windows 的 SIGTERM 强杀路径只作为回退。
@@ -120,19 +120,21 @@ irm https://github.com/Pondsi/FWArmy/releases/download/v0.5.0/install.ps1 | iex
 
 - 源码 `verify-expand.mjs`：41 ok / 0 FAIL。
 - Windows 单文件 `verify-binary.mjs`：31 ok / 0 FAIL。
-- Windows 单文件：93,722,112 B；SHA256 见 `dist/BUILD-INFO.txt`。
 - `install.ps1` 本地 artifact 安装、升级保留 `data/` 通过。
+- 发布页 `irm .../v0.5.0/install.ps1 | iex` 全新安装复测通过（无解析错误，`--version` = 0.5.0）。
 
 WSL（Ubuntu 26.04 + Node v24.20.0，真实 Linux 内核）：
 
 - Linux 单文件构建成功；`verify-expand` 41 ok / 0 FAIL；`verify-binary` 31 ok / 0 FAIL。
-- Linux 单文件：126,749,888 B；SHA256 见 `/tmp/fwarmy-linux-dist/BUILD-INFO.txt`。
 - `install.sh` 本地 artifact 安装、`.desktop`/软链、升级保留 `data/` 通过。
+- 发布页 `curl .../v0.5.0/install.sh | sh` 全新安装复测通过。
 
-GitHub Actions（发布前会补最终记录）：
+GitHub Actions 最终结果：https://github.com/Pondsi/FWArmy/actions/runs/40273569952
 
-- Windows / macOS 26 arm64 / macOS 26 Intel / Ubuntu 四个 runner 全绿后，才上传 artifact 和创建 Release。
-- macOS 额外执行 `codesign --verify --strict`；未公证时 `spctl` 预期拒绝，只记录不作为失败。
+- Windows / macOS 26 arm64 / macOS 26 Intel / Ubuntu 四个 runner 全绿。
+- 每个平台：41 + 31 + 安装器冒烟；macOS 额外 `codesign --verify --strict` 通过（未公证时 `spctl` 预期拒绝，只记录不作为失败）。
+- 单文件本体：Windows 93,722,624 B；Linux 126,749,888 B；macOS x64 124,272,896 B；macOS arm64 121,194,496 B。
+- Release 资产哈希见 Release 页的 `SHA256SUMS`，或 WArmy 交接文档 `docs/HANDOFF-FWARMY-3PLATFORM.md`。
 
 ## 7. 已知限制
 
