@@ -243,7 +243,7 @@ loginctl enable-linger "$USER"   # 未登录也保持用户服务
 ```bash
 FWArmy update                     # 检查并打印
 FWArmy update --yes               # 检查后安装并重启
-FWArmy update --yes --force       # 允许同版本重装/队列非空时强制
+FWArmy update --yes --force       # 队列非空时强制安装（不会把同版本当新版本）
 FWArmy update --auto=install      # 开自动安装
 FWArmy update --auto=check --interval=12
 FWArmy update --status

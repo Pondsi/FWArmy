@@ -486,7 +486,7 @@ async function cmdUpdate(argv) {
   if (u.lastError) console.log(`上次错误：${u.lastError}`);
   if (!(has(argv, 'install') || has(argv, 'yes'))) return 0;
   if (!u.updateAvailable && !has(argv, 'force')) {
-    console.log('没有可安装的新版本（要强制重装同版本请加 --force）。');
+    console.log('没有可安装的新版本（--force 只跳过队列检查，不会把同版本当新版本）。');
     return 0;
   }
   try {

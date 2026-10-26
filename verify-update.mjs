@@ -185,6 +185,12 @@ try {
 } finally {
   await stopCurrent();
   try { mock.close(); } catch { /* noop */ }
+  if (failN) {
+    try {
+      const log = fs.readFileSync(path.join(data, 'server.log'), 'utf8').split(/\r?\n/).slice(-30).join('\n');
+      console.log('--- server.log tail ---\n' + log);
+    } catch { /* noop */ }
+  }
   for (const d of tmpDirs) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* noop */ } }
 }
 

@@ -2099,6 +2099,16 @@ export async function startServer(options = {}) {
       s.on('end', () => resolve(h.digest('hex')));
     });
   }
+  function probeLocalHealth(port, timeout = 700) {
+    return new Promise((resolve) => {
+      const req = http.get({ host: '127.0.0.1', port, path: '/api/health', timeout }, (res) => {
+        res.resume();
+        resolve(res.statusCode === 200);
+      });
+      req.on('timeout', () => { try { req.destroy(); } catch { /* noop */ } resolve(false); });
+      req.on('error', () => resolve(false));
+    });
+  }
   function findUpdateBinary(dir, name, depth = 0) {
     let ents = [];
     try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return ''; }
@@ -2278,19 +2288,18 @@ export async function startServer(options = {}) {
       if (!child.pid) throw new Error('spawn-failed');
       child.on('error', (e) => log('ERROR', '新版本启动失败：' + String(e && e.message || e).slice(0, 200)));
       child.unref();
+      log('INFO', `更新：新进程已启动 pid=${child.pid}，等待健康检查`);
       /** 等新进程真的能服务再退出；否则回滚到旧文件，避免“更新完服务没了”。 */
       let healthy = false;
       for (let i = 0; i < 120; i++) {
         await sleep(250);
-        try {
-          const r = await fetch(`http://127.0.0.1:${actualPort || opt.port}/api/health`, { signal: AbortSignal.timeout(700) });
-          if (r.ok) { healthy = true; break; }
-        } catch { /* 还没起来 */ }
+        if (await probeLocalHealth(actualPort || opt.port)) { healthy = true; break; }
       }
       if (!healthy) {
         try { child.kill(); } catch { /* noop */ }
         throw new Error('new-server-not-healthy');
       }
+      log('INFO', '更新：新进程健康，旧进程退出');
       setTimeout(() => process.exit(0), 100);
     } catch (e) {
       try {
