@@ -264,7 +264,7 @@ FWArmy update --status
 
 ### 5.3 平台特有风险
 
-- **Windows**：未签名新 exe 可能被 Smart App Control / WDAC 企业策略拦；更新会在“新二进制不能运行”处失败，当前程序不动。需要关闭 Smart App Control、加 WDAC 允许规则，或使用签名版本。
+- **Windows**：未签名新 exe 可能被 Smart App Control / WDAC/Device Guard 企业策略拦；更新会在“新二进制不能运行”处失败，当前程序不动。需要关闭 Smart App Control、加 WDAC 允许规则，或使用签名版本。判断方法：事件查看器 → `Microsoft-Windows-CodeIntegrity/Operational` 出现 **3033**（did not meet the Enterprise signing level requirements）就是 WDAC 拦了；按 IT 策略给 FWArmy.exe 加允许规则/哈希规则，或换一台未开 WDAC 的机器。
 - **macOS**：新二进制来自 tar.gz，无 quarantine + ad-hoc 签名；如果安装目录不可写（例如放在只读卷），替换会失败；把程序装在 `~/Applications` 或可写目录。
 - **Linux**：需要当前用户对程序目录有写权限；systemd 用户服务更新后由新进程接管，若你的 unit 设置 `Restart=always`，原进程退出时 systemd 可能也尝试拉起，建议用 `Restart=on-failure` 或更新时先 `systemctl --user stop` 再手动更新。
 - **GitHub API** 未登录约 60 次/小时；检查失败只显示错误，不影响中转服务。
@@ -320,6 +320,7 @@ FWArmy update --status
 | 通用 | 更新失败 | GitHub 限流/网络/哈希/权限/系统策略 | 管理页看错误；手动重试；检查目录写权限；Windows 看 Smart App Control/WDAC |
 | Windows | SmartScreen | 未签名浏览器下载 | 更多信息 → 仍要运行；或用 `irm` 安装 |
 | Windows | Smart App Control 直接拦 | 未签名/企业策略 | 关闭 Smart App Control 或加允许规则；企业机找 IT |
+| Windows | 事件 3033 / Device Guard 拦 | WDAC 企业签名级别策略 | 事件查看器 `CodeIntegrity/Operational` 3033；给 FWArmy.exe 加允许规则/哈希规则，或用签名版本；更新会安全失败并保留旧版 |
 | Windows | 双击没反应 | 被杀毒/策略隔离 | 看 Windows 安全中心保护历史；加排除/允许 |
 | macOS | “无法打开/已损坏” | quarantine/未公证 | `xattr -dr com.apple.quarantine ~/Applications/FWArmy`；系统设置放行 |
 | macOS | 双击 `.command` 没反应 | 无执行权限/quarantine | `chmod +x`；`xattr`；或在终端运行二进制看报错 |
