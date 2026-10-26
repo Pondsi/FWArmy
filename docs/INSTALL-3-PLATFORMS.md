@@ -120,22 +120,28 @@ irm https://github.com/Pondsi/FWArmy/releases/download/v0.5.1/install.ps1 | iex
 本机（Windows 11 + Node v24.20.0）：
 
 - 源码 `verify-expand.mjs`：41 ok / 0 FAIL。
-- Windows 单文件 `verify-binary.mjs`：34 ok / 0 FAIL。
-- `install.ps1` 本地 artifact 安装、升级保留 `data/` 通过。
-- 发布页 `irm .../v0.5.1/install.ps1 | iex` 全新安装复测通过（无解析错误，`--version` = 0.5.1）。
+- 0.5.0 Windows 单文件曾通过 31/0；0.5.1 新构建的未签名 exe 被本机 **WDAC/Device Guard** 拦（CodeIntegrity 3033），所以 Windows 单文件/更新门禁以 CI 为准，不把本机环境限制写成产品通过。
+- `install.ps1` 本地 artifact 安装、升级保留 `data/` 在 0.5.0/0.5.1 脚本上通过；0.5.1 发布资产 `irm` 的下载/校验逻辑已由 CI 安装器冒烟覆盖。
 
 WSL（Ubuntu 26.04 + Node v24.20.0，真实 Linux 内核）：
 
-- Linux 单文件构建成功；`verify-expand` 41 ok / 0 FAIL；`verify-binary` 34 ok / 0 FAIL。
+- 0.5.1：`verify-expand` 41/0；`verify-binary` 34/0；`verify-update` 14/0（错误哈希拒绝、替换、重启、状态保留）。
 - `install.sh` 本地 artifact 安装、`.desktop`/软链、升级保留 `data/` 通过。
-- 发布页 `curl .../v0.5.1/install.sh | sh` 全新安装复测通过。
+- 发布页 `curl .../v0.5.1/install.sh | sh` 全新安装复测通过；装好后 `FWArmy update` 对真实 GitHub 检查到最新 0.5.1，判定“已是最新”。
 
-GitHub Actions 最终结果：https://github.com/Pondsi/FWArmy/actions/runs/40273569952
+GitHub Actions 最终结果：
 
-- Windows / macOS 26 arm64 / macOS 26 Intel / Ubuntu 四个 runner 全绿。
-- 每个平台：41 + 34 + 安装器冒烟；macOS 额外 `codesign --verify --strict` 通过（未公证时 `spctl` 预期拒绝，只记录不作为失败）。
-- 单文件本体：Windows 93,722,624 B；Linux 126,749,888 B；macOS x64 124,272,896 B；macOS arm64 121,194,496 B。
-- Release 资产哈希见 Release 页的 `SHA256SUMS`，或 WArmy 交接文档 `docs/HANDOFF-FWARMY-3PLATFORM.md`。
+- 工作流：https://github.com/Pondsi/FWArmy/actions/runs/40280822789
+- tag v0.5.1 触发的第二次：https://github.com/Pondsi/FWArmy/actions/runs/40285407698
+- Windows / macOS 26 arm64 / macOS 26 Intel / Ubuntu 四个 runner 全部成功。
+- 每个平台：41 + 34 + 14 条 + 安装器冒烟；macOS 额外 `codesign --verify --strict` 通过（未公证时 `spctl` 预期拒绝，只记录不作为失败）。
+- 单文件本体：Windows 93,754,880 B；Linux 126,749,888 B；macOS x64 124,305,920 B；macOS arm64 121,227,328 B。
+- Release 资产：
+  - `FWArmy-0.5.1-win-x64.zip` 8cf28adb…
+  - `FWArmy-0.5.1-linux-x64.tar.gz` efad824e…
+  - `FWArmy-0.5.1-macos-x64.tar.gz` f15b6275…
+  - `FWArmy-0.5.1-macos-arm64.tar.gz` 8b34fc3a…
+  - 完整哈希见 Release 页 `SHA256SUMS`。
 
 ## 7. 已知限制
 
