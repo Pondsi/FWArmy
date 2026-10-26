@@ -1995,6 +1995,7 @@ export async function startServer(options = {}) {
   let updateChecking = false;
   let updateInstalling = false;
   let updateClosed = false;
+  let pendingUpdatePath = '';
   function saveUpdate() {
     try { writeJsonAtomic(UPDATE_FILE, upd); }
     catch (e) { log('WARN', '写 update.json 失败：' + (e && e.message || e)); }
@@ -2252,11 +2253,13 @@ export async function startServer(options = {}) {
       fs.rmSync(staged, { force: true });
       fs.copyFileSync(found, staged);
       if (process.platform !== 'win32') fs.chmodSync(staged, 0o755);
+      pendingUpdatePath = staged;
+      log('INFO', `更新：已暂存 ${staged} exists=${fs.existsSync(staged)} size=${fs.existsSync(staged) ? fs.statSync(staged).size : 0}`);
       upd.lastInstall = { version: latest.version, at: Date.now(), ok: true, error: '' };
       upd.lastError = '';
       saveUpdate();
       log('INFO', `更新：${latest.version} 已下载并校验，准备重启`);
-      setTimeout(() => { applyUpdate().catch((e) => log('ERROR', '重启应用更新失败：' + String(e && e.message || e).slice(0, 200))); }, 500).unref?.();
+      setTimeout(() => { applyUpdate(staged).catch((e) => log('ERROR', '重启应用更新失败：' + String(e && e.message || e).slice(0, 200))); }, 500).unref?.();
       return updateView();
     } catch (e) {
       const msg = String(e && e.message || e).slice(0, 300);
@@ -2269,11 +2272,18 @@ export async function startServer(options = {}) {
       updateInstalling = false;
     }
   }
-  async function applyUpdate() {
+  async function applyUpdate(stagedPath = '') {
     if (!IS_SEA) return;
     const current = process.execPath;
-    const staged = current + '.new';
-    if (!fs.existsSync(staged)) { log('WARN', '更新：找不到待替换文件'); return; }
+    const staged = stagedPath || pendingUpdatePath || (current + '.new');
+    log('INFO', `更新：检查待替换文件 ${staged} exists=${fs.existsSync(staged)}`);
+    if (!fs.existsSync(staged)) {
+      upd.lastError = 'staged-missing';
+      upd.lastInstall = { version: upd.latest ? upd.latest.version : '', at: Date.now(), ok: false, error: 'staged-missing' };
+      saveUpdate();
+      log('WARN', '更新：找不到待替换文件，保留当前程序');
+      return;
+    }
     const args = ['--server', `--port=${actualPort || opt.port}`, `--host=${opt.host}`, `--data=${DATA}`, '--no-open'];
     if (opt.quiet) args.push('--quiet');
     if (opt.logFile) args.push(`--log-file=${opt.logFile}`);
