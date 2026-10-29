@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import https from 'node:https';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { startServer, parseArgs, displayWidth, padCell, renderTable, VERSION, PRODUCT } from './server.mjs';
@@ -220,6 +220,68 @@ function cmdStart(argv) {
   })();
 }
 
+/** 探测 PID 是否存活：signal 0 只做存在性检查；EPERM 视为存活（进程在、只是无权限）。 */
+function pidAlive(pid) {
+  pid = Number(pid) || 0;
+  if (!pid) return false;
+  try { process.kill(pid, 0); return true; }
+  catch (e) { return !!(e && e.code === 'EPERM'); }
+}
+/** 等进程退出：ms 内变死返回 true。 */
+async function waitDead(pid, ms) {
+  const end = Date.now() + Math.max(0, Number(ms) || 0);
+  for (;;) {
+    if (!pidAlive(pid)) return true;
+    if (Date.now() >= end) return false;
+    await new Promise((r) => setTimeout(r, 120));
+  }
+}
+/** 发终止信号：POSIX 用 SIGTERM/SIGKILL；Windows 用 taskkill /T（软关）与 /T /F（强杀整棵树）。返回命令是否被接受。 */
+function signalPid(pid, hard) {
+  pid = Number(pid) || 0;
+  if (!pid) return false;
+  try {
+    if (process.platform === 'win32') {
+      const args = ['/PID', String(pid), '/T'];
+      if (hard) args.push('/F');
+      const r = spawnSync('taskkill', args, { windowsHide: true, encoding: 'utf8', timeout: 8000 });
+      return r.status === 0;
+    }
+    process.kill(pid, hard ? 'SIGKILL' : 'SIGTERM');
+    return true;
+  } catch { return false; }
+}
+/** 两阶段终止：先温和（SIGTERM / taskkill /T）等若干秒，仍活着再强杀（SIGKILL / taskkill /F）。返回是否确认已死。 */
+async function stopPid(pid) {
+  const soft = signalPid(pid, false);
+  if (await waitDead(pid, soft ? 5000 : 800)) return true;
+  signalPid(pid, true);
+  return await waitDead(pid, 3000);
+}
+/** 进程创建时刻（UTC 毫秒）；取不到返回 0。 */
+function procStartMs(pid) {
+  try {
+    pid = Number(pid) || 0;
+    if (!pid) return 0;
+    if (process.platform === 'win32') {
+      const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+        `(Get-Process -Id ${pid}).StartTime.ToUniversalTime().ToString('o')`], { windowsHide: true, encoding: 'utf8', timeout: 8000 });
+      const t = Date.parse(String(r.stdout || '').trim());
+      return Number.isFinite(t) ? t : 0;
+    }
+    const r = spawnSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8', timeout: 8000 });
+    const t = Date.parse(String(r.stdout || '').trim());
+    return Number.isFinite(t) ? t : 0;
+  } catch { return 0; }
+}
+/** 核对 instance.json 的启动时间与当前 PID 是否同一进程（防 PID 复用误杀）；核对不了返回 'unknown'。 */
+function startMatches(pid, startedAt) {
+  const want = Date.parse(String(startedAt || ''));
+  const got = procStartMs(pid);
+  if (!want || !got) return 'unknown';
+  return Math.abs(got - want) <= 180000 ? 'match' : 'mismatch';
+}
+
 function cmdStop(argv) {
   return (async () => {
     const dir = dataDir(argv);
@@ -232,8 +294,15 @@ function cmdStop(argv) {
       console.log('没有发现运行中的 FWArmy。');
       return 0;
     }
+    const rmIdent = () => {
+      try { fs.rmSync(path.join(dir, 'server.pid'), { force: true }); } catch { /* noop */ }
+      try { fs.rmSync(path.join(dir, 'instance.json'), { force: true }); } catch { /* noop */ }
+    };
+    /** 端口无响应 ≠ 进程已退出：有 PID 先核对进程身份（是否还活着）。 */
+    let alive = pidAlive(pid);
     if (!shiWoMen && !has(argv, 'force')) {
       console.log(`拒绝停止：PID ${pid} 对应的端口 ${port} 没有回应 FWArmy 健康检查（可能是失效 PID 或被复用）。`);
+      if (pid) console.log(alive ? `进程核对：PID ${pid} 仍存活（疑似挂死，端口无响应）。` : `进程核对：PID ${pid} 已不存在（识别文件残留）。`);
       console.log('确认这是挂死的旧服务、仍要强杀时：FWArmy stop --force');
       return 1;
     }
@@ -245,31 +314,43 @@ function cmdStop(argv) {
         await new Promise((r) => setTimeout(r, 150));
       }
     }
-    let still = await health(port, 300);
-    if (!still) {
-      try { fs.rmSync(path.join(dir, 'server.pid'), { force: true }); } catch { /* noop */ }
-      try { fs.rmSync(path.join(dir, 'instance.json'), { force: true }); } catch { /* noop */ }
-      console.log(`已停止 pid=${pid || '?'}`);
+    if (pid) {
+      /** 优雅停后进程可能还在收尾（exit(0) 有 50ms~2s 延迟）；挂死进程等多久都不会自己退。 */
+      if (alive && shiWoMen) alive = !(await waitDead(pid, 3000));
+      if (alive) {
+        if (!has(argv, 'force')) {
+          console.log(`停止未完成：PID ${pid} 仍存活，端口 ${port} 无响应（进程挂死或未退出）。`);
+          console.log('识别文件（data/server.pid、data/instance.json）未删除。');
+          console.log('下一步：确认后执行 FWArmy stop --force 强杀；或查看 data/server.log 了解状态。');
+          return 1;
+        }
+        /** PID 复用保护：启动时间对不上就不是记录里的那个服务，不能杀。 */
+        if (inst && Number(inst.pid) === pid && inst.startedAt && startMatches(pid, inst.startedAt) === 'mismatch') {
+          console.log(`拒绝强杀：PID ${pid} 的启动时间与 instance.json 记录（startedAt=${inst.startedAt}）不符，PID 已被其它进程复用。`);
+          console.log('原 FWArmy 进程应已退出；识别文件（data/server.pid、data/instance.json）未删除。');
+          console.log('下一步：人工确认该 PID 归属后，自行结束进程并删除识别文件。');
+          return 1;
+        }
+        if (!(await stopPid(pid))) {
+          console.log(`停止失败：PID ${pid} 强制终止后仍存活。`);
+          console.log('识别文件（data/server.pid、data/instance.json）未删除。');
+          console.log('下一步：检查权限/安全软件拦截，或在任务管理器结束该进程后重新执行 FWArmy stop --force。');
+          return 1;
+        }
+      }
+      rmIdent();
+      console.log(`已停止 pid=${pid}`);
       return 0;
     }
-    if (!pid) {
-      console.log(`端口 ${port} 上有 FWArmy，但没有 PID 文件；为安全起见不杀未知进程。`);
+    /** 没有 PID：只有健康检查能判断（进到这里说明优雅停后端口仍有响应）。 */
+    if (!(await health(port, 300))) {
+      rmIdent();
+      console.log('已停止 pid=?');
       return 0;
     }
-    try { process.kill(pid, 'SIGTERM'); } catch (e) { console.log('发送停止信号失败：' + String(e).slice(0, 120)); }
-    for (let i = 0; i < 50; i++) {
-      still = await health(port, 300);
-      if (!still) break;
-      await new Promise((r) => setTimeout(r, 150));
-    }
-    if (still && has(argv, 'force')) {
-      try { process.kill(pid, 'SIGKILL'); } catch { /* noop */ }
-      await new Promise((r) => setTimeout(r, 300));
-    }
-    try { fs.rmSync(path.join(dir, 'server.pid'), { force: true }); } catch { /* noop */ }
-    try { fs.rmSync(path.join(dir, 'instance.json'), { force: true }); } catch { /* noop */ }
-    console.log((await health(port, 300)) ? `已发送停止信号 pid=${pid}，但端口仍有响应；请查看 data/server.log。` : `已停止 pid=${pid}`);
-    return 0;
+    console.log(`端口 ${port} 上有 FWArmy，但没有 PID 文件；为安全起见不杀未知进程。`);
+    console.log('识别文件未删除。下一步：在管理页执行关机，或人工确认进程后处理。');
+    return 1;
   })();
 }
 

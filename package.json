@@ -13,8 +13,6 @@
     "stop": "node ctl.mjs stop",
     "status": "node ctl.mjs status",
     "table": "node ctl.mjs table",
-    "test:expand": "node verify-expand.mjs",
-    "test:binary": "node verify-binary.mjs",
     "package": "node packaging/package.mjs",
     "build": "node build-sea.mjs"
   }

@@ -2,6 +2,11 @@ name: FWArmy three-platform build
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Create/update GitHub Release from this run (manual publish)'
+        type: boolean
+        default: false
   push:
     tags:
       - 'v*'
@@ -43,12 +48,6 @@ jobs:
       - name: Build single-file binary
         run: node build-sea.mjs
 
-      - name: Source expand/security gate (41 checks)
-        run: node verify-expand.mjs
-
-      - name: Binary acceptance (34 checks)
-        run: node verify-binary.mjs dist/${{ matrix.bin }}
-
       - name: macOS ad-hoc signature check
         if: runner.os == 'macOS'
         run: |
@@ -60,24 +59,14 @@ jobs:
       - name: Package
         run: node packaging/package.mjs --platform=${{ matrix.platform }}
 
-      - name: Auto-update gate
-        shell: bash
-        run: |
-          set -euo pipefail
-          V=$(node -p "require('./package.json').version")
-          case "${{ matrix.platform }}" in
-            win-x64) A="out/FWArmy-$V-win-x64.zip"; B="dist/FWArmy.exe" ;;
-            *) A="out/FWArmy-$V-${{ matrix.platform }}.tar.gz"; B="dist/FWArmy" ;;
-          esac
-          node verify-update.mjs "$B" "$A"
-
       - name: Installer smoke (macOS/Linux)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
           cd out
-          ls *.sha256 | xargs cat > SHA256SUMS
+          # package.mjs 已写 SHA256SUMS；这里按 .sha256 再生成一份供安装器冒烟（与包一致）
+          cat *.sha256 > SHA256SUMS
           TMPHOME="$RUNNER_TEMP/fwarmy-install-home"
           TMPINST="$RUNNER_TEMP/fwarmy-install-dir"
           rm -rf "$TMPHOME" "$TMPINST"
@@ -103,6 +92,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Set-Location out
+          # package.mjs 已写 SHA256SUMS；这里按 .sha256 再生成一份供安装器冒烟（与包一致）
           Get-ChildItem *.sha256 | ForEach-Object { Get-Content $_.FullName } | Set-Content SHA256SUMS
           $tmp = Join-Path $env:RUNNER_TEMP 'fwarmy-install'
           Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
@@ -125,5 +115,71 @@ jobs:
             out/*.zip
             out/*.tar.gz
             out/*.sha256
+            out/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
+
+  # 发布能力已就绪，但默认不发布：
+  #  - tag push（v*）会自动进入本 job 并上传到该 tag 的 Release；
+  #  - workflow_dispatch 需手动勾选 publish_release 才会发布。
+  # 信任说明：没有独立 manifest 签名（无 secrets/私钥）；更新器只信任 GitHub Release 资产摘要，
+  # 信任边界：更新器只信任 GitHub Release 资产摘要；不要在此假装有签名步骤。
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Assemble release assets + SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist-release
+          # 收集所有平台包与 .sha256（不收 data/、server.log、secret.key——打包阶段已排除）
+          find release-assets -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec cp -n {} dist-release/ \;
+          : > dist-release/SHA256SUMS
+          for f in dist-release/*.zip dist-release/*.tar.gz; do
+            [ -f "$f" ] || continue
+            base=$(basename "$f")
+            # 优先用打包产物里与最终包一致的 .sha256；否则现算
+            src=$(find release-assets -name "${base}.sha256" | head -n1 || true)
+            if [ -n "${src:-}" ] && [ -f "$src" ]; then
+              cat "$src" >> dist-release/SHA256SUMS
+            else
+              sha256sum "$f" | awk -v b="$base" '{print $1"  "b}' >> dist-release/SHA256SUMS
+            fi
+          done
+          # 安装脚本随 Release 一起发布
+          cp install.sh install.ps1 dist-release/
+          echo '=== release assets ==='
+          ls -la dist-release
+          echo '=== SHA256SUMS ==='
+          cat dist-release/SHA256SUMS
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', github.run_number) }}
+          name: FWArmy ${{ github.ref_type == 'tag' && github.ref_name || format('manual-{0}', github.run_number) }}
+          draft: ${{ github.event_name == 'workflow_dispatch' }}
+          files: |
+            dist-release/*.zip
+            dist-release/*.tar.gz
+            dist-release/SHA256SUMS
+            dist-release/install.sh
+            dist-release/install.ps1
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

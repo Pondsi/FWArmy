@@ -90,16 +90,18 @@ npx(POSTJECT, postArgs);
 if (process.platform === 'darwin') run('codesign', ['--sign', '-', outExe]);
 if (process.platform !== 'win32') fs.chmodSync(outExe, 0o755);
 
-console.log('[4/5] 组装便携目录（启动脚本/说明）');
+console.log('[4/5] 组装便携目录（启动脚本/说明/文档）');
 const common = ['admin.html', 'README.md', 'install.ps1', 'install.sh', 'FWArmy.command', 'FWArmy.desktop'];
+const docsList = ['docs/INSTALL-3-PLATFORMS.md', 'docs/USAGE-3-PLATFORMS.md', 'docs/SERVER-RELAY.md', 'docs/RELEASE-SOP.md'];
 const perPlatform = process.platform === 'win32'
   ? ['start.bat', 'stop.bat', 'fwarmy-headless.bat', 'fwarmy-console.bat']
   : ['start.sh', 'stop.sh', 'fwarmy-headless.sh', 'fwarmy-console.sh',
     ...(process.platform === 'darwin' ? ['FWArmy.command'] : ['FWArmy.desktop'])];
-for (const f of [...common, ...perPlatform]) {
+for (const f of [...common, ...docsList, ...perPlatform]) {
   const src = path.join(ROOT, f);
   if (!fs.existsSync(src)) continue;
   const dst = path.join(OUT, f);
+  fs.mkdirSync(path.dirname(dst), { recursive: true });
   fs.copyFileSync(src, dst);
   if (process.platform !== 'win32' && (f.endsWith('.sh') || f.endsWith('.command'))) fs.chmodSync(dst, 0o755);
 }
@@ -109,7 +111,10 @@ if (fs.existsSync(logoSrc)) {
   fs.copyFileSync(logoSrc, path.join(OUT, 'assets', 'logo.svg'));
 }
 const info = [
-  `${'FWArmy'} ${JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version}`,
+  '# BUILD-INFO 由 build-sea.mjs 在构建单文件时生成/更新；请勿手改数值。',
+  '# packaging/package.mjs 打包前会强制校验：本文件版本 == package.json == 二进制 --version，',
+  '# 且 sha256 == 当前二进制实际哈希；任一不一致直接报错退出（旧 dist 不能冒充新版本包）。',
+  `FWArmy ${JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version}`,
   `builtAt=${new Date().toISOString()}`,
   `node=${process.version}`,
   `platform=${process.platform}-${process.arch}`,

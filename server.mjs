@@ -425,7 +425,7 @@ function stunRequest(software = 'FWArmy/1') {
   const val = Buffer.from(String(software).slice(0, 32), 'utf8');
   const pad = (4 - (val.length % 4)) % 4;
   const a = Buffer.alloc(4 + val.length + pad);
-  a.writeUInt16BE(0x0013, 0); a.writeUInt16BE(val.length, 2); val.copy(a, 4);
+  a.writeUInt16BE(0x8022, 0); a.writeUInt16BE(val.length, 2); val.copy(a, 4); /* SOFTWARE 属性类型 RFC 5389 = 0x8022 */
   const head = Buffer.alloc(20);
   head.writeUInt16BE(0x0001, 0);
   head.writeUInt16BE(a.length, 2);
@@ -445,11 +445,25 @@ function parseStun(buf) {
     const t = buf.readUInt16BE(p), l = buf.readUInt16BE(p + 2);
     const v = buf.subarray(p + 4, p + 4 + l);
     if (t === 0x0020 && l >= 8 && v[1] === 1) {
+      // XOR-MAPPED-ADDRESS（RFC 5389 §15.2）IPv4：端口 XOR magic 高 16 位，地址 XOR magic
       const port = v.readUInt16BE(2) ^ (STUN_MAGIC >>> 16);
       const ip = (v.readUInt32BE(4) ^ STUN_MAGIC) >>> 0;
       out.mapped = { host: `${ip >>> 24}.${(ip >>> 16) & 255}.${(ip >>> 8) & 255}.${ip & 255}`, port };
+    } else if (t === 0x0020 && l >= 20 && v[1] === 2) {
+      // XOR-MAPPED-ADDRESS IPv6：地址 XOR（magic(4B) + transaction id(12B)）
+      const port = v.readUInt16BE(2) ^ (STUN_MAGIC >>> 16);
+      const mask = Buffer.alloc(16); mask.writeUInt32BE(STUN_MAGIC, 0); tid.copy(mask, 4);
+      const ip6 = Buffer.alloc(16);
+      for (let i = 0; i < 16; i++) ip6[i] = v[4 + i] ^ mask[i];
+      const g = [];
+      for (let i = 0; i < 16; i += 2) g.push(ip6.readUInt16BE(i).toString(16));
+      out.mapped = { host: g.join(':'), port };
     } else if (t === 0x0001 && l >= 8 && v[1] === 1) {
       out.mapped = { host: `${v[4]}.${v[5]}.${v[6]}.${v[7]}`, port: v.readUInt16BE(2) };
+    } else if (t === 0x0001 && l >= 20 && v[1] === 2) {
+      const g = [];
+      for (let i = 0; i < 16; i += 2) g.push(v.readUInt16BE(4 + i).toString(16));
+      out.mapped = { host: g.join(':'), port: v.readUInt16BE(2) };
     }
     p += 4 + l + ((4 - (l % 4)) % 4);
   }
@@ -499,7 +513,8 @@ export async function stunBinding({ servers = [], timeoutMs = 1500, send = null 
 }
 
 const NATPMP_PORT = 5351;
-const NATPMP_TEXT = { 0: 'ok', 1: 'unsupported-version', 2: 'unauthorized', 3: 'not-a-gateway', 4: 'external-only-support', 5: 'gateway-unavailable', 6: 'no-memory-resources', 7: 'no-port-resources' };
+/** RFC 6886 §3.5 Result Codes */
+const NATPMP_TEXT = { 0: 'ok', 1: 'unsupported-version', 2: 'refused', 3: 'network-failure', 4: 'out-of-resources', 5: 'unsupported-opcode' };
 async function natpmpUdp(pkt, gateway, timeoutMs) {
   return await new Promise((resolve) => {
     const sock = dgram.createSocket('udp4');
@@ -511,47 +526,79 @@ async function natpmpUdp(pkt, gateway, timeoutMs) {
     try { sock.send(pkt, NATPMP_PORT, gateway, (e) => { if (e) fin(null); }); } catch { fin(null); }
   });
 }
-/** 只读探针：version=1 会被路由器回 UNSUPPORTED_VERSION，不会创建任何映射。 */
+/** 解析 NAT-PMP 响应（RFC 6886）：响应位（opcode|0x80）必须置位；映射响应 16 字节，公开地址响应 12 字节。 */
+function parseNatpmpResp(resp) {
+  if (!resp || resp.length < 8) return null;
+  const opcode = resp[1];
+  if ((opcode & 0x80) === 0) return null;
+  const out = { version: resp[0], opcode: opcode & 0x7f, result: resp.readUInt16BE(2), seconds: resp.readUInt32BE(4) };
+  if (out.opcode === 0 && resp.length >= 12) out.externalIp = `${resp[8]}.${resp[9]}.${resp[10]}.${resp[11]}`;
+  else if (resp.length >= 16) {
+    out.internalPort = resp.readUInt16BE(8);
+    out.externalPort = resp.readUInt16BE(10);
+    out.lifetime = resp.readUInt32BE(12);
+  }
+  return out;
+}
+/**
+ * 只读探针：发 RFC 6886 标准「公开地址查询」（2 字节：version=0, opcode=0），不会创建任何映射。
+ * 无应答时再发 version=255 探活（RFC 6886 §3.5：支持 NAT-PMP 的网关会回 UNSUPPORTED_VERSION）。
+ */
 export async function natpmpProbe({ gateways = [], timeoutMs = 1200, request = null } = {}) {
   const t0 = Date.now();
   const attempts = [];
   const gws = (gateways.length ? gateways : gatewayCandidates()).filter(Boolean);
   if (!gws.length) return { alive: false, detail: '没有私有网关候选（可能直连公网或没有 IPv4 网卡）', attempts, ms: 0 };
-  const pkt = Buffer.alloc(16); pkt[0] = 1;
+  const send = request || ((pkt, gw, t) => natpmpUdp(pkt, gw, t));
   for (const gw of gws) {
     if (!isPrivateIpv4(gw)) { attempts.push({ gateway: gw, ok: false, reason: 'bad-gateway' }); continue; }
-    const resp = request ? await request(pkt, gw, timeoutMs) : await natpmpUdp(pkt, gw, timeoutMs);
-    if (!resp) { attempts.push({ gateway: gw, ok: false, reason: 'timeout' }); continue; }
-    const result = resp.length >= 4 && resp[1] === 128 ? resp.readUInt16BE(2) : null;
-    const txt = result === null ? 'responded' : (NATPMP_TEXT[result] || `result-${result}`);
-    attempts.push({ gateway: gw, ok: true, reason: txt });
-    return { alive: true, gateway: gw, detail: `网关 ${gw} 应答 NAT-PMP（${txt}）`, attempts, ms: Date.now() - t0 };
+    const reqProbe = Buffer.from([0x00, 0x00]); // 标准公开地址查询
+    const resp = await send(reqProbe, gw, timeoutMs);
+    const parsed = parseNatpmpResp(resp);
+    if (parsed) {
+      const txt = NATPMP_TEXT[parsed.result] || `result-${parsed.result}`;
+      attempts.push({ gateway: gw, ok: true, reason: txt, request: reqProbe.toString('hex') });
+      return {
+        alive: true, gateway: gw, externalIp: parsed.externalIp || '',
+        detail: `网关 ${gw} 应答 NAT-PMP（${txt}${parsed.externalIp ? '，公网地址 ' + parsed.externalIp : ''}）`,
+        attempts, ms: Date.now() - t0,
+      };
+    }
+    const reqProbe255 = Buffer.from([0xff, 0x00]); // 版本探活，不创建映射
+    const resp2 = await send(reqProbe255, gw, timeoutMs);
+    const parsed2 = parseNatpmpResp(resp2);
+    if (parsed2) {
+      const txt = NATPMP_TEXT[parsed2.result] || `result-${parsed2.result}`;
+      attempts.push({ gateway: gw, ok: true, reason: txt, request: reqProbe255.toString('hex') });
+      return { alive: true, gateway: gw, detail: `网关 ${gw} 应答 NAT-PMP（${txt}）`, attempts, ms: Date.now() - t0 };
+    }
+    attempts.push({ gateway: gw, ok: false, reason: 'timeout', request: reqProbe.toString('hex') });
   }
   return { alive: false, detail: `${gws.length} 个网关候选都没应答 5351/UDP（不支持或被挡）`, attempts, ms: Date.now() - t0 };
 }
 /**
- * 申请/取消映射（会改路由器状态，必须显式调用）。externalPort=0 让路由器挑；
- * leaseSec=0 + 同内部端口即删除。
+ * 申请/取消映射（会改路由器状态，必须显式调用）。请求按 RFC 6886 映射格式（12 字节）：
+ * version=0, opcode=1(UDP)|2(TCP), reserved=0, 内部端口, 建议外部端口(0=路由器挑), 租期秒(0=删除映射)。
  */
 export async function natpmpMap({ gateway, internalPort, externalPort = 0, leaseSec = 7200, protocol = 'tcp', timeoutMs = 1500, request = null }) {
   const gw = String(gateway || '');
   if (!isPrivateIpv4(gw)) return { ok: false, reason: 'bad-gateway', detail: '只允许向私有/链路本地网关申请映射' };
-  const explicit = Number(externalPort) > 0;
-  const pkt = Buffer.alloc(16);
+  const op = protocol === 'tcp' ? 2 : 1; // RFC 6886：UDP=1、TCP=2
+  const pkt = Buffer.alloc(12);
   pkt[0] = 0;
-  pkt[1] = protocol === 'tcp' ? (explicit ? 3 : 1) : (explicit ? 2 : 0);
-  if (explicit) pkt.writeUInt16BE(Number(externalPort), 2);
+  pkt[1] = op;
+  pkt.writeUInt16BE(0, 2);
   pkt.writeUInt16BE(Number(internalPort) & 0xffff, 4);
-  pkt.writeUInt16BE(Number(externalPort) || 0, 8);
-  pkt.writeUInt32BE(Math.max(0, Math.min(0xffffffff, Math.trunc(Number(leaseSec) || 0))), 12);
+  pkt.writeUInt16BE((Number(externalPort) || 0) & 0xffff, 6);
+  pkt.writeUInt32BE(Math.max(0, Math.min(0xffffffff, Math.trunc(Number(leaseSec) || 0))), 8);
   const resp = request ? await request(pkt, gw, timeoutMs) : await natpmpUdp(pkt, gw, timeoutMs);
-  if (!resp) return { ok: false, reason: 'timeout', gateway: gw };
-  if (resp.length < 16 || resp[1] < 128) return { ok: false, reason: 'bad-response', gateway: gw };
-  const result = resp.readUInt16BE(2);
-  if (result !== 0) return { ok: false, reason: NATPMP_TEXT[result] || 'router-refused', gateway: gw, result };
+  const parsed = parseNatpmpResp(resp);
+  if (!parsed) return { ok: false, reason: resp ? 'bad-response' : 'timeout', gateway: gw };
+  if (parsed.opcode !== op) return { ok: false, reason: 'bad-response', gateway: gw, detail: '响应 opcode 与请求不一致' };
+  if (parsed.result !== 0) return { ok: false, reason: NATPMP_TEXT[parsed.result] || 'router-refused', gateway: gw, result: parsed.result };
   return {
     ok: true, gateway: gw, reason: 'router-ok',
-    internalPort: resp.readUInt16BE(8), externalPort: resp.readUInt16BE(10), lifetime: resp.readUInt32BE(12),
+    internalPort: parsed.internalPort, externalPort: parsed.externalPort, lifetime: parsed.lifetime,
   };
 }
 function gatewayCandidates() {
@@ -580,9 +627,9 @@ function localAddresses() {
  * 解析命令行。单文件 SEA 的 process.argv 会把 exe 路径重复一次，调用方统一传“真正的参数”。
  */
 export function parseArgs(argv = []) {
-  const o = { port: 8787, host: '0.0.0.0', open: null, data: '', quiet: false, logFile: '' };
+  const o = { port: 8787, host: '0.0.0.0', open: null, data: '', quiet: false, logFile: '', portExplicit: false };
   for (const a of argv) {
-    if (a.startsWith('--port=')) o.port = Number(a.slice(7));
+    if (a.startsWith('--port=')) { o.port = Number(a.slice(7)); o.portExplicit = true; }
     else if (a.startsWith('--host=')) o.host = a.slice(7) || '0.0.0.0';
     else if (a.startsWith('--data=')) o.data = a.slice(7);
     else if (a.startsWith('--log-file=')) o.logFile = a.slice(11);
@@ -607,7 +654,9 @@ function writeJsonAtomic(file, obj, mode = 0o600) {
   try {
     fs.renameSync(tmp, file);
   } catch (e) {
-    try { fs.rmSync(file, { force: true }); fs.renameSync(tmp, file); } catch { throw e; }
+    // 失败绝不删除唯一旧副本：清掉临时文件并如实抛错，旧配置/凭据保持可读。
+    try { fs.rmSync(tmp, { force: true }); } catch { /* noop */ }
+    throw e;
   }
 }
 
@@ -856,15 +905,83 @@ export async function startServer(options = {}) {
   const TLS_DIR = path.join(DATA, 'tls');
   const STARTED = Date.now();
   let actualPort = 0;
+  if (options.port) opt.portExplicit = true;
   /** 安全判定（24h 窗口/30 天黑名单）用可注入时钟，门禁才能跑“一天后/三十天后”；队列 TTL 仍用真实时间。 */
   const now = () => (typeof options.clock === 'function' ? Number(options.clock()) : Date.now());
 
   fs.mkdirSync(DATA, { recursive: true });
   fs.mkdirSync(path.dirname(LOG), { recursive: true });
-
-  // ── 日志（写文件 + 终端；绝不写消息明文/凭据明文）──
+  // 先声明日志句柄（真正打开在拿到锁之后），锁失败路径才能安全收尾。
   let logStream = null;
   let logLines = 0;
+
+  // ── 数据目录级原子单实例锁：必须在任何数据文件写入之前拿到（F07）。──
+  const LOCK = path.join(DATA, 'fwarmy.lock');
+  const dataDirHash = (() => {
+    try { return crypto.createHash('sha256').update(fs.realpathSync(DATA)).digest('hex').slice(0, 16); }
+    catch { return crypto.createHash('sha256').update(DATA).digest('hex').slice(0, 16); }
+  })();
+  function procAlive(pid) {
+    const n = Number(pid) || 0;
+    if (!n) return false;
+    if (n === process.pid) return true;
+    try { process.kill(n, 0); return true; } catch (e) { return !!(e && e.code === 'EPERM'); }
+  }
+  function readLock() { try { return JSON.parse(fs.readFileSync(LOCK, 'utf8')); } catch { return null; } }
+  let lockOwned = false;
+  function releaseLock() {
+    if (!lockOwned) return;
+    lockOwned = false;
+    try {
+      const cur = readLock();
+      if (!cur || Number(cur.pid) === process.pid) fs.rmSync(LOCK, { force: true });
+    } catch { /* noop */ }
+  }
+  function acquireLock() {
+    for (let i = 0; i < 2; i++) {
+      try {
+        const fd = fs.openSync(LOCK, 'wx');
+        fs.writeSync(fd, JSON.stringify({ pid: process.pid, startedAt: Date.now(), dataDirHash }));
+        fs.closeSync(fd);
+        lockOwned = true;
+        return true;
+      } catch (e) {
+        if (!e || e.code !== 'EEXIST') return false;
+        const cur = readLock();
+        if (cur && procAlive(cur.pid) && Number(cur.pid) !== process.pid) return false;
+        try { fs.rmSync(LOCK, { force: true }); } catch { /* 再试一次 */ }
+      }
+    }
+    return false;
+  }
+  /** 记录启动前已有文件；启动失败时只清掉本轮新建的，绝不碰既有数据。 */
+  const preExisting = new Set(fs.existsSync(DATA) ? fs.readdirSync(DATA) : []);
+  function cleanupNewFiles() {
+    try { if (logStream) { logStream.end(); logStream = null; } } catch { /* noop */ }
+    try {
+      for (const name of fs.readdirSync(DATA)) {
+        if (preExisting.has(name)) continue;
+        try { fs.rmSync(path.join(DATA, name), { recursive: true, force: true }); } catch { /* noop */ }
+      }
+    } catch { /* noop */ }
+    releaseLock();
+  }
+  if (!acquireLock()) {
+    const cur = readLock();
+    const inst0 = (() => { try { return JSON.parse(fs.readFileSync(INSTANCE, 'utf8')); } catch { return null; } })();
+    if (inst0 && inst0.port) {
+      const alive0 = await probe(inst0.port);
+      if (alive0 && (alive0.server === 'fwarmy-relay' || alive0.server === 'warmy-relay')) {
+        const scheme0 = inst0.scheme || (alive0.secure ? 'https' : 'http');
+        process.stdout.write(`已有 FWArmy 在运行 pid=${inst0.pid || '?'} port=${inst0.port}；本次只打开管理页\n`);
+        finishAlreadyRunning(`${scheme0}://127.0.0.1:${inst0.port}/`);
+        return { alreadyRunning: true, port: inst0.port, dataDir: DATA };
+      }
+    }
+    throw new Error(`数据目录 ${DATA} 的单实例锁被进程 ${cur && cur.pid || '?'} 占用，但探不到健康服务；等它退出或删除 fwarmy.lock 后重试`);
+  }
+
+  // ── 日志（写文件 + 终端；绝不写消息明文/凭据明文）──
   function rotateLog() {
     try {
       if (!fs.existsSync(LOG)) return;
@@ -876,11 +993,18 @@ export async function startServer(options = {}) {
   }
   rotateLog();
   try { logStream = fs.createWriteStream(LOG, { flags: 'a', mode: 0o600 }); } catch { logStream = null; }
+  if (logStream) logStream.on('error', () => { try { logStream && logStream.end(); } catch { /* noop */ } logStream = null; });
+  let logDropped = 0;
   function log(level, msg) {
     const line = `${new Date().toISOString()} ${String(level).padEnd(5)} ${msg}\n`;
     if (!opt.quiet) { try { process.stdout.write(line); } catch { /* noop */ } }
     if (logStream) {
-      try { logStream.write(line); logLines++; } catch { /* noop */ }
+      try {
+        if (logLines % 256 === 0) rotateLog(); // 运行中轮转（每 256 行查一次大小，避免每行 stat）
+        if (logStream.writableLength > 4 * 1024 * 1024) { logDropped++; return; } // 背压：丢弃并计数，防内存无界
+        logStream.write(line);
+        logLines++;
+      } catch { /* noop */ }
     }
   }
   try { process.stdout.on('error', () => { /* 管道关闭不影响服务 */ }); } catch { /* noop */ }
@@ -926,10 +1050,12 @@ export async function startServer(options = {}) {
     creds[id] = c;
     migrated = true;
   }
+  /** 返回是否落盘成功；失败只记日志、不抛出（后台调用点安全），管理接口必须检查返回值。 */
   function saveCreds() {
     try {
       writeJsonAtomic(CK, { items: creds });
-    } catch (e) { log('WARN', '写 credentials.json 失败：' + (e && e.message || e)); }
+      return true;
+    } catch (e) { log('WARN', '写 credentials.json 失败：' + (e && e.message || e)); return false; }
   }
   if (migrated) saveCreds();
 
@@ -975,7 +1101,7 @@ export async function startServer(options = {}) {
     try { fs.rmSync(FIRST_CRED, { force: true }); } catch { /* noop */ }
   }
   function saveCfg() {
-    try { writeJsonAtomic(CFG_FILE, cfg); } catch (e) { log('WARN', '写 config.json 失败：' + (e && e.message || e)); }
+    try { writeJsonAtomic(CFG_FILE, cfg); return true; } catch (e) { log('WARN', '写 config.json 失败：' + (e && e.message || e)); return false; }
   }
   saveCfg();
 
@@ -1006,12 +1132,12 @@ export async function startServer(options = {}) {
   let statsTimer = null;
   function flushStats(force = false) {
     if (!statsDirty && !force) return;
-    statsDirty = false;
     // 长期运行也要有界：只保留约 400 天 / 36 月 / 10 年
     for (const s of Object.values(stats.credentials)) {
       pruneMap(s.days, 400); pruneMap(s.months, 36); pruneMap(s.years, 10);
     }
-    try { writeJsonAtomic(STATS_FILE, stats); } catch (e) { log('WARN', '写 stats.json 失败：' + (e && e.message || e)); }
+    try { writeJsonAtomic(STATS_FILE, stats); statsDirty = false; return true; }
+    catch (e) { log('WARN', '写 stats.json 失败：' + (e && e.message || e)); return false; } // 失败保留脏标记，下次再试
   }
   function markStatsDirty() {
     statsDirty = true;
@@ -1037,9 +1163,8 @@ export async function startServer(options = {}) {
   let expandDirty = false;
   let expandTimer = null;
   function saveExpand() {
-    expandDirty = false;
-    try { writeJsonAtomic(EXPAND_FILE, expand); }
-    catch (e) { log('WARN', '写 expand.json 失败：' + (e && e.message || e)); }
+    try { writeJsonAtomic(EXPAND_FILE, expand); expandDirty = false; return true; }
+    catch (e) { log('WARN', '写 expand.json 失败：' + (e && e.message || e)); return false; } // 失败保留脏标记
   }
   function markExpandDirty() {
     expandDirty = true;
@@ -1232,7 +1357,7 @@ export async function startServer(options = {}) {
   let securityTimer = null;
   function saveSecurity() {
     if (securityTimer) { clearTimeout(securityTimer); securityTimer = null; }
-    try { writeJsonAtomic(SECURITY_FILE, security); } catch (e) { log('WARN', '写 security.json 失败：' + (e && e.message || e)); }
+    try { writeJsonAtomic(SECURITY_FILE, security); return true; } catch (e) { log('WARN', '写 security.json 失败：' + (e && e.message || e)); return false; }
   }
   /** 普通计数攒 250ms 写一次（每秒最多 4 次请求也不至于每包重写全表）；黑名单/固定公钥立即写。 */
   function markSecurityDirty() {
@@ -1602,22 +1727,36 @@ export async function startServer(options = {}) {
       if (q.length !== v.queue.length) v.queue = q;
       if (!q.length && now - v.lastSeen > 10 * 60_000) ren.delete(did);
     }
-  }, 15_000);
+    queuedBytes = queuedBytesSum(); // 自愈：与真实队列对账，防止计数漂移
+  }, 5_000);
   queueClean.unref();
   // 30 天黑名单清理也按注入时钟走；每小时一次，重启时还会再清一次。
   const securityGc = setInterval(() => { pruneSecurity(now()); saveSecurity(); }, 3600_000);
   securityGc.unref();
 
+  /** 实例级队列总字节预算（F13）：多用户大信封时内存有上限；超预算拒收 queue-full，不静默丢。 */
+  const QUEUE_BYTE_BUDGET = 64 * 1024 * 1024;
+  let queuedBytes = 0;
+  function queuedBytesSum() {
+    let n = 0;
+    for (const v of ren.values()) for (const x of v.queue) n += Buffer.byteLength(x.env, 'utf8');
+    return n;
+  }
   function enqueueLocal(to, env, now = Date.now()) {
+    // 防御性暂停门（入口层已拦）：暂停期间绝不产生新队列条目。
+    if (!cfg.accepting) return { ok: false, code: 'not-accepting', body: { ok: false, error: 'not-accepting' }, rejected: 1 };
     const y = ren.get(to);
     if (!y || now - y.lastSeen >= zaiXianTtl()) return { ok: false, code: 'offline', body: { ok: false, offline: true }, offline: 1 };
     const queue = y.queue.filter((x) => x.exp > now);
     if (queue.length >= cfg.queuePerUser) return { ok: false, code: 'queue-full', body: { ok: false, error: 'queue-full' }, rejected: 1 };
+    const envBytes = Buffer.byteLength(env, 'utf8');
+    if (queuedBytes + envBytes > QUEUE_BYTE_BUDGET) return { ok: false, code: 'queue-full', body: { ok: false, error: 'queue-full', budgetExceeded: true }, rejected: 1 };
     const id = crypto.randomUUID();
     queue.push({ id, env, exp: now + TTL_MS });
     y.queue = queue;
-    y.lastSeen = now;
-    return { ok: true, id, body: { ok: true, queued: true }, bytesIn: Buffer.byteLength(env, 'utf8'), relayed: 1 };
+    queuedBytes += envBytes;
+    // 在线状态只由 register/heartbeat/poll/bye 刷新：发送方持续发消息不能替收件人续在线（F13）。
+    return { ok: true, id, body: { ok: true, queued: true }, bytesIn: envBytes, relayed: 1 };
   }
 
   function peerCredential(p) {
@@ -1728,12 +1867,19 @@ export async function startServer(options = {}) {
   async function handleExpandRelay(req, res) {
     const cred = expandCred(req);
     if (!cred) return send(res, 401, { ok: false, error: 'expand-credential-required' });
+    // 暂停 truth table：新投递入口（relay、expand relay）一律 503，不入队。
+    if (!cfg.accepting) return send(res, 503, { ok: false, error: 'not-accepting', instanceId: expand.instanceId });
+    if (updateFreeze) return send(res, 503, { ok: false, error: 'updating', instanceId: expand.instanceId });
     // 只有通过凭据认证的入站才算“外部可达”的证据。
     security.lastInbound = { at: now(), from: String(req.socket.remoteAddress || '').slice(0, 80) };
     markSecurityDirty();
     let j;
     try { j = await body(req, cfg.maxEnvelope + 8192); }
     catch { return send(res, 400, { ok: false, error: 'bad-json' }); }
+    // 读慢正文期间凭据可能被停用/删除：复核后才继续。
+    if (cred.disabled || !expand.inbound.includes(cred)) {
+      return send(res, 401, { ok: false, error: 'expand-credential-required' });
+    }
     const to = String(j.to || '').slice(0, 200);
     const env = String(j.envelope || '');
     const bytes = Buffer.byteLength(env, 'utf8');
@@ -1950,7 +2096,7 @@ export async function startServer(options = {}) {
 
   // ── 自动更新（只在单文件运行时可执行替换；源码运行只允许检查）──
   function emptyUpdate() {
-    return { auto: 'check', intervalHours: 6, lastCheck: 0, latest: null, lastError: '', lastInstall: null, triedVersion: '' };
+    return { auto: 'check', intervalHours: 6, lastCheck: 0, latest: null, lastError: '', lastInstall: null, triedVersion: '', triedAt: 0 };
   }
   function normUpdate(raw) {
     const o = emptyUpdate();
@@ -1961,6 +2107,7 @@ export async function startServer(options = {}) {
     o.lastCheck = Number(raw.lastCheck) || 0;
     o.lastError = String(raw.lastError || '').slice(0, 400);
     o.triedVersion = String(raw.triedVersion || '');
+    o.triedAt = Number(raw.triedAt) || 0;
     if (raw.lastInstall && typeof raw.lastInstall === 'object') {
       o.lastInstall = {
         version: String(raw.lastInstall.version || ''), at: Number(raw.lastInstall.at) || 0,
@@ -1996,6 +2143,9 @@ export async function startServer(options = {}) {
   let updateInstalling = false;
   let updateClosed = false;
   let pendingUpdatePath = '';
+  /** 更新替换期间冻结新投递（允许 poll 排空）；交接后禁止旧进程再写共享状态（F04）。 */
+  let updateFreeze = false;
+  let sharedStateFrozen = false;
   function saveUpdate() {
     try { writeJsonAtomic(UPDATE_FILE, upd); }
     catch (e) { log('WARN', '写 update.json 失败：' + (e && e.message || e)); }
@@ -2038,6 +2188,11 @@ export async function startServer(options = {}) {
     };
   }
   function updateView() {
+    // 更新交接后旧进程会把最终 lastInstall 写盘；新进程合并磁盘上更新的记录，避免内存暂存标记盖住结果（F04）。
+    try {
+      const disk = normUpdate(JSON.parse(fs.readFileSync(UPDATE_FILE, 'utf8')));
+      if (disk.lastInstall && (!upd.lastInstall || disk.lastInstall.at >= upd.lastInstall.at)) upd.lastInstall = disk.lastInstall;
+    } catch { /* noop */ }
     const latest = upd.latest;
     const available = !!(latest && compareVersion(latest.version, VERSION) > 0);
     const platform = updatePlatform();
@@ -2062,27 +2217,51 @@ export async function startServer(options = {}) {
       lastInstall: upd.lastInstall,
     };
   }
+  /** 更新源白名单：初始 URL 与每一跳重定向都必须过（F12）。Release 资产会 302 到 GitHub CDN。 */
   function allowedUpdateUrl(raw) {
     try {
       const u = new URL(String(raw));
       if (process.env.FWARMY_UPDATE_TEST === '1') return u.protocol === 'http:' || u.protocol === 'https:';
-      return u.protocol === 'https:' && u.hostname === 'github.com';
+      if (u.protocol !== 'https:') return false;
+      const host = u.hostname.toLowerCase();
+      return host === 'github.com' || host.endsWith('.github.com') || host.endsWith('.githubusercontent.com');
     } catch { return false; }
   }
+  /** 手动跟随有限跳重定向：逐跳校验协议/主机，拒绝循环与 https→http 降级。 */
+  async function fetchWithHops(url, { headers = {}, timeoutMs = 15_000, maxHops = 5 } = {}) {
+    let cur = String(url);
+    const seen = new Set();
+    for (let hop = 0; hop <= maxHops; hop++) {
+      if (!allowedUpdateUrl(cur)) throw new Error('update-url-not-allowed');
+      if (seen.has(cur)) throw new Error('update-redirect-loop');
+      seen.add(cur);
+      const r = await fetch(cur, { headers, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
+      if ([301, 302, 303, 307, 308].includes(r.status)) {
+        const loc = r.headers.get('location') || '';
+        if (!loc) throw new Error('update-redirect-no-location');
+        const next = new URL(loc, cur).toString();
+        if (cur.startsWith('https:') && !next.startsWith('https:') && process.env.FWARMY_UPDATE_TEST !== '1') {
+          throw new Error('update-redirect-downgrade');
+        }
+        cur = next;
+        continue;
+      }
+      return r;
+    }
+    throw new Error('update-redirect-too-many');
+  }
   async function fetchText(url, timeout = 15_000) {
-    if (!allowedUpdateUrl(url)) throw new Error('update-url-not-allowed');
-    const r = await fetch(url, {
+    const r = await fetchWithHops(url, {
       headers: { 'user-agent': `FWArmy/${VERSION}`, accept: 'application/vnd.github+json' },
-      signal: AbortSignal.timeout(timeout),
+      timeoutMs: timeout,
     });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return await r.text();
   }
   async function fetchToFile(url, dest) {
-    if (!allowedUpdateUrl(url)) throw new Error('update-url-not-allowed');
-    const r = await fetch(url, {
+    const r = await fetchWithHops(url, {
       headers: { 'user-agent': `FWArmy/${VERSION}` },
-      signal: AbortSignal.timeout(10 * 60_000),
+      timeoutMs: 10 * 60_000,
     });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     if (!r.body) {
@@ -2100,14 +2279,25 @@ export async function startServer(options = {}) {
       s.on('end', () => resolve(h.digest('hex')));
     });
   }
-  function probeLocalHealth(port, timeout = 700) {
+  /** 更新后的健康判定：HTTP 200 + FWArmy 产品 + 目标版本 + 同数据目录身份（F04）。 */
+  function probeLocalIdentity(port, expect = null, timeout = 700) {
     return new Promise((resolve) => {
       const req = http.get({ host: '127.0.0.1', port, path: '/api/health', timeout }, (res) => {
-        res.resume();
-        resolve(res.statusCode === 200);
+        const chunks = [];
+        res.on('data', (d) => chunks.push(d));
+        res.on('end', () => {
+          let j = null;
+          try { j = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* noop */ }
+          if (!j || res.statusCode !== 200) return resolve(null);
+          if (j.server !== 'fwarmy-relay' && j.server !== 'warmy-relay') return resolve(null);
+          if (j.product !== PRODUCT) return resolve(null);
+          if (expect && expect.version && j.version !== expect.version) return resolve(null);
+          if (expect && expect.dataDirHash && j.dataDirHash && j.dataDirHash !== expect.dataDirHash) return resolve(null);
+          resolve(j);
+        });
       });
-      req.on('timeout', () => { try { req.destroy(); } catch { /* noop */ } resolve(false); });
-      req.on('error', () => resolve(false));
+      req.on('timeout', () => { try { req.destroy(); } catch { /* noop */ } resolve(null); });
+      req.on('error', () => resolve(null));
     });
   }
   function findUpdateBinary(dir, name, depth = 0) {
@@ -2130,9 +2320,9 @@ export async function startServer(options = {}) {
       if (process.env.FWARMY_UPDATE_TEST !== '1' && apiBase !== 'https://api.github.com/repos/Pondsi/FWArmy') {
         throw new Error('update-api-not-allowed');
       }
-      const r = await fetch(`${apiBase}/releases/latest`, {
+      const r = await fetchWithHops(`${apiBase}/releases/latest`, {
         headers: { 'user-agent': `FWArmy/${VERSION}`, accept: 'application/vnd.github+json' },
-        signal: AbortSignal.timeout(15_000),
+        timeoutMs: 15_000,
       });
       if (!r.ok) throw new Error('HTTP ' + r.status + (r.status === 403 ? '（GitHub 限流，稍后再试）' : ''));
       const j = await r.json();
@@ -2162,9 +2352,12 @@ export async function startServer(options = {}) {
       saveUpdate();
       const available = compareVersion(version, VERSION) > 0;
       log('INFO', `更新检查：当前 ${VERSION}，最新 ${version}${available ? '（有新版本）' : ''}${manual ? '（手动）' : ''}`);
-      if (allowAuto && upd.auto === 'install' && available && upd.triedVersion !== version && !updateInstalling) {
+      // 同版本失败后 6 小时内不自动重试；之后有界退避重试，而不是永久跳过（F04）。
+      const triedRecently = upd.triedVersion === version && Date.now() - (upd.triedAt || 0) < 6 * 3600_000;
+      if (allowAuto && upd.auto === 'install' && available && !triedRecently && !updateInstalling) {
         if (queuedTotal() === 0) {
           upd.triedVersion = version;
+          upd.triedAt = Date.now();
           saveUpdate();
           setImmediate(() => installUpdate(false).catch((e) => log('WARN', '自动更新失败：' + String(e && e.message || e).slice(0, 200))));
         } else {
@@ -2207,6 +2400,7 @@ export async function startServer(options = {}) {
     if (process.env.FWARMY_UPDATE_TEST !== '1' && compareVersion(latest.version, VERSION) <= 0) throw new Error('already-latest');
     if (!force && queuedTotal() > 0) throw new Error('queue-not-empty');
     updateInstalling = true;
+    updateFreeze = true; // F04：下载/校验期间停止新投递，poll 仍可排空
     upd.lastError = '';
     saveUpdate();
     const work = path.join(DATA, 'updates', latest.version.replace(/[^0-9A-Za-z._-]/g, '_'));
@@ -2228,6 +2422,25 @@ export async function startServer(options = {}) {
       if (got !== want) throw new Error('sha256-mismatch');
       const extract = path.join(work, 'extract');
       fs.mkdirSync(extract, { recursive: true });
+      // F12：解压前先列条目——拒绝绝对路径/盘符/上级逃逸/条目数爆炸（可离线用合成恶意包测试）。
+      {
+        const listTar = process.platform === 'win32'
+          ? path.join(process.env.SystemRoot || 'C:\Windows', 'System32', 'tar.exe')
+          : 'tar';
+        const canList = process.platform !== 'win32' || fs.existsSync(listTar);
+        if (canList) {
+          const lx = spawnSync(listTar, ['-tf', archive], { timeout: 60_000, encoding: 'utf8' });
+          if (lx.status !== 0) throw new Error('archive-list-failed');
+          const entries = String(lx.stdout || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+          if (entries.length > 2000) throw new Error('archive-too-many-entries');
+          for (const en of entries) {
+            const norm = en.replace(/\\/g, '/');
+            if (norm.startsWith('/') || /^[A-Za-z]:/.test(norm) || norm.split('/').includes('..')) {
+              throw new Error('archive-entry-path-not-allowed');
+            }
+          }
+        }
+      }
       let x;
       if (process.platform === 'win32') {
         const tarExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
@@ -2240,6 +2453,22 @@ export async function startServer(options = {}) {
         x = spawnSync('tar', ['-xzf', archive, '-C', extract], { timeout: 120_000, encoding: 'utf8' });
       }
       if (!x || x.status !== 0) throw new Error('extract-failed: ' + String((x && (x.stderr || x.stdout)) || '').slice(0, 120));
+      // F12：解压后清点产物——拒绝符号链接与超量解压；预期单文件程序之外只允许有限伴随文件。
+      {
+        const budget = 512 * 1024 * 1024;
+        let total = 0;
+        const walk = (dir, depth = 0) => {
+          if (depth > 4) return;
+          for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+            const p = path.join(dir, e.name);
+            if (e.isSymbolicLink()) throw new Error('extract-symlink-not-allowed');
+            if (e.isDirectory()) walk(p, depth + 1);
+            else if (e.isFile()) total += fs.statSync(p).size;
+            if (total > budget) throw new Error('extract-size-exceeded');
+          }
+        };
+        walk(extract);
+      }
       const binName = process.platform === 'win32' ? 'FWArmy.exe' : 'FWArmy';
       const found = findUpdateBinary(extract, binName);
       if (!found) throw new Error('binary-not-found');
@@ -2255,14 +2484,19 @@ export async function startServer(options = {}) {
       if (process.platform !== 'win32') fs.chmodSync(staged, 0o755);
       pendingUpdatePath = staged;
       log('INFO', `更新：已暂存 ${staged} exists=${fs.existsSync(staged)} size=${fs.existsSync(staged) ? fs.statSync(staged).size : 0}`);
-      upd.lastInstall = { version: latest.version, at: Date.now(), ok: true, error: '' };
+      // F04：替换前排空队列并再次核对；成功标记只在新进程真正健康后由 applyUpdate 写。
+      const drainDeadline = Date.now() + 35_000;
+      while (queuedTotal() > 0 && Date.now() < drainDeadline) await sleep(500);
+      if (!force && queuedTotal() > 0) throw new Error('queue-not-empty');
+      upd.lastInstall = { version: latest.version, at: Date.now(), ok: false, error: '' };
       upd.lastError = '';
       saveUpdate();
-      log('INFO', `更新：${latest.version} 已下载并校验，准备重启`);
+      log('INFO', `更新：${latest.version} 已下载并校验（队列 ${queuedTotal()}），准备重启`);
       setTimeout(() => { applyUpdate(staged).catch((e) => log('ERROR', '重启应用更新失败：' + String(e && e.message || e).slice(0, 200))); }, 500).unref?.();
       return updateView();
     } catch (e) {
       const msg = String(e && e.message || e).slice(0, 300);
+      updateFreeze = false;
       upd.lastError = msg;
       upd.lastInstall = { version: latest.version, at: Date.now(), ok: false, error: msg };
       saveUpdate();
@@ -2290,6 +2524,8 @@ export async function startServer(options = {}) {
     const old = `${current}.old-${Date.now()}`;
     log('INFO', `更新：关闭服务并重启以应用 ${upd.latest ? upd.latest.version : '新版本'}`);
     try { await close(); } catch { /* noop */ }
+    sharedStateFrozen = true; // 交接后旧进程不再写 stats/expand/security/update
+    releaseLock(); // 锁交接：新进程要拿同一数据目录的单实例锁，旧进程先放（F04/F07）
     let movedOld = false, movedNew = false, copyFallback = false;
     try {
       fs.renameSync(current, old); movedOld = true;
@@ -2301,22 +2537,31 @@ export async function startServer(options = {}) {
         copyFallback = true;
       }
       movedNew = true;
-      const child = spawn(current, args, { detached: true, stdio: 'ignore', cwd: path.dirname(current), windowsHide: true });
+      const childEnv = { ...process.env };
+      // 测试模式下给新进程标注目标版本，跨版本夹具才能验证健康判定（生产不设置）。
+      if (process.env.FWARMY_UPDATE_TEST === '1' && upd.latest && upd.latest.version) {
+        childEnv.FWARMY_FAKE_VERSION = upd.latest.version;
+      }
+      const child = spawn(current, args, { detached: true, stdio: 'ignore', cwd: path.dirname(current), windowsHide: true, env: childEnv });
       if (!child.pid) throw new Error('spawn-failed');
       child.on('error', (e) => log('ERROR', '新版本启动失败：' + String(e && e.message || e).slice(0, 200)));
       child.unref();
       log('INFO', `更新：新进程已启动 pid=${child.pid}，等待健康检查`);
-      /** 等新进程真的能服务再退出；否则回滚到旧文件，避免“更新完服务没了”。 */
+      /** 等新进程真的能服务再退出；健康判定带产品/版本/数据目录身份，否则回滚（F04）。 */
+      const expect = { version: upd.latest ? upd.latest.version : '', dataDirHash };
       let healthy = false;
       for (let i = 0; i < 120; i++) {
         await sleep(250);
-        if (await probeLocalHealth(actualPort || opt.port)) { healthy = true; break; }
+        if (await probeLocalIdentity(actualPort || opt.port, expect)) { healthy = true; break; }
       }
       if (!healthy) {
         try { child.kill(); } catch { /* noop */ }
         throw new Error('new-server-not-healthy');
       }
-      log('INFO', '更新：新进程健康，旧进程退出');
+      upd.lastInstall = { version: expect.version, at: Date.now(), ok: true, error: '' };
+      upd.lastError = '';
+      try { writeJsonAtomic(UPDATE_FILE, upd); } catch { /* noop */ }
+      log('INFO', '更新：新进程健康（产品/版本/数据目录核对通过），旧进程退出');
       setTimeout(() => process.exit(0), 100);
     } catch (e) {
       try {
@@ -2394,7 +2639,7 @@ export async function startServer(options = {}) {
         if (typeof j.disabled !== 'boolean') return send(res, 400, { ok: false, error: 'bad-disabled' });
         item.disabled = j.disabled;
       }
-      saveExpand();
+      if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' });
       log('INFO', `被扩网：凭据 ${item.id.slice(0, 8)} ${item.disabled ? '停用' : '启用'}`);
       return send(res, 200, { ok: true, item: expandView().inbound.credentials.find((x) => x.id === item.id) });
     }
@@ -2404,7 +2649,7 @@ export async function startServer(options = {}) {
       if (i < 0) return send(res, 404, { ok: false, error: 'not-found' });
       const [removed] = expand.inbound.splice(i, 1);
       delete expand.stats.perInbound[removed.id];
-      saveExpand();
+      if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' });
       log('INFO', `被扩网：删除接入凭据 ${removed.id.slice(0, 8)}`);
       return send(res, 200, { ok: true });
     }
@@ -2425,7 +2670,7 @@ export async function startServer(options = {}) {
       };
       setPeerCredential(item, credential);
       expand.outbound.push(item);
-      saveExpand();
+      if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' });
       log('INFO', `扩网：添加 ${name} → ${addr.host}:${addr.port}（TLS ${ts.tls.mode}）`);
       return send(res, 200, { ok: true, item: expandView().outbound.find((x) => x.id === item.id) });
     }
@@ -2458,7 +2703,7 @@ export async function startServer(options = {}) {
         if (typeof j.enabled !== 'boolean') return send(res, 400, { ok: false, error: 'bad-enabled' });
         item.enabled = j.enabled;
       }
-      saveExpand();
+      if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' });
       return send(res, 200, { ok: true, item: expandView().outbound.find((x) => x.id === item.id) });
     }
     if (req.method === 'POST' && p === '/api/admin/expand-remove') {
@@ -2466,7 +2711,7 @@ export async function startServer(options = {}) {
       const i = expand.outbound.findIndex((x) => x.id === String(j.id || ''));
       if (i < 0) return send(res, 404, { ok: false, error: 'not-found' });
       const [removed] = expand.outbound.splice(i, 1);
-      saveExpand();
+      if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' });
       log('INFO', `扩网：移除 ${removed.name || removed.host}`);
       return send(res, 200, { ok: true });
     }
@@ -2479,7 +2724,7 @@ export async function startServer(options = {}) {
         const out = r.json || {};
         item.lastTest = Date.now();
         item.lastTestOk = r.status === 200 && out.ok === true;
-        saveExpand();
+        if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' });
         return send(res, 200, {
           ok: true, status: r.status, ms: r.ms,
           instanceId: out.instanceId || '', fingerprint: r.fingerprint || (out.tls && out.tls.fingerprint) || '',
@@ -2496,7 +2741,7 @@ export async function startServer(options = {}) {
       const fp = String(j.fingerprint || '').toLowerCase().replace(/[^0-9a-f]/g, '');
       if (fp.length !== 64) return send(res, 400, { ok: false, error: 'bad-fingerprint' });
       item.tls = { ...peerTls(item), mode: 'pin', fingerprint: fp };
-      saveExpand();
+      if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' });
       log('INFO', `扩网：固定 ${item.name} 的证书指纹 ${fp.slice(0, 16)}…`);
       return send(res, 200, { ok: true, item: expandView().outbound.find((x) => x.id === item.id) });
     }
@@ -2523,7 +2768,7 @@ export async function startServer(options = {}) {
         const out = r.json || {};
         item.lastTest = Date.now();
         item.lastTestOk = r.status === 200 && out.ok === true;
-        saveExpand();
+        if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' });
         return send(res, 200, {
           ok: true, reachable: item.lastTestOk, status: r.status, ms: Date.now() - t0,
           fingerprint: r.fingerprint, result: out,
@@ -2531,7 +2776,7 @@ export async function startServer(options = {}) {
       } catch (e) {
         item.lastTest = Date.now();
         item.lastTestOk = false;
-        saveExpand();
+        if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' });
         const msg = String((e && e.message) || e);
         return send(res, 200, {
           ok: true, reachable: false, ms: Date.now() - t0,
@@ -2542,14 +2787,14 @@ export async function startServer(options = {}) {
     if (req.method === 'GET' && p === '/api/admin/security') return send(res, 200, securityView());
     if (req.method === 'POST' && p === '/api/admin/security-gc') {
       const r = pruneSecurity(now());
-      saveSecurity();
+      if (!saveSecurity()) return send(res, 500, { ok: false, error: 'persist-failed' });
       return send(res, 200, { ok: true, ...r });
     }
     if (req.method === 'POST' && p === '/api/admin/security-clear-blacklist') {
       const j = await body(req);
       if (j.confirm !== true) return send(res, 400, { ok: false, error: 'confirm-required' });
       security.blacklist = {};
-      saveSecurity();
+      if (!saveSecurity()) return send(res, 500, { ok: false, error: 'persist-failed' });
       log('WARN', '管理员清空消息黑名单');
       return send(res, 200, { ok: true });
     }
@@ -2575,7 +2820,7 @@ export async function startServer(options = {}) {
           gateway: gw, internalPort: r.internalPort, externalPort: r.externalPort,
           lifetimeSec: r.lifetime, mappedAt: Date.now(), protocol: 'tcp',
         };
-        saveExpand();
+        if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' });
         log('INFO', `NAT-PMP：TCP ${r.internalPort} → 外部 ${r.externalPort}（租期 ${r.lifetime}s）`);
         return send(res, 200, { ok: true, mapped: true, result: r, view: reachView() });
       }
@@ -2583,7 +2828,7 @@ export async function startServer(options = {}) {
         const m = expand.natpmp;
         if (!m) return send(res, 200, { ok: true, unmapped: false, error: 'no-mapping' });
         const r = await natpmpMap({ gateway: m.gateway, internalPort: m.internalPort, externalPort: 0, leaseSec: 0, protocol: 'tcp' });
-        if (r.ok) { expand.natpmp = null; saveExpand(); }
+        if (r.ok) { expand.natpmp = null; if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' }); }
         return send(res, 200, { ok: true, unmapped: r.ok, result: r, view: reachView() });
       }
       return send(res, 400, { ok: false, error: 'bad-action' });
@@ -2599,7 +2844,7 @@ export async function startServer(options = {}) {
         catch (e) { return send(res, 400, { ok: false, error: 'bad-cert-or-key:' + String(e && e.message || e).slice(0, 80) }); }
       }
       cfg.tls = next;
-      saveCfg();
+      if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
       log('INFO', `TLS 配置已保存 mode=${next.mode} allowPlaintext=${next.allowPlaintext}（需重启生效）`);
       return send(res, 200, { ok: true, tls: tlsPublicView(), restartRequired: true });
     }
@@ -2616,7 +2861,7 @@ export async function startServer(options = {}) {
         id, name, hash: sha(token), hash8: sha(token).slice(0, 8),
         createdAt: new Date().toISOString(), disabled: false, limits, lastUsed: 0,
       };
-      rebuildIndex(); saveCreds();
+      rebuildIndex(); if (!saveCreds()) return send(res, 500, { ok: false, error: 'persist-failed' });
       log('INFO', `新建凭据 id=${id} name=${JSON.stringify(name)}`);
       return send(res, 200, { ok: true, id, name, token, credential: viewCred(creds[id]) });
     }
@@ -2633,7 +2878,8 @@ export async function startServer(options = {}) {
       c.disabled = j.disabled === undefined ? c.disabled : j.disabled;
       c.limits = limits;
       credStat(c).name = name;
-      saveCreds(); markStatsDirty();
+      if (!saveCreds()) return send(res, 500, { ok: false, error: 'persist-failed' });
+      markStatsDirty();
       log('INFO', `更新凭据 id=${c.id} disabled=${c.disabled}`);
       return send(res, 200, { ok: true, credential: viewCred(c) });
     }
@@ -2642,7 +2888,7 @@ export async function startServer(options = {}) {
       const c = findCred(j.id);
       if (!c) return send(res, 404, { ok: false, error: 'not-found' });
       c.disabled = j.disabled === undefined ? true : !!j.disabled;
-      saveCreds();
+      if (!saveCreds()) return send(res, 500, { ok: false, error: 'persist-failed' });
       log('INFO', `凭据 ${c.disabled ? '停用' : '启用'} id=${c.id}`);
       return send(res, 200, { ok: true, credential: viewCred(c) });
     }
@@ -2653,7 +2899,8 @@ export async function startServer(options = {}) {
       if (String(j.confirmName || '') !== c.name) return send(res, 400, { ok: false, error: 'confirm-name-mismatch' });
       delete creds[c.id];
       const s = credStat(c); s.deletedAt = Date.now();
-      rebuildIndex(); saveCreds(); markStatsDirty();
+      rebuildIndex(); if (!saveCreds()) return send(res, 500, { ok: false, error: 'persist-failed' });
+      markStatsDirty();
       // 删的正好是首次引导凭据 ⇒ 明文文件也一起删，别留下一个已失效但仍是秘密的 token
       if (firstRunPending()) {
         try { if (sha(readFirstCredential()) === c.hash) clearFirstCredential(); } catch { /* noop */ }
@@ -2672,7 +2919,7 @@ export async function startServer(options = {}) {
         next[k] = v;
       }
       cfg = next; // 不清用量：新限额立刻作用于已有统计，避免改设置刷新预算。
-      saveCfg();
+      if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
       log('INFO', `更新全局配置 accepting=${cfg.accepting} ratePerMin=${cfg.ratePerMin}`);
       return send(res, 200, { ok: true, config: cfg });
     }
@@ -2744,7 +2991,9 @@ export async function startServer(options = {}) {
       // 健康检查在业务凭据之前：ctl stop 用它确认端口上是不是我们的服务；无敏感信息
       if (req.method === 'GET' && u.pathname === '/api/health') {
         return send(res, 200, {
-          ok: true, server: 'fwarmy-relay', product: PRODUCT, version: VERSION, accepting: cfg.accepting,
+          ok: true, server: 'fwarmy-relay', product: PRODUCT,
+          version: (process.env.FWARMY_UPDATE_TEST === '1' && process.env.FWARMY_FAKE_VERSION) ? process.env.FWARMY_FAKE_VERSION : VERSION,
+          accepting: cfg.accepting, instanceId: expand.instanceId, dataDirHash,
           presenceTtlMs: cfg.presenceTtlMs, secure: !!req.socket.encrypted, tls: tlsPublicView(),
         });
       }
@@ -2776,7 +3025,6 @@ export async function startServer(options = {}) {
         c = null; stats.unauthorized++; markStatsDirty();
         return send(res, 401, { ok: false, error: 'credential-required' });
       }
-      if (!cfg.accepting) return fail(503, 'not-accepting');
       const g0 = gate(c);
       if (!g0.ok) return fail(g0.code, g0.error, { scope: g0.scope, limit: g0.limit, used: g0.used });
 
@@ -2793,12 +3041,29 @@ export async function startServer(options = {}) {
         if (!v) return fail(404, 'unknown-did');
         if (Date.now() - v.lastSeen >= zaiXianTtl()) return reply(410, { ok: false, error: 'offline' }, { offline: 1 });
         const now = Date.now();
-        const yi = v.queue.filter((x) => x.exp > now).slice(0, 50);
-        const outBytes = yi.reduce((n, x) => n + Buffer.byteLength(x.env, 'utf8'), 0);
-        const g = gate(c, outBytes, now);
-        if (!g.ok) return fail(g.code, g.error, { scope: g.scope, limit: g.limit, used: g.used });
+        const cand = v.queue.filter((x) => x.exp > now).slice(0, 50);
+        if (!cand.length) {
+          v.lastSeen = now;
+          return reply(200, { ok: true, envelopes: [] }, {});
+        }
+        // F13：按剩余额度取有界前缀——只剩 1 条额度时也要能取走 1 条，而不是整批 429。
+        const yi = [];
+        let outBytes = 0;
+        let lastGate = null;
+        for (const x of cand) {
+          const b = Buffer.byteLength(x.env, 'utf8');
+          const g = gate(c, outBytes + b, now);
+          if (!g.ok) { lastGate = g; break; }
+          yi.push(x);
+          outBytes += b;
+        }
+        if (!yi.length) {
+          const g = lastGate || { code: 429, error: 'quota-exceeded' };
+          return fail(g.code, g.error, { scope: g.scope, limit: g.limit, used: g.used });
+        }
         v.lastSeen = now;
         v.queue = v.queue.filter((x) => !yi.includes(x));
+        queuedBytes = Math.max(0, queuedBytes - outBytes);
         return reply(200, { ok: true, envelopes: yi.map((x) => x.env) }, { delivered: yi.length, bytesOut: outBytes });
       }
 
@@ -2818,6 +3083,9 @@ export async function startServer(options = {}) {
         return reply(200, { ok: true });
       }
       if (req.method === 'POST' && u.pathname === '/api/relay') {
+        // 暂停 truth table：relay 是新投递入口，暂停即 503（poll/lookup/心跳等控制面不受影响）。
+        if (!cfg.accepting) return fail(503, 'not-accepting');
+        if (updateFreeze) return fail(503, 'updating');
         const to = String(j.to || '').slice(0, 200), env = String(j.envelope || '');
         const bytes = Buffer.byteLength(env, 'utf8');
         if (!to || !bytes || bytes > cfg.maxEnvelope) return fail(400, 'bad-envelope');
@@ -2832,12 +3100,14 @@ export async function startServer(options = {}) {
           if (!g.ok) {
             const y = ren.get(to);
             if (y) y.queue = y.queue.filter((x) => x.id !== local.id);
+            queuedBytes = Math.max(0, queuedBytes - (local.bytesIn || 0));
             return fail(g.code, g.error, { scope: g.scope, limit: g.limit, used: g.used });
           }
           const note = noteMessage(msgId, expand.instanceId);
           if (!note.ok) {
             const y = ren.get(to);
             if (y) y.queue = y.queue.filter((x) => x.id !== local.id);
+            queuedBytes = Math.max(0, queuedBytes - (local.bytesIn || 0));
             return fail(409, note.reason === 'blacklisted' ? 'message-blacklisted' : 'duplicate-message', { reason: note.detail || note.reason, count: note.count });
           }
           return reply(200, { ...local.body, msgId }, { bytesIn: local.bytesIn, relayed: 1 });
@@ -2918,16 +3188,21 @@ export async function startServer(options = {}) {
   const inst = readInstance();
   if (inst && inst.port) {
     const alive = await probe(inst.port);
+    // instance.json 在本数据目录里 ⇒ 是同一数据目录的旧实例；不同数据目录不会走这里。
     if (alive && (alive.server === 'fwarmy-relay' || alive.server === 'warmy-relay')) {
       log('INFO', `已有 FWArmy 在运行 pid=${inst.pid || '?'} port=${inst.port}；本次只打开管理页`);
-      finishAlreadyRunning(`${tlsInfo ? 'https' : 'http'}://127.0.0.1:${inst.port}/`);
+      cleanupNewFiles();
+      finishAlreadyRunning(`${inst.scheme || (alive.secure ? 'https' : 'http')}://127.0.0.1:${inst.port}/`);
       return { alreadyRunning: true, port: inst.port, dataDir: DATA };
     }
   }
 
   let port = opt.port;
   let boundPort = 0;
-  for (let i = 0; i < 20 && !boundPort; i++) {
+  /** 显式 --port 是固定端口：占用即失败；只有未指定端口才自动递增（F07）。 */
+  const maxTries = opt.portExplicit ? 1 : 20;
+  let bindErr = null;
+  for (let i = 0; i < maxTries && !boundPort; i++) {
     const tryPort = port + i;
     try {
       await new Promise((resolve, reject) => {
@@ -2941,16 +3216,29 @@ export async function startServer(options = {}) {
     } catch (e) {
       if (e && e.code === 'EADDRINUSE') {
         const h = await probe(tryPort);
-        if (h && (h.server === 'fwarmy-relay' || h.server === 'warmy-relay')) {
-          log('INFO', `端口 ${tryPort} 上已有 FWArmy；本次只打开管理页`);
+        const sameOurs = h && (h.server === 'fwarmy-relay' || h.server === 'warmy-relay') && h.dataDirHash === dataDirHash;
+        if (sameOurs) {
+          // 同一数据目录的实例已在该端口服务（例如旧版无锁实例）：只打开管理页。
+          log('INFO', `端口 ${tryPort} 上已有本数据目录的 FWArmy；本次只打开管理页`);
+          cleanupNewFiles();
           finishAlreadyRunning(`${tlsInfo ? 'https' : 'http'}://127.0.0.1:${tryPort}/`);
           return { alreadyRunning: true, port: tryPort, dataDir: DATA };
         }
-        log('WARN', `端口 ${tryPort} 被其它程序占用，尝试 ${tryPort + 1}`);
-      } else throw e;
+        if (opt.portExplicit) {
+          const who = h && (h.server === 'fwarmy-relay' || h.server === 'warmy-relay')
+            ? `被另一个 FWArmy 实例占用（数据目录标识 ${h.dataDirHash || '未知'}，不是本数据目录）`
+            : '被其它程序占用';
+          cleanupNewFiles();
+          throw new Error(`显式端口 ${tryPort} ${who}；显式 --port 固定端口不会自动换端口`);
+        }
+        log('WARN', `端口 ${tryPort} 被占用，尝试 ${tryPort + 1}`);
+      } else { bindErr = e; break; }
     }
   }
-  if (!boundPort) throw new Error('找不到可用端口（8787 起试了 20 个）');
+  if (!boundPort) {
+    cleanupNewFiles();
+    throw bindErr || new Error(`找不到可用端口（${port} 起试了 ${maxTries} 个）`);
+  }
   port = boundPort;
   actualPort = boundPort;
 
@@ -2959,6 +3247,7 @@ export async function startServer(options = {}) {
     writeJsonAtomic(INSTANCE, {
       pid: process.pid, port, host: opt.host, scheme,
       startedAt: new Date().toISOString(), version: VERSION,
+      dataDirHash, instanceId: expand.instanceId,
       tls: { mode: cfg.tls.mode, fingerprint: tlsInfo ? tlsInfo.fingerprint : '' },
     });
   } catch { /* noop */ }
@@ -3006,6 +3295,7 @@ export async function startServer(options = {}) {
 
   let stopping = false;
   function cleanupFiles() {
+    releaseLock();
     try {
       const cur = readInstance();
       if (!cur || Number(cur.pid) === process.pid) fs.rmSync(INSTANCE, { force: true });
@@ -3017,6 +3307,7 @@ export async function startServer(options = {}) {
   /** 门禁/嵌入用：停监听、清定时器、落盘，但**不**结束进程（shutdown 才 exit）。 */
   async function close() {
     updateClosed = true;
+    removeProcessHandlers();
     if (updateTimer) { clearTimeout(updateTimer); updateTimer = null; }
     if (updateRetryTimer) { clearTimeout(updateRetryTimer); updateRetryTimer = null; }
     clearInterval(statsInterval);
@@ -3049,12 +3340,31 @@ export async function startServer(options = {}) {
     close().finally(() => setTimeout(() => process.exit(0), 50).unref());
     setTimeout(() => process.exit(0), 2000).unref();
   }
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGHUP', () => shutdown('SIGHUP'));
-  process.on('exit', () => { try { flushStats(true); } catch { /* noop */ } try { saveExpand(); } catch { /* noop */ } try { saveSecurity(); } catch { /* noop */ } cleanupFiles(); });
-  process.on('uncaughtException', (e) => { log('ERROR', '未捕获异常：' + String(e && e.stack || e).slice(0, 500)); });
-  process.on('unhandledRejection', (e) => { log('ERROR', '未处理 Promise：' + String(e && e.stack || e).slice(0, 500)); });
+  // F13：监听器保存句柄，close() 时移除；嵌入/门禁多次启动不再累积 listener。
+  const sigHandlers = [
+    ['SIGINT', () => shutdown('SIGINT')],
+    ['SIGTERM', () => shutdown('SIGTERM')],
+    ['SIGHUP', () => shutdown('SIGHUP')],
+  ];
+  for (const [ev, fn] of sigHandlers) process.on(ev, fn);
+  const exitHandler = () => {
+    if (sharedStateFrozen) return; // 更新交接后新进程已接管共享状态，旧进程再写会覆盖（F04）
+    try { flushStats(true); } catch { /* noop */ }
+    try { saveExpand(); } catch { /* noop */ }
+    try { saveSecurity(); } catch { /* noop */ }
+    cleanupFiles();
+  };
+  const uncaughtHandler = (e) => { log('ERROR', '未捕获异常：' + String(e && e.stack || e).slice(0, 500)); };
+  const unhandledHandler = (e) => { log('ERROR', '未处理 Promise：' + String(e && e.stack || e).slice(0, 500)); };
+  process.on('exit', exitHandler);
+  process.on('uncaughtException', uncaughtHandler);
+  process.on('unhandledRejection', unhandledHandler);
+  function removeProcessHandlers() {
+    for (const [ev, fn] of sigHandlers) { try { process.off(ev, fn); } catch { /* noop */ } }
+    try { process.off('exit', exitHandler); } catch { /* noop */ }
+    try { process.off('uncaughtException', uncaughtHandler); } catch { /* noop */ }
+    try { process.off('unhandledRejection', unhandledHandler); } catch { /* noop */ }
+  }
 
   return { srv, port, dataDir: DATA, stats: () => buildStats(), shutdown, close };
 }

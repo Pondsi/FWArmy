@@ -134,10 +134,11 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
       <label class="f">在线 TTL（秒）<input id="cfgTtl" type="number" min="0.1" step="1"></label>
     </div>
     <div class="toolbar" style="margin-top:12px">
+      <label class="f" style="flex-direction:row;align-items:center;gap:6px"><input id="cfgAccept" type="checkbox"> 接受新投递（取消勾选 = 暂停；只拦新投递，不拦收信）</label>
       <button class="primary" id="saveCfg">保存设置</button>
       <button id="pip">探测公网 IP</button>
     </div>
-    <div class="hint">保存立即生效，不重置已有用量。顶部暂停/恢复只控制业务，管理页仍可用；退出进程后需手动重新启动程序，页面不能自启动。公网 IP 探测不会改绑定地址。</div>
+    <div class="hint">保存立即生效，不重置已有用量。暂停只拦新投递（relay 与扩网投递返回 503），poll/lookup 等收信查询不受影响；管理页仍可用。退出进程后需手动重新启动程序，页面不能自启动。公网 IP 探测不会改绑定地址。</div>
   </div>
   <div class="panel">
     <h2>TLS / 证书 <small>默认自签 + 指纹固定；改动需重启</small></h2>
@@ -392,7 +393,6 @@ function switchTab(name) {
   if (name === 'logs') loadLogs();
   if (name === 'expand') loadExpand();
   if (name === 'update') loadUpdate();
-  if (name === 'settings') fillCfg();
 }
 function usageCell(b) {
   return `<div class="cell-main">${num(b.requests)} 次</div><div class="cell-sub">${fmtBytes(b.bytes)}</div>`;
@@ -413,17 +413,26 @@ function limText(c) {
 }
 function render() {
   if (!S) return;
+  const ae = document.activeElement;
+  const focusId = ae && ae.id && (ae.tagName === 'INPUT' || ae.tagName === 'BUTTON') ? ae.id : null;
   const t = S.totals;
   const tlsPill = S.tls && S.tls.secure
     ? `<span class="pill ok" title="${esc(S.tls.fingerprint)}">TLS ${esc(S.tls.mode)}</span>`
     : `<span class="pill bad">明文 HTTP</span>`;
   $('#pills').innerHTML = tlsPill +
-    `<span class="pill ${S.accepting ? 'ok' : 'warn'}">${S.accepting ? '接客中' : '已暂停接客'}</span>` +
+    `<span class="pill ${S.accepting ? 'ok' : 'warn'}">${S.accepting ? '接客中' : '已暂停新投递'}</span>` +
     `<span class="pill">在线 ${num(S.users)}</span>` +
     `<span class="pill">队列 ${num(S.queued)}</span>` +
     `<span class="pill">运行 ${fmtDur(S.uptimeSec)}</span>` +
     `<span class="pill">v${esc(S.version)}</span>` +
     (S.update && S.update.available ? `<span class="pill warn">更新 ${esc(S.update.latest)}</span>` : '');
+  const tg = $('#toggleService');
+  tg.disabled = false;
+  tg.textContent = S.config.accepting ? '暂停业务' : '恢复业务';
+  tg.className = S.config.accepting ? 'danger' : 'good';
+  tg.title = S.config.accepting
+    ? '暂停后不再接收新投递（relay/扩网投递返回 503）；poll/lookup 等收信查询不受影响'
+    : '恢复后重新接收新投递';
   $('#cards').innerHTML = [
     ['当前速度', `${num(t.speed.reqPerMin)} 次/分`, `${fmtBytes(t.speed.bytesPerMin)}/分`],
     ['峰值（每分钟）', `${num(t.peakPerMin)} 次`, t.peakAt ? fmtTime(t.peakAt) : '—'],
@@ -468,7 +477,8 @@ function render() {
     `<tr><th>消息 ID</th><th>原因</th><th class="num">次数</th><th>首次</th><th>最近</th><th>来源</th></tr>` +
     (recent.map((b) => `<tr><td><code>${esc(b.key)}…</code></td><td>${esc(b.reason)}</td><td class="num">${num(b.hits)}</td><td class="muted">${fmtTime(b.firstAt)}</td><td class="muted">${fmtTime(b.lastAt)}</td><td class="muted">${esc(b.origin || '—')}</td></tr>`).join('')
       || `<tr><td colspan="6" class="empty">黑名单为空。</td></tr>`);
-  if (activeTab === 'settings' && !cfgDirty) fillCfg();
+  if (!cfgDirty) fillCfg();
+  if (focusId) { const el = document.getElementById(focusId); if (el && el !== document.activeElement) el.focus(); }
   if (S.firstRunPending && !firstRun) loadFirstRun();
   if (firstRun && firstRun.pending) showFirstRun();
 }
@@ -477,8 +487,12 @@ function fillCfg() {
   const c = S.config;
   $('#cfgRate').value = c.ratePerMin;
   $('#cfgBytesRate').value = (Number(c.bytesPerMin) / 1048576).toFixed(2);
+  $('#cfgDailyRequests').value = c.dailyRequests;
   $('#cfgDaily').value = (Number(c.dailyBytes) / 1048576).toFixed(2);
+  $('#cfgMonthlyRequests').value = c.monthlyRequests;
   $('#cfgMonthly').value = (Number(c.monthlyBytes) / 1048576).toFixed(2);
+  $('#cfgTotalRequests').value = c.totalRequests;
+  $('#cfgTotal').value = (Number(c.totalBytes) / 1048576).toFixed(2);
   $('#cfgYearly').value = (Number(c.yearlyBytes) / 1048576).toFixed(2);
   $('#cfgEnv').value = Math.round(Number(c.maxEnvelope) / 1024);
   $('#cfgQueue').value = c.queuePerUser;
@@ -493,12 +507,16 @@ function showFirstRun() {
   $('#firstRun').hidden = false;
   $('#firstRunToken').textContent = firstRun.token || '';
 }
+let refreshInFlight = false;
 async function refresh() {
+  if (refreshInFlight) return;
+  refreshInFlight = true;
   try {
     S = await api('/api/admin/stats');
     SEC = await api('/api/admin/security').catch(() => null);
     render();
   } catch (e) { toast('连不上服务器：' + e.message, true); }
+  finally { refreshInFlight = false; }
 }
 async function loadLogs() {
   try {
@@ -782,8 +800,12 @@ async function saveCfg() {
     const body = {
       ratePerMin: Number($('#cfgRate').value),
       bytesPerMin: Math.round(Number($('#cfgBytesRate').value) * 1048576),
+      dailyRequests: Math.round(Number($('#cfgDailyRequests').value)),
       dailyBytes: Math.round(Number($('#cfgDaily').value) * 1048576),
+      monthlyRequests: Math.round(Number($('#cfgMonthlyRequests').value)),
       monthlyBytes: Math.round(Number($('#cfgMonthly').value) * 1048576),
+      totalRequests: Math.round(Number($('#cfgTotalRequests').value)),
+      totalBytes: Math.round(Number($('#cfgTotal').value) * 1048576),
       yearlyBytes: Math.round(Number($('#cfgYearly').value) * 1048576),
       maxEnvelope: Math.round(Number($('#cfgEnv').value) * 1024),
       queuePerUser: Number($('#cfgQueue').value),
@@ -971,14 +993,36 @@ $('#shutdown').addEventListener('click', async () => {
   try { await api('/api/admin/shutdown', {}); toast('服务器已关闭'); S = null; $('#pills').innerHTML = '<span class="pill bad">已关闭</span>'; }
   catch (e) { toast(e.message, true); }
 });
+let toggling = false;
+$('#toggleService').addEventListener('click', async () => {
+  if (!S || !S.config || toggling) return;
+  const next = !S.config.accepting;
+  toggling = true;
+  $('#toggleService').disabled = true;
+  try {
+    await api('/api/admin/config', { accepting: next });
+    toast(next ? '已恢复接收新投递' : '已暂停：不再接收新投递');
+    await refresh();
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    toggling = false;
+    if (S) $('#toggleService').disabled = false;
+  }
+});
 $('#cfgRate').addEventListener('input', () => { cfgDirty = true; });
 $('#cfgBytesRate').addEventListener('input', () => { cfgDirty = true; });
+$('#cfgDailyRequests').addEventListener('input', () => { cfgDirty = true; });
 $('#cfgDaily').addEventListener('input', () => { cfgDirty = true; });
+$('#cfgMonthlyRequests').addEventListener('input', () => { cfgDirty = true; });
 $('#cfgMonthly').addEventListener('input', () => { cfgDirty = true; });
+$('#cfgTotalRequests').addEventListener('input', () => { cfgDirty = true; });
+$('#cfgTotal').addEventListener('input', () => { cfgDirty = true; });
 $('#cfgYearly').addEventListener('input', () => { cfgDirty = true; });
 $('#cfgEnv').addEventListener('input', () => { cfgDirty = true; });
 $('#cfgQueue').addEventListener('input', () => { cfgDirty = true; });
 $('#cfgTtl').addEventListener('input', () => { cfgDirty = true; });
+$('#cfgAccept').addEventListener('change', () => { cfgDirty = true; });
 $('#credTable').addEventListener('click', (ev) => {
   const b = ev.target.closest('button[data-act]');
   if (!b || !S) return;
