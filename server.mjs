@@ -966,12 +966,19 @@ export async function startServer(options = {}) {
     } catch { /* noop */ }
     releaseLock();
   }
+  /** 端口上的 FWArmy 是否就是本数据目录的实例（F07 边角：陈旧 instance.json 不能把别人的实例当成自己的）。 */
+  const isSameInstance = (h, instRec) => {
+    if (!h || (h.server !== 'fwarmy-relay' && h.server !== 'warmy-relay')) return false;
+    if (h.dataDirHash) return h.dataDirHash === dataDirHash;
+    // 旧版健康响应没有 dataDirHash：只有本目录 instance.json 也无记录时按升级兼容信任
+    return !(instRec && instRec.dataDirHash);
+  };
   if (!acquireLock()) {
     const cur = readLock();
     const inst0 = (() => { try { return JSON.parse(fs.readFileSync(INSTANCE, 'utf8')); } catch { return null; } })();
     if (inst0 && inst0.port) {
       const alive0 = await probe(inst0.port);
-      if (alive0 && (alive0.server === 'fwarmy-relay' || alive0.server === 'warmy-relay')) {
+      if (isSameInstance(alive0, inst0)) {
         const scheme0 = inst0.scheme || (alive0.secure ? 'https' : 'http');
         process.stdout.write(`已有 FWArmy 在运行 pid=${inst0.pid || '?'} port=${inst0.port}；本次只打开管理页\n`);
         finishAlreadyRunning(`${scheme0}://127.0.0.1:${inst0.port}/`);
@@ -2816,11 +2823,15 @@ export async function startServer(options = {}) {
         const gw = String(j.gateway || (lastNatpmp && lastNatpmp.gateway) || (gatewayCandidates()[0] || ''));
         const r = await natpmpMap({ gateway: gw, internalPort: boundPort || opt.port, externalPort: Number(j.externalPort) || 0, leaseSec: Math.max(60, Math.min(86400, Number(j.leaseSec) || 7200)), protocol: 'tcp' });
         if (!r.ok) return send(res, 200, { ok: true, mapped: false, result: r });
+        const prevNat = expand.natpmp;
         expand.natpmp = {
           gateway: gw, internalPort: r.internalPort, externalPort: r.externalPort,
           lifetimeSec: r.lifetime, mappedAt: Date.now(), protocol: 'tcp',
         };
-        if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' });
+        if (!saveExpand()) {
+          expand.natpmp = prevNat;
+          return send(res, 500, { ok: false, error: 'persist-failed' });
+        }
         log('INFO', `NAT-PMP：TCP ${r.internalPort} → 外部 ${r.externalPort}（租期 ${r.lifetime}s）`);
         return send(res, 200, { ok: true, mapped: true, result: r, view: reachView() });
       }
@@ -2843,8 +2854,9 @@ export async function startServer(options = {}) {
         try { tls.createSecureContext({ cert: fs.readFileSync(path.resolve(next.certFile), 'utf8'), key: fs.readFileSync(path.resolve(next.keyFile), 'utf8') }); }
         catch (e) { return send(res, 400, { ok: false, error: 'bad-cert-or-key:' + String(e && e.message || e).slice(0, 80) }); }
       }
+      const prevTls = cfg.tls;
       cfg.tls = next;
-      if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
+      if (!saveCfg()) { cfg.tls = prevTls; return send(res, 500, { ok: false, error: 'persist-failed' }); }
       log('INFO', `TLS 配置已保存 mode=${next.mode} allowPlaintext=${next.allowPlaintext}（需重启生效）`);
       return send(res, 200, { ok: true, tls: tlsPublicView(), restartRequired: true });
     }
@@ -2918,8 +2930,9 @@ export async function startServer(options = {}) {
         }
         next[k] = v;
       }
+      const prevCfg = cfg;
       cfg = next; // 不清用量：新限额立刻作用于已有统计，避免改设置刷新预算。
-      if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
+      if (!saveCfg()) { cfg = prevCfg; return send(res, 500, { ok: false, error: 'persist-failed' }); }
       log('INFO', `更新全局配置 accepting=${cfg.accepting} ratePerMin=${cfg.ratePerMin}`);
       return send(res, 200, { ok: true, config: cfg });
     }
@@ -3188,8 +3201,8 @@ export async function startServer(options = {}) {
   const inst = readInstance();
   if (inst && inst.port) {
     const alive = await probe(inst.port);
-    // instance.json 在本数据目录里 ⇒ 是同一数据目录的旧实例；不同数据目录不会走这里。
-    if (alive && (alive.server === 'fwarmy-relay' || alive.server === 'warmy-relay')) {
+    // 必须核对数据目录身份：陈旧 instance.json 的端口可能已被另一个数据目录的实例接管。
+    if (isSameInstance(alive, inst)) {
       log('INFO', `已有 FWArmy 在运行 pid=${inst.pid || '?'} port=${inst.port}；本次只打开管理页`);
       cleanupNewFiles();
       finishAlreadyRunning(`${inst.scheme || (alive.secure ? 'https' : 'http')}://127.0.0.1:${inst.port}/`);

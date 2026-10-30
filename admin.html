@@ -482,21 +482,25 @@ function render() {
   if (S.firstRunPending && !firstRun) loadFirstRun();
   if (firstRun && firstRun.pending) showFirstRun();
 }
+/** 单位换算显示：toFixed(2) 会丢精度（保存回来字节漂移）；用 6 位小数 + 去尾零，往返在 1 字节内。 */
+const mbShow = (bytes) => String(+(Number(bytes) / 1048576).toFixed(6));
+const kbShow = (bytes) => String(+(Number(bytes) / 1024).toFixed(3));
+const secShow = (ms) => String(+(Number(ms) / 1000).toFixed(3));
 function fillCfg() {
   if (!S) return;
   const c = S.config;
   $('#cfgRate').value = c.ratePerMin;
-  $('#cfgBytesRate').value = (Number(c.bytesPerMin) / 1048576).toFixed(2);
+  $('#cfgBytesRate').value = mbShow(c.bytesPerMin);
   $('#cfgDailyRequests').value = c.dailyRequests;
-  $('#cfgDaily').value = (Number(c.dailyBytes) / 1048576).toFixed(2);
+  $('#cfgDaily').value = mbShow(c.dailyBytes);
   $('#cfgMonthlyRequests').value = c.monthlyRequests;
-  $('#cfgMonthly').value = (Number(c.monthlyBytes) / 1048576).toFixed(2);
+  $('#cfgMonthly').value = mbShow(c.monthlyBytes);
   $('#cfgTotalRequests').value = c.totalRequests;
-  $('#cfgTotal').value = (Number(c.totalBytes) / 1048576).toFixed(2);
-  $('#cfgYearly').value = (Number(c.yearlyBytes) / 1048576).toFixed(2);
-  $('#cfgEnv').value = Math.round(Number(c.maxEnvelope) / 1024);
+  $('#cfgTotal').value = mbShow(c.totalBytes);
+  $('#cfgYearly').value = mbShow(c.yearlyBytes);
+  $('#cfgEnv').value = kbShow(c.maxEnvelope);
   $('#cfgQueue').value = c.queuePerUser;
-  $('#cfgTtl').value = Math.round(Number(c.presenceTtlMs) / 1000);
+  $('#cfgTtl').value = secShow(c.presenceTtlMs);
   $('#cfgAccept').checked = !!c.accepting;
 }
 async function loadFirstRun() {
