@@ -87,6 +87,9 @@ stats | ip | update | version               usage stats, public IP probe, update
   messages carry signed origins and unique IDs — the same message id passes at most twice per 24h
   (a third sighting is dropped and the message id itself is blacklisted, so relay rings never loop
   forever; no hop-count limit is used), plus route-based loop detection.
+  Message identity is the `msgId` in the header — **content is never compared**: resends or retries
+  with a fresh `msgId` always pass (clients should generate a new msgId per attempt; requests without
+  a msgId fall back to an envelope hash, so identical resends without msgId count as the same message).
 - **DHT (discovery layer, default on)**: `warmy-dht/1` node, signed service/locator records (Ed25519,
   AES-256-GCM, seq anti-rollback, ±10 min clock tolerance), anchor bootstrap with exponential backoff,
   and per-source rate limiting. DHT never authorizes delivery — forwarding always requires configured

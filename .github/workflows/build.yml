@@ -161,8 +161,11 @@ jobs:
               sha256sum "$f" | awk -v b="$base" '{print $1"  "b}' >> dist-release/SHA256SUMS
             fi
           done
-          # 安装脚本随 Release 一起发布
+          # 安装脚本随 Release 一起发布；版本占位符 __VERSION__ 替换为 package.json 真实版本
           cp install.sh install.ps1 dist-release/
+          VER=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' package.json | head -n1)
+          [ -n "$VER" ] || { echo 'cannot read version from package.json' >&2; exit 1; }
+          sed -i "s/__VERSION__/$VER/g" dist-release/install.sh dist-release/install.ps1
           echo '=== release assets ==='
           ls -la dist-release
           echo '=== SHA256SUMS ==='

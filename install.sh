@@ -1,22 +1,33 @@
 #!/bin/sh
 # FWArmy 无证书安装器（macOS / Linux）
 #
-#   curl -fsSL https://github.com/Pondsi/FWArmy/releases/download/v0.5.1/install.sh | sh
+#   curl -fsSL https://github.com/Pondsi/FWArmy/releases/download/v__VERSION__/install.sh | sh
 #
 # 做四件事：下载本平台单文件、校验 SHA256、装到用户目录、生成可双击入口。
 # 不请求管理员权限，不启动服务，不覆盖已有的 data/（凭据/统计/日志）。
 #
 # 可用环境变量：
-#   FWARMY_VERSION  指定版本（默认 0.5.1）
+#   FWARMY_VERSION  指定版本（默认：读同目录 package.json；发布资产由 CI 替换为真实版本）
 #   FWARMY_HOME     指定安装目录
 #   FWARMY_BASE     指定下载源（默认 GitHub Release；本地测试可传目录）
 set -eu
 
-VERSION="${FWARMY_VERSION:-0.5.1}"
+fail() { printf 'FWArmy 安装失败：%s\n' "$*" >&2; exit 1; }
+
+VERSION="${FWARMY_VERSION:-__VERSION__}"
+if [ "$VERSION" = "__VERSION__" ]; then
+  # Release assets get __VERSION__ substituted by CI; repository runs (CI smoke, local)
+  # read the version from the package.json next to this script.
+  SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd -P)
+  if [ -f "$SCRIPT_DIR/package.json" ]; then
+    VERSION=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$SCRIPT_DIR/package.json" 2>/dev/null | head -n1)
+  fi
+  if [ -z "$VERSION" ] || [ "$VERSION" = "__VERSION__" ]; then
+    fail "无法确定版本：请设置 FWARMY_VERSION（或从仓库根目录运行本脚本）"
+  fi
+fi
 REPO="${FWARMY_REPO:-Pondsi/FWArmy}"
 BASE="${FWARMY_BASE:-https://github.com/$REPO/releases/download/v$VERSION}"
-
-fail() { printf 'FWArmy 安装失败：%s\n' "$*" >&2; exit 1; }
 
 OS=$(uname -s 2>/dev/null || echo unknown)
 ARCH=$(uname -m 2>/dev/null || echo unknown)
