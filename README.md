@@ -8,10 +8,15 @@ messages and cannot read their contents.
 - Opaque forwarding only: end-to-end encryption happens on the clients; the server only sees routing metadata.
 - Per-credential access control with usage statistics and quotas.
 - Multi-server "expand" networking: several FWArmy instances can forward for each other (multi-hop, loop-protected).
+- **DHT discovery (default on)**: every instance runs a `warmy-dht/1` node (protocol-compatible with WArmy's
+  sync-protocol) and publishes signed service records — clients find relays and each other by fingerprint.
+  DHT only handles *discovery*; message delivery still requires mutual credentials + TLS fingerprint pinning.
+  Abuse hardening: datagram size cap, per-source rate limiting, bounded record store, signed records with
+  sequence anti-rollback.
+- **Self-describing relay credentials**: generated tokens embed the relay's address (host + port), so a
+  client only needs "name + credential" — no separate host/port fields. Tokens can be revoked individually.
 - Single-file binaries for Windows / macOS / Linux (Node SEA), plus a source mode that runs on Node ≥ 20.
-- Local-only admin page (loopback, no login) with credentials, quotas, TLS, reachability and updates.
-
-Chinese documentation is available in [说明.md](说明.md).
+- Local-only admin page (loopback, no login) with credentials, quotas, TLS, DHT, reachability and updates.
 
 ---
 
@@ -79,7 +84,18 @@ stats | ip | update | version               usage stats, public IP probe, update
 - **Admin page**: bound to loopback with Host/Origin checks and no login — anyone who can run
   processes on the same machine can use it (documented worst case).
 - **Expand networking**: outbound peers are pinned by fingerprint before any credential is sent;
-  messages carry signed origins, unique IDs (24h window, max 2 forwards), and loop detection.
+  messages carry signed origins and unique IDs — the same message id passes at most twice per 24h
+  (a third sighting is dropped and the message id itself is blacklisted, so relay rings never loop
+  forever; no hop-count limit is used), plus route-based loop detection.
+- **DHT (discovery layer, default on)**: `warmy-dht/1` node, signed service/locator records (Ed25519,
+  AES-256-GCM, seq anti-rollback, ±10 min clock tolerance), anchor bootstrap with exponential backoff,
+  and per-source rate limiting. DHT never authorizes delivery — forwarding always requires configured
+  mutual credentials and pinned TLS fingerprints; unauthenticated relay requests are dropped (401) and
+  rate-limited by source IP.
+- **Relay credentials v2**: generated tokens embed host + port (`fwnexp_v2_<payload>`), so clients fill
+  in only "name + credential"; legacy tokens without an address still work with a manual address.
+  Inbound relay responses distinguish `offline` (recipient offline — never cached, sender retries later)
+  from rejections; see the failure-code table in the source docs.
 - **Reachability**: NAT-PMP (RFC 6886) and STUN (RFC 5389) probes; port mapping mutates router state
   and requires explicit confirmation.
 

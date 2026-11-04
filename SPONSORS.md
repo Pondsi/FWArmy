@@ -1,12 +1,12 @@
 # Sponsors · 赞助支持
 
-**FWArmy** — an open-source multi-agent desktop app by **Pondsi**.
+**FWArmy** — an open-source relay / rendezvous server by **Pondsi**.
 
 ---
 
 ## About this page · 关于本页
 
-WArmy is free and open source. There is **no paid tier and no locked feature** — whether or not you
+FWArmy is free and open source. There is **no paid tier and no locked feature** — whether or not you
 donate, you always have full use of everything in this project. A donation is simply a kind way to say
 "thank you" to the author; it buys no extra functionality, no priority, and no privileges.
 
@@ -42,13 +42,19 @@ Scan the QR code below.
 
 <img src="sponsors/zfbd.png" width="240" alt="Alipay QR code (支付宝收款码)">
 
+### PayPal
+
+Donate through PayPal · 通过 PayPal 赞助：
+
+[paypal.me/pondsi](https://www.paypal.com/paypalme/pondsi)
+
 ---
 
 ## Other ways to help · 其他支持方式
 
 Donating is not the only way — these help just as much, and cost nothing:
 
-- ★ **Star** this repository — it helps others discover WArmy
+- ★ **Star** this repository — it helps others discover FWArmy
 - 🐞 **Report issues** or suggest features
 - 🔧 **Submit patches** or improvements
 - 📣 **Share it** with friends and colleagues
@@ -56,4 +62,4 @@ Donating is not the only way — these help just as much, and cost nothing:
 
 ---
 
-Pondsi — thank you for using and supporting WArmy.
+Pondsi — thank you for using and supporting FWArmy.

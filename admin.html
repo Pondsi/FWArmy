@@ -96,6 +96,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
 <div class="tabs" id="tabs">
   <button class="tab active" data-tab="overview">总览</button>
   <button class="tab" data-tab="expand">扩网</button>
+  <button class="tab" data-tab="dht">DHT 组网</button>
   <button class="tab" data-tab="logs">日志</button>
   <button class="tab" data-tab="update">更新</button>
 </div>
@@ -184,8 +185,8 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <h2>扩网 · 我连接别人 <small>本机送不到的消息，按顺序转发给这些 FWArmy</small></h2>
     <div class="grid">
       <label class="f">名称（可选）<input id="exName" maxlength="40" placeholder="例如：家里的 FWArmy"></label>
-      <label class="f">地址（IP 或域名）<input id="exAddr" placeholder="example.com 或 example.com:59600"></label>
-      <label class="f">对方的被扩网凭据<input id="exCred" type="password" autocomplete="off" placeholder="对方「被扩网」页生成"></label>
+      <label class="f">地址（可选）<input id="exAddr" placeholder="新版凭证自带地址，可留空；填写则覆盖凭证地址"></label>
+      <label class="f">对方的被扩网凭据<input id="exCred" type="password" autocomplete="off" placeholder="对方「被扩网」页生成（新版含地址）"></label>
       <label class="f">传输安全
         <select id="exTls">
           <option value="pin">TLS 自签 + 指纹固定（推荐）</option>
@@ -199,7 +200,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
       <button class="primary" id="exAdd">添加</button>
       <span class="muted" id="exMsg"></span>
     </div>
-    <div class="hint">不填端口就是默认 59599；在域名或 IP 后面加 <code>:端口</code> 可以指定（例如 <code>1.2.3.4:60000</code>）。凭据由对方在「被扩网」里一键生成。
+    <div class="hint">新版「被扩网」凭证<b>已包含本站地址</b>：对方只需填「名称 + 凭证」即可连接，不用再填域名/端口。旧版凭据不含地址，仍需手填：不填端口就是默认 59599；在域名或 IP 后面加 <code>:端口</code> 可以指定（例如 <code>1.2.3.4:60000</code>）。
       TLS 默认「自签 + 指纹固定」：添加后先点「识别指纹」，核对对方屏幕上/管理页里的指纹一致，再点「信任」。**未信任前不会发送凭据**。对方用正式证书时选「用户证书」，按系统 CA 校验域名。</div>
     <div class="cards" id="exOutCards"></div>
     <div class="tablewrap"><table id="exOutTable"></table></div>
@@ -217,9 +218,9 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <div id="exInTokenBox" class="tokenbox" hidden>
       <code id="exInToken"></code>
       <button class="sm" id="exInCopy">复制</button>
-      <span class="hint" style="margin:0">只显示这一次；每个实例可有多条，可单独停用/删除。</span>
+      <span class="hint" style="margin:0">只显示这一次；<b>已包含本站地址</b>，对方只需填「名称 + 凭证」。每个实例可有多条，可单独停用/删除。</span>
     </div>
-    <div class="hint" id="exAddrHint">对方填写：你的域名或公网 IP:端口（以本机实际监听端口为准）。</div>
+    <div class="hint" id="exAddrHint">加载中…</div>
     <div class="tablewrap" style="margin-bottom:10px"><table id="exInCredTable"></table></div>
     <div class="cards" id="exInCards"></div>
     <div class="tablewrap"><table id="exInTable"></table></div>
@@ -241,6 +242,32 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
       <button id="reachUnmap">取消映射</button>
     </div>
     <div class="hint" id="reachHint">申请映射会改路由器状态，必须你显式点击；不内置任何公网 STUN 服务器。verdict=confirmed-inbound 只来自真实外部实例连进来过。</div>
+  </div>
+</section>
+
+<section id="tab-dht">
+  <div class="panel">
+    <h2>DHT 发现 <small>默认强制开启 · 只做设备发现，消息仍走凭据通道</small></h2>
+    <div class="cards" id="dhtCards"></div>
+    <div class="grid">
+      <label class="f">UDP 端口（0 = 自动：7800 起递增）<input id="dhtPort" type="number" min="0" max="65535" step="1"></label>
+      <label class="f">对外宣告地址（留空自动推断：STUN &gt; NAT-PMP &gt; 本机 IPv4）<input id="dhtAdv" placeholder="relay.example.com 或公网 IP"></label>
+      <label class="f" style="flex-direction:row;align-items:center;gap:6px"><input id="dhtEnabled" type="checkbox"> 启用 DHT 节点（默认开）</label>
+      <label class="f">锚点（每行一个 host 或 host:port，支持 [IPv6]）<textarea id="dhtAnchors" rows="4" placeholder="anchor1.example.com:7800"></textarea></label>
+    </div>
+    <div class="toolbar" style="margin-top:12px">
+      <button class="primary" id="dhtSave">保存并生效</button>
+      <button id="dhtPublish">立即发布本站记录</button>
+      <input id="dhtQueryFp" placeholder="按指纹查询（base32，52 位）" style="max-width:260px">
+      <button id="dhtQueryBtn">查询</button>
+      <span class="muted" id="dhtMsg"></span>
+    </div>
+    <div class="hint" id="dhtHint"></div>
+  </div>
+  <div class="panel">
+    <h2>DHT 对端（contacts） <small>路由表里最近的节点</small></h2>
+    <div class="tablewrap"><table id="dhtTable"></table></div>
+    <div class="hint">客户端注册到本机时，本机会把「该客户端当前所在中继站 = 本站」签名发布到 DHT；其它中继站投递失败时据此定位目标所在站，且只转发给已配置互信（凭据 + 指纹固定）的对端。定位记录随客户端在线每 10 分钟保鲜，离线约 30 分钟后自然过期。锚点域名待定：默认空列表时本机仍监听 UDP 并保存记录，配置锚点后即可引导入网。</div>
   </div>
 </section>
 
@@ -334,7 +361,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
 'use strict';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
-let S = null, E = null, SEC = null, R = null, U = null, firstRun = null, editing = null, deleting = null, cfgDirty = false, activeTab = 'overview';
+let S = null, E = null, SEC = null, R = null, U = null, D = null, firstRun = null, editing = null, deleting = null, cfgDirty = false, activeTab = 'overview';
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const num = (n) => Number(n || 0).toLocaleString('zh-CN');
@@ -392,6 +419,7 @@ function switchTab(name) {
   $$('section').forEach((s) => s.classList.toggle('active', s.id === 'tab-' + name));
   if (name === 'logs') loadLogs();
   if (name === 'expand') loadExpand();
+  if (name === 'dht') loadDht();
   if (name === 'update') loadUpdate();
 }
 function usageCell(b) {
@@ -629,7 +657,7 @@ function renderExpand() {
       const st = p.stats;
       const ok = st.total.delivered || 0;
       const fail = (st.total.rejected || 0) + (st.total.offline || 0);
-      return `<tr><td>${esc(p.name)}</td><td><code>${esc(p.host)}:${p.port}</code><div class="cell-sub">${esc(p.credentialMasked)}</div></td>` +
+      return `<tr><td>${esc(p.name)}</td><td><code>${esc(p.host)}:${p.port}</code><div class="cell-sub">${p.addrFrom === 'credential' ? '<span class="tag on">地址来自凭证</span>' : esc(p.credentialMasked)}</div></td>` +
         `<td>${tlsTag(p)}<div class="cell-sub">${p.tls && p.tls.fingerprint ? esc(p.tls.fingerprint.slice(0, 16)) + '…' : '—'}</div></td>` +
         `<td>${p.enabled ? '<span class="tag on">启用</span>' : '<span class="tag off">停用</span>'}</td>` +
         `<td>${exPeerUsage(st)}</td><td>${num(st.month.requests)} 次<div class="cell-sub">${fmtBytes(st.month.bytes)}</div></td><td>${num(st.total.requests)} 次<div class="cell-sub">${fmtBytes(st.total.bytes)}</div></td>` +
@@ -647,14 +675,15 @@ function renderExpand() {
   $('#exInTotals').innerHTML = exTotalsTable(E.stats.inbound);
   const creds = inb.credentials || [];
   $('#exInCredTable').innerHTML =
-    `<tr><th>名称</th><th>前缀</th><th>状态</th><th class="num">请求</th><th>最近使用</th><th>最近结果</th><th>操作</th></tr>` +
+    `<tr><th>名称</th><th>前缀</th><th>地址</th><th>状态</th><th class="num">请求</th><th>最近使用</th><th>最近结果</th><th>操作</th></tr>` +
     (creds.map((c) => `<tr><td>${esc(c.name)}</td><td><code>${esc(c.prefix)}</code></td>` +
+      `<td><code>${esc(c.addr || '—')}</code></td>` +
       `<td>${c.disabled ? '<span class="tag off">已停用</span>' : '<span class="tag on">有效</span>'}</td>` +
       `<td class="num">${num(c.stats && c.stats.total ? c.stats.total.requests : 0)}</td>` +
       `<td class="muted">${c.lastAt ? fmtTime(c.lastAt) : '—'}</td><td class="muted">${esc(c.lastResult || '—')}</td>` +
       `<td><div class="toolbar" style="margin:0"><button class="sm" data-in-act="toggle" data-id="${esc(c.id)}">${c.disabled ? '启用' : '停用'}</button>` +
       `<button class="sm danger" data-in-act="remove" data-id="${esc(c.id)}" data-name="${esc(c.name)}">删除</button></div></td></tr>`).join('')
-      || `<tr><td colspan="7" class="empty">还没有接入凭据。点「生成接入凭据」。</td></tr>`);
+      || `<tr><td colspan="8" class="empty">还没有接入凭据。点「生成接入凭据」。</td></tr>`);
   const src = Object.entries(inb.sources || {}).sort((a, b) => (b[1].lastAt || 0) - (a[1].lastAt || 0));
   $('#exInTable').innerHTML =
     `<tr><th>来源</th><th class="num">请求</th><th class="num">流量</th><th class="num">成功</th><th class="num">失败</th><th>最近结果</th><th>最近时间</th></tr>` +
@@ -666,8 +695,8 @@ function renderExpand() {
     ? `已配置 ${num(inb.count || creds.length)} 条 · 有效 ${num(creds.filter((c) => !c.disabled).length)} 条`
     : '尚未生成（别人无法连接）';
   $('#exAddrHint').textContent = Number(E.port) === 59599
-    ? '对方填写：你的域名或公网 IP（默认端口 59599，可省略）。传输请选 TLS 并核对指纹。'
-    : `对方填写：你的域名或公网 IP:${E.port}。对方不写端口会按默认 59599 连接，所以请明确带上 :${E.port}；传输请选 TLS 并核对指纹。`;
+    ? '新版凭证已包含本站地址（域名或公网 IP，端口默认 59599 已带上），对方只需填「名称 + 凭证」。手动填写地址仍支持：不写端口默认 59599；传输请选 TLS 并核对指纹。'
+    : `新版凭证已包含本站地址（域名或公网 IP:${E.port}），对方只需填「名称 + 凭证」。手动填写地址仍支持：不写端口默认 59599，若本站端口不是 59599 请明确带上 :${E.port}；传输请选 TLS 并核对指纹。`;
   renderReach();
 }
 function renderReach() {
@@ -690,6 +719,74 @@ function renderReach() {
   ].map(([k, val, s]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(val)}</div><div class="s">${esc(s)}</div></div>`).join('');
   $('#reachHint').textContent = (R.hints || []).join(' ');
 }
+/* ── DHT 组网 ─────────────────────────────────────────────────────── */
+function renderDht() {
+  if (!D) return;
+  const d = D;
+  const st = d.running ? '运行中' : (d.enabled ? '启动失败' : '已关闭');
+  const lastPub = d.lastPublishAt ? fmtTime(d.lastPublishAt) : '—';
+  $('#dhtCards').innerHTML = [
+    ['节点', st, d.enabled ? 'enabled（默认开）' : 'disabled'],
+    ['指纹', d.fingerprint ? d.fingerprint.slice(0, 20) + '…' : '—', 'base32(sha256(公钥))，52 位'],
+    ['节点 ID', d.nodeIdHex ? d.nodeIdHex.slice(0, 20) + '…' : '—', '由指纹派生（sha256）'],
+    ['UDP 监听', d.udp ? `${d.udp.host}:${d.udp.port}` : '—', `配置 ${d.config.port || '自动（7800 起）'}`],
+    ['对端数', String(d.contacts || 0), '路由表 contacts'],
+    ['上次发布', lastPub, d.lastPublishSeq ? 'seq ' + d.lastPublishSeq + ' · 命中 ' + (d.lastStoredOn || []).length + ' 个节点' : '尚未发布'],
+    ['引导', d.lastYindao ? (d.lastYindao.detail || `成功 ${d.lastYindao.ok} / 失败 ${d.lastYindao.failed}`) : '尚未引导', d.lastYindao ? fmtTime(d.lastYindao.at) : ''],
+    ['发布次数', String(d.selfPublishes || 0), '本站记录 + 客户端定位记录'],
+  ].map(([k, v, s]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join('');
+  $('#dhtEnabled').checked = d.enabled;
+  $('#dhtPort').value = d.config.port;
+  $('#dhtAdv').value = d.config.advertiseHost || '';
+  $('#dhtAnchors').value = (d.anchors || []).map((a) => `${a.host}:${a.port}`).join('\n');
+  $('#dhtTable').innerHTML =
+    `<tr><th>节点 ID</th><th>地址</th><th>指纹</th><th>最近见到</th></tr>` +
+    ((d.contactsList || []).map((c) => `<tr><td><code>${esc(c.id.slice(0, 16))}…</code></td><td><code>${esc(c.host)}:${c.port}</code></td><td class="muted">${c.zhiWen ? esc(c.zhiWen.slice(0, 16)) + '…' : '—'}</td><td class="muted">${fmtTime(c.lastSeen)}</td></tr>`).join('')
+      || `<tr><td colspan="4" class="empty">还没有对端。配置锚点后本机会引导入网；无锚点时只监听、等待被引导。</td></tr>`);
+  $('#dhtHint').textContent = d.lastError
+    ? '最近错误：' + d.lastError
+    : '锚点域名待定：默认空列表，本机仍监听 UDP 并保存记录；配置锚点（每行一个）后立即引导入网，全部失败会指数退避重试。';
+  $('#dhtMsg').textContent = '';
+}
+async function loadDht() {
+  try { D = await api('/api/admin/dht'); renderDht(); }
+  catch (e) { toast('DHT 状态读取失败：' + e.message, true); }
+}
+async function saveDht() {
+  try {
+    const port = Number($('#dhtPort').value) || 0;
+    if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('端口必须是 0–65535 的整数');
+    const j = await api('/api/admin/dht-config', {
+      enabled: $('#dhtEnabled').checked,
+      port,
+      advertiseHost: $('#dhtAdv').value.trim(),
+      anchors: $('#dhtAnchors').value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean),
+    });
+    D = j.dht;
+    renderDht();
+    toast(j.restart === 'started' ? 'DHT 配置已保存并生效' : 'DHT 配置已保存（节点已停止）');
+  } catch (e) { toast(e.message, true); }
+}
+async function dhtPublishNow() {
+  try {
+    const r = await api('/api/admin/dht-publish', {});
+    D = r.dht; renderDht();
+    toast(r.publish && r.publish.ok ? ('已发布到 ' + (r.publish.storedOn || []).length + ' 个节点') : ('发布失败：' + ((r.publish && r.publish.error) || '')), !(r.publish && r.publish.ok));
+  } catch (e) { toast(e.message, true); }
+}
+async function dhtQueryNow() {
+  const fp = $('#dhtQueryFp').value.trim();
+  if (!fp) { toast('请输入要查询的指纹', true); return; }
+  try {
+    const r = await api('/api/admin/dht-query', { fingerprint: fp });
+    D = r.dht; renderDht();
+    if (r.found && r.record) {
+      const rec = r.record;
+      toast(`查到了 ${rec.fp.slice(0, 12)}… → ${rec.host}:${rec.port}（${rec.scope}${rec.bieMing ? ' · ' + rec.bieMing : ''}）`);
+    } else toast('未查到：' + (r.error || 'not-found'), true);
+  } catch (e) { toast(e.message, true); }
+}
+
 async function loadExpand() {
   try { E = await api('/api/admin/expand'); R = await api('/api/admin/reach').catch(() => null); renderExpand(); }
   catch (e) { toast('扩网页读取失败：' + e.message, true); }
@@ -699,16 +796,18 @@ async function addExpandPeer() {
   try {
     const address = $('#exAddr').value.trim();
     const credential = $('#exCred').value.trim();
-    if (!address) throw new Error('请填写地址');
     if (!credential) throw new Error('请填写对方的被扩网凭据');
+    if (!address && !credential.startsWith('fwnexp_v2_')) throw new Error('该凭据不含地址；请填写地址，或让对方重新生成新版（含地址）凭证');
     const name = $('#exName').value.trim();
     const mode = $('#exTls').value;
     const fp = $('#exFp').value.trim();
     if (mode === 'pin' && fp && !/^[0-9a-fA-F]{64}$/.test(fp)) throw new Error('证书指纹必须是 64 位十六进制');
-    await api('/api/admin/expand-outbound', { name, address, credential, tls: { mode, fingerprint: fp } });
+    const r = await api('/api/admin/expand-outbound', { name, address, credential, tls: { mode, fingerprint: fp } });
+    const item = r.item || {};
     $('#exName').value = ''; $('#exAddr').value = ''; $('#exCred').value = ''; $('#exFp').value = '';
-    msg.textContent = fp ? '已添加' : '已添加；请点「识别指纹」并核对后信任';
-    toast(fp ? '已添加扩网地址' : '已添加；未信任前不会发送凭据');
+    const fromCred = item.addrFrom === 'credential' ? `地址已从凭证解析：${item.host}:${item.port}；` : '';
+    msg.textContent = fromCred + (fp ? '已添加' : '已添加；请点「识别指纹」并核对后信任');
+    toast(fromCred + (fp ? '已添加扩网地址' : '已添加；未信任前不会发送凭据'));
     await loadExpand();
   } catch (e) { msg.textContent = ''; toast(e.message, true); }
 }
@@ -933,6 +1032,9 @@ $('#reachUnmap').addEventListener('click', async () => {
 });
 $('#saveCred').addEventListener('click', saveCred);
 $('#saveCfg').addEventListener('click', saveCfg);
+$('#dhtSave').addEventListener('click', saveDht);
+$('#dhtPublish').addEventListener('click', dhtPublishNow);
+$('#dhtQueryBtn').addEventListener('click', dhtQueryNow);
 $('#updCheck').addEventListener('click', async () => {
   const b = $('#updCheck');
   b.disabled = true;
@@ -1041,6 +1143,6 @@ $('#credModal').addEventListener('click', (ev) => { if (ev.target === $('#credMo
 $('#tokenModal').addEventListener('click', (ev) => { if (ev.target === $('#tokenModal')) $('#tokenModal').classList.remove('open'); });
 
 refresh().then(loadFirstRun);
-setInterval(() => { refresh(); if (activeTab === 'logs') loadLogs(); if (activeTab === 'expand') loadExpand(); }, 5000);
+setInterval(() => { refresh(); if (activeTab === 'logs') loadLogs(); if (activeTab === 'expand') loadExpand(); if (activeTab === 'dht') loadDht(); }, 5000);
 </script>
 </html>

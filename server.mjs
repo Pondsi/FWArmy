@@ -53,6 +53,19 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
+import {
+  DhtJieDian,
+  DHT_PROTOCOL,
+  DEFAULT_DHT_PORT,
+  DEFAULT_RECORD_TTL_MS,
+  DHT_REFRESH_MS,
+  PUBLIC_DISCOVERY_KEY,
+  base32,
+  guiFanAnChors,
+  jieXiDhtDiZhi,
+  jiLuJian,
+  warmyZhiWen,
+} from './dht.mjs';
 
 /** 源码是 ESM、SEA 里是 CJS；import.meta.url 在 CJS 下为空，createRequire 改用 __filename/argv 兜底。 */
 const REQ_BASE = (() => {
@@ -71,7 +84,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.5.1';
+export const VERSION = '0.6.0';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -81,7 +94,15 @@ export const UPSTREAM_TIMEOUT_MS = 8_000;
 export const MESSAGE_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** 黑名单条目 30 天没有再次出现就自动清理。 */
 export const BLACKLIST_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-export const MAX_FORWARDS = 2;
+/**
+ * 重放闸/转圈防护（用户拍板口径，R123）：
+ * 同一 messageId（消息头）24h 内最多放行 2 次（第 1 次正常投递 + 第 2 次容忍重复/补发/首轮转圈）；
+ * 第 3 次出现 ⇒ 直接丢弃并**写黑名单**——黑名单键就是该消息（msgId 哈希），不是来源/IP；
+ * 只要 msgId 相同即视为同一条消息；拉黑后 30 天内该消息直接拒绝（重启仍生效）。
+ * 首次出现已超过 24h ⇒ 老消息重放，同样丢弃 + 写黑名单。
+ * 不限制转发跳数（防环靠本闸 + route 含本站即 409；MAX_ROUTE 只是报文尺寸上限）。
+ */
+export const REPLAY_MAX_PASSES = 2;
 /** 不设业务跳数上限；route 只作为环路证据，长度上限仅防超大报文（默认 128，可调）。 */
 export const MAX_ROUTE = 128;
 const MAX_REPLAY_ENTRIES = 50_000;
@@ -92,6 +113,8 @@ const MAX_MSG_ID = 128;
 /** 单条被扩网凭据的入站速率上限（防放大/洪泛）；只影响扩网 ingress，不影响普通业务凭据。 */
 const INBOUND_RATE_PER_MIN = 240;
 const INBOUND_BYTES_PER_MIN = 20 * 1024 * 1024;
+/** 无凭据来源（未配对）的 /api/expand/relay 请求按来源 IP 限速（防滥用 §9：直接丢弃 + 限速）。 */
+const UNAUTH_RATE_PER_MIN = 30;
 const LIMIT_KEYS = ['ratePerMin', 'bytesPerMin', 'dailyRequests', 'dailyBytes', 'monthlyRequests', 'monthlyBytes', 'totalRequests', 'totalBytes', 'yearlyBytes'];
 const DEFAULTS = {
   ratePerMin: 120,
@@ -115,6 +138,15 @@ const DEFAULTS = {
    * allowPlaintext=false 时，非回环来源的明文业务请求一律 426；回环始终允许（本机管理/ctl）。
    */
   tls: { mode: 'self-signed', allowPlaintext: false, certFile: '', keyFile: '', hostnames: [] },
+  /**
+   * DHT 发现（默认强制开启，只做设备发现，消息仍走凭据通道）：
+   *  - enabled=false 才关闭；port=0 表示自动（7800 起递增），显式端口占用即失败；
+   *  - advertiseHost 对外宣告地址（留空自动推断：STUN > NAT-PMP > 本机 IPv4）；
+   *  - anchors 引导节点列表（域名待定，默认为空；每项 host 或 host:port，支持 [v6]:port）；
+   *  - routeByDht：投递失败时用 DHT 定位目标所在中继站，优先转发给已配置互信的匹配 peer；
+   *  - retryBaseMs 为内部字段（config.json 可写，管理页不暴露）：锚点引导失败后的退避基值。
+   */
+  dht: { enabled: true, port: 0, advertiseHost: '', anchors: [], routeByDht: true, retryBaseMs: 1000 },
 };
 const CONFIG_RANGES = {
   ratePerMin: [1, 1_000_000],
@@ -823,6 +855,19 @@ function normTlsCfg(raw) {
     hostnames: Array.isArray(t.hostnames) ? t.hostnames.map((x) => String(x).slice(0, 253)).filter(Boolean).slice(0, 16) : d.hostnames,
   };
 }
+function normDhtCfg(raw) {
+  const d = DEFAULTS.dht;
+  const t = raw && typeof raw === 'object' ? raw : {};
+  const port = Number(t.port);
+  return {
+    enabled: t.enabled !== false,
+    port: Number.isInteger(port) && port >= 0 && port <= 65535 ? port : d.port,
+    advertiseHost: String(t.advertiseHost || '').trim().slice(0, 253),
+    anchors: guiFanAnChors(t.anchors),
+    routeByDht: t.routeByDht !== false,
+    retryBaseMs: Math.max(200, Math.min(60_000, Number(t.retryBaseMs) || d.retryBaseMs)),
+  };
+}
 /** 地址：IP 或域名；不写端口默认 59599；可写 host:port / [v6]:port / http(s)://host:port。 */
 export function parseExpandAddress(raw) {
   let s = String(raw || '').trim();
@@ -849,6 +894,21 @@ export function parseExpandAddress(raw) {
 }
 export function expandBaseUrl(p) {
   return `http://${String(p.host).includes(':') ? `[${p.host}]` : p.host}:${p.port}`;
+}
+/**
+ * 凭证 v2 自带地址：fwnexp_v2_<b64url(JSON{h,p,r})>，拿到凭证即可连接，无需再填域名/端口。
+ * 旧格式（fwnexp_<随机>）不带地址，仍可验证，但添加扩网时需手填地址。
+ */
+export function parseExpandToken(token) {
+  const t = String(token || '').trim();
+  if (!t.startsWith('fwnexp_v2_')) return null;
+  try {
+    const j = JSON.parse(Buffer.from(t.slice('fwnexp_v2_'.length), 'base64url').toString('utf8'));
+    const host = String(j.h || '').trim();
+    const port = Number(j.p);
+    if (!host || /[\s/?#]/.test(host) || !Number.isInteger(port) || port < 1 || port > 65535) return null;
+    return { host, port };
+  } catch { return null; }
 }
 function peerTls(p) { return normTlsPeer(p && p.tls); }
 function peerScheme(p) { return peerTls(p).mode === 'off' ? 'http' : 'https'; }
@@ -1086,6 +1146,7 @@ export async function startServer(options = {}) {
   }
   cfg.accepting = cfg.accepting !== false;
   cfg.tls = normTlsCfg(cfgRaw && cfgRaw.tls);
+  cfg.dht = normDhtCfg(cfgRaw && cfgRaw.dht);
   if (cfg.tls.mode === 'off') log('WARN', 'TLS 已关闭：业务凭据会以明文跨网传输，只建议在回环/VPN 内使用');
   const secret = createSecretBox(DATA);
   /** 旧版 first-credential.txt 是明文秘密：启动时改存 AES-GCM（.enc）并删除明文。 */
@@ -1262,7 +1323,7 @@ export async function startServer(options = {}) {
     for (const [k, s] of Object.entries(expand.stats.perSource)) perSource[k] = sideView(s);
     const inboundStats = sideView(expand.stats.inbound);
     const creds = expand.inbound.map((c) => ({
-      id: c.id, name: c.name, prefix: c.prefix, createdAt: c.createdAt, lastAt: c.lastAt,
+      id: c.id, name: c.name, prefix: c.prefix, addr: c.addr || '', createdAt: c.createdAt, lastAt: c.lastAt,
       lastResult: c.lastResult, disabled: c.disabled,
       stats: sideView(expand.stats.perInbound[c.id] || emptySide()),
     }));
@@ -1288,6 +1349,7 @@ export async function startServer(options = {}) {
           id: p.id, name: p.name, host: p.host, port: p.port, enabled: p.enabled,
           tls: { mode: t.mode, fingerprint: t.fingerprint, servername: t.servername, caFile: t.caFile },
           trusted: t.mode !== 'pin' || t.fingerprint.length === 64,
+          addrFrom: p.addrFrom || 'manual', // 'credential' = 地址来自凭证；'manual' = 手填
           createdAt: p.createdAt, lastTest: p.lastTest, lastTestOk: p.lastTestOk,
           credentialMasked: p.credential ? ('••••' + String(p.hint || '')) : '',
           stats: perOutbound[p.id] || sideView(emptySide()),
@@ -1297,11 +1359,15 @@ export async function startServer(options = {}) {
     };
   }
   function generateInboundToken(name = '') {
-    const token = 'fwnexp_' + crypto.randomBytes(24).toString('base64url');
+    // 凭证自带本站对外地址（宣告地址 + 实际业务端口）：拿到凭证即可连接，不再单独填域名/端口。
+    const host = pickAdvertiseHost();
+    const port = boundPort || opt.port;
+    const payload = Buffer.from(JSON.stringify({ h: host, p: port, r: crypto.randomBytes(16).toString('base64url') }), 'utf8').toString('base64url');
+    const token = 'fwnexp_v2_' + payload;
     const item = {
       id: crypto.randomUUID(), name: String(name || '').trim().slice(0, 40) || ('接入凭据 ' + (expand.inbound.length + 1)),
       hash: sha(token), prefix: token.slice(0, 13) + '…',
-      createdAt: now(), lastAt: 0, lastResult: '', disabled: false,
+      addr: host + ':' + port, createdAt: now(), lastAt: 0, lastResult: '', disabled: false,
     };
     expand.inbound.push(item);
     saveExpand();
@@ -1403,8 +1469,9 @@ export async function startServer(options = {}) {
     log('WARN', `安全：消息 ${key.slice(0, 12)}… 已加入黑名单（${reason}）`);
   }
   /**
-   * 重放闸：同一 messageId 在本实例 24h 内最多放行 2 次。
-   * 第 3 次 / 首次出现已超过 24h ⇒ 丢弃 + 写黑名单（重启后仍生效）。
+   * 重放闸/转圈防护：同一 messageId 24h 内最多放行 2 次（第 1 次正常投递 + 第 2 次容忍重复/补发/首轮转圈）。
+   * 第 3 次出现 ⇒ 直接丢弃并写黑名单——黑名单键 = 该消息（msgId 哈希），不是来源/IP；
+   * 只要 msgId 相同即同一消息。首次出现已超过 24h ⇒ 老消息重放，同样丢弃 + 写黑名单（重启后仍生效）。
    * 返回 {ok, reason, count}；黑名单每次再出现会刷新 lastAt（30 天计时从最后一次出现算）。
    */
   function noteMessage(msgId, origin = '') {
@@ -1424,16 +1491,16 @@ export async function startServer(options = {}) {
       blacklistMessage(key, 'older-than-24h', at, origin);
       return { ok: false, reason: 'older-than-24h', count: e.count };
     }
-    if (e.count >= MAX_FORWARDS) {
+    if (e.count >= REPLAY_MAX_PASSES) {
       security.violations.replayRejected++;
-      blacklistMessage(key, 'forward-limit', at, origin);
-      return { ok: false, reason: 'forward-limit', count: e.count };
+      blacklistMessage(key, 'already-seen', at, origin);
+      return { ok: false, reason: 'already-seen', count: e.count };
     }
     e.count++;
     e.last = at;
     if (origin) e.origin = String(origin).slice(0, 64);
-    // 到上限必须立即落盘，避免重启把“已用满 2 次”忘掉；普通第一次攒批写。
-    if (e.count >= MAX_FORWARDS) saveSecurity(); else markSecurityDirty();
+    // 到上限必须立即落盘，避免重启把“已放行 2 次”忘掉（环形转圈不会因重启被重置）；普通第一次攒批写。
+    if (e.count >= REPLAY_MAX_PASSES) saveSecurity(); else markSecurityDirty();
     return { ok: true, count: e.count };
   }
   function pinOrigin(origin, pub) {
@@ -1481,7 +1548,7 @@ export async function startServer(options = {}) {
     return {
       ok: true,
       policy: {
-        windowMs: MESSAGE_WINDOW_MS, maxForwards: MAX_FORWARDS, blacklistTtlMs: BLACKLIST_TTL_MS,
+        windowMs: MESSAGE_WINDOW_MS, replayMaxPasses: REPLAY_MAX_PASSES, blacklistTtlMs: BLACKLIST_TTL_MS,
         maxRoute: MAX_ROUTE, maxEnvelope: cfg.maxEnvelope, upstreamTimeoutMs: UPSTREAM_TIMEOUT_MS,
         maxReplay: MAX_REPLAY_ENTRIES, maxBlacklist: MAX_BLACKLIST_ENTRIES,
       },
@@ -1534,6 +1601,228 @@ export async function startServer(options = {}) {
           : verdict === 'stun-visible'
             ? ['STUN 报告了公网映射地址；请用另一台 FWArmy 实测 /api/expand/ping']
             : ['目前只有本机/局域网地址；需要端口映射、公网 IPv6 或 VPN'],
+    };
+  }
+
+  /* ── DHT 发现层（默认强制开启；只做设备发现，消息仍走凭据通道）──── */
+  let dhtNode = null;
+  let dhtZhiWen = '';
+  let dhtRetryDelayMs = cfg.dht.retryBaseMs;
+  let dhtState = { lastPublishAt: 0, lastPublishSeq: 0, lastStoredOn: [], lastError: '', lastYindao: null, selfPublishes: 0 };
+  const didLastPub = new Map(); // did → 上次代发布定位记录的时间
+  /** 对外宣告地址：显式配置 > STUN 公网映射 > NAT-PMP 外部 IP > 本机非回环 IPv4 > 回环。 */
+  function pickAdvertiseHost() {
+    if (cfg.dht.advertiseHost) return cfg.dht.advertiseHost;
+    if (lastStun && lastStun.ok && lastStun.publicAddress) return lastStun.publicAddress.host;
+    if (lastNatpmp && lastNatpmp.externalIp) return lastNatpmp.externalIp;
+    for (const a of localAddresses()) if (!a.internal && a.family === 'IPv4') return a.address;
+    return '127.0.0.1';
+  }
+  async function dhtStop() {
+    const n = dhtNode;
+    dhtNode = null;
+    if (n) { try { await n.stop(); } catch { /* noop */ } }
+    log('INFO', '[dht] 节点已停止');
+    return { ok: true };
+  }
+  /** 启动/重启 DHT 节点。UDP 端口：显式配置占用即失败；port=0 时从默认端口起递增找可用。 */
+  async function dhtStart() {
+    if (dhtNode) await dhtStop();
+    if (!cfg.dht.enabled) { dhtState.lastError = ''; return { ok: false, error: 'disabled' }; }
+    let rawPub = null;
+    try { rawPub = Buffer.from(String(expand.identity.pub || ''), 'base64'); } catch { rawPub = null; }
+    if (!rawPub || rawPub.length !== 32 || !identityKey) {
+      dhtState.lastError = '实例 Ed25519 身份不可用（expand.identity 缺失或私钥无法解密）';
+      log('ERROR', '[dht] ' + dhtState.lastError);
+      return { ok: false, error: dhtState.lastError };
+    }
+    dhtZhiWen = warmyZhiWen(rawPub);
+    const node = new DhtJieDian({
+      zhiWen: dhtZhiWen,
+      publicKeyRaw: rawPub,
+      sign: (msg) => crypto.sign(null, msg, identityKey),
+      nodeId: expand.instanceId,
+      host: '::', // udp6 双栈：IPv6 直连支持（客户端路 1）
+      advertiseHost: pickAdvertiseHost(),
+      port: 0,
+      tcpPort: boundPort || opt.port,
+      groupKeys: [PUBLIC_DISCOVERY_KEY()],
+      onEvent: (e) => {
+        if (e.type === 'error') log('WARN', `[dht] ${e.detail || ''}`);
+        else log('INFO', `[dht] ${e.type}${e.detail ? ' ' + e.detail : ''}`);
+      },
+    });
+    const wantPort = cfg.dht.port > 0 ? cfg.dht.port : DEFAULT_DHT_PORT;
+    const maxTries = cfg.dht.port > 0 ? 1 : 20;
+    let bound = null;
+    for (let i = 0; i < maxTries && !bound; i++) {
+      try { bound = await node.start({ port: wantPort + i }); }
+      catch (e) {
+        if (e && e.code === 'EADDRINUSE') continue;
+        dhtState.lastError = 'UDP 绑定失败：' + String((e && e.message) || e).slice(0, 200);
+        log('ERROR', '[dht] ' + dhtState.lastError);
+        return { ok: false, error: dhtState.lastError };
+      }
+    }
+    if (!bound) {
+      dhtState.lastError = `UDP 端口 ${wantPort} 起 ${maxTries} 个都被占用（显式端口占用即失败，可改配置）`;
+      log('ERROR', '[dht] ' + dhtState.lastError);
+      return { ok: false, error: dhtState.lastError };
+    }
+    dhtNode = node;
+    dhtState.lastError = '';
+    dhtRetryDelayMs = cfg.dht.retryBaseMs;
+    log('INFO', `[dht] 节点已启动 udp=${bound.host}:${bound.port} 指纹=${dhtZhiWen.slice(0, 16)}… 锚点=${cfg.dht.anchors.length}`);
+    void dhtYindaoLoop(node);
+    return { ok: true, bound };
+  }
+  /** 锚点引导：至少一个成功即发布本站记录并收工（之后靠 DHT 迭代查询自持）；全部失败则指数退避重试（可恢复）。 */
+  async function dhtYindaoLoop(node) {
+    for (;;) {
+      if (!node.listening || !cfg.dht.enabled || dhtNode !== node) return;
+      const seeds = cfg.dht.anchors;
+      if (!seeds.length) { dhtState.lastYindao = { ok: 0, failed: 0, at: Date.now(), detail: 'no-anchors' }; return; }
+      const r = await node.yindao(seeds);
+      dhtState.lastYindao = { ok: r.ok, failed: r.failed, at: Date.now() };
+      if (r.ok > 0) {
+        log('INFO', `[dht] 锚点引导成功 ${r.ok}/${seeds.length}，路由表 ${node.contactCount}；发布本站记录`);
+        void dhtPublishSelf();
+        return;
+      }
+      log('WARN', `[dht] 锚点全部不可达（${seeds.length} 个），${dhtRetryDelayMs}ms 后重试`);
+      await sleep(dhtRetryDelayMs);
+      dhtRetryDelayMs = Math.min(dhtRetryDelayMs * 2, 60_000);
+    }
+  }
+  async function dhtPublishRecord({ zhiWen, record }) {
+    if (!dhtNode || !dhtNode.listening) return { ok: false, error: 'dht-not-running' };
+    try {
+      const r = await dhtNode.publish({ zhiWen, record });
+      dhtState.lastPublishAt = Date.now();
+      dhtState.lastPublishSeq = r.seq;
+      dhtState.lastStoredOn = r.storedOn;
+      dhtState.lastError = '';
+      dhtState.selfPublishes += 1;
+      return { ok: true, key: r.key, seq: r.seq, storedOn: r.storedOn };
+    } catch (e) {
+      dhtState.lastError = String((e && e.message) || e).slice(0, 200);
+      log('WARN', `[dht] 发布失败：${dhtState.lastError}`);
+      return { ok: false, error: dhtState.lastError };
+    }
+  }
+  /** 本站服务记录：别人据此发现「这台中继站」，含身份公钥与 TLS 指纹用于核对互信。 */
+  function dhtSelfRecord() {
+    return {
+      fp: dhtZhiWen,
+      host: pickAdvertiseHost(),
+      port: boundPort || opt.port,
+      scope: 'relay',
+      announcedAt: Date.now(),
+      bieMing: expand.instanceId,
+      extra: {
+        kind: 'fwarmy-relay', instanceId: expand.instanceId,
+        identityPub: expand.identity.pub,
+        tlsFingerprint: tlsInfo ? tlsInfo.fingerprint : '',
+        version: VERSION,
+      },
+    };
+  }
+  /** 客户端定位记录：did 当前所在中继站 = 本站（注册/心跳保鲜，离线 30 分钟后自然过期）。 */
+  function dhtLocatorRecord(did) {
+    let raw;
+    try { raw = Buffer.from(String(did), 'base64'); } catch { return null; }
+    if (raw.length !== 32) return null;
+    const didWen = warmyZhiWen(raw);
+    return {
+      zhiWen: didWen,
+      record: {
+        fp: didWen,
+        host: pickAdvertiseHost(),
+        port: boundPort || opt.port,
+        scope: 'relay',
+        announcedAt: Date.now(),
+        bieMing: expand.instanceId,
+        extra: {
+          kind: 'fwarmy-client-locator', relay: expand.instanceId,
+          relayFingerprint: dhtZhiWen,
+          tlsFingerprint: tlsInfo ? tlsInfo.fingerprint : '',
+        },
+      },
+    };
+  }
+  async function dhtPublishSelf() {
+    if (!dhtZhiWen) return { ok: false, error: 'no-identity' };
+    return dhtPublishRecord({ zhiWen: dhtZhiWen, record: dhtSelfRecord() });
+  }
+  async function dhtPublishLocator(did) {
+    const loc = dhtLocatorRecord(did);
+    if (!loc) return { ok: false, error: 'bad-did' };
+    const r = await dhtPublishRecord({ zhiWen: loc.zhiWen, record: loc.record });
+    if (r.ok) didLastPub.set(String(did), Date.now());
+    return r;
+  }
+  /** 10 分钟保鲜：重发本站记录与「接近过期」的在线客户端定位记录（每轮最多 200 个，最旧优先）。 */
+  async function dhtRefreshLoop() {
+    if (!cfg.dht.enabled || !dhtNode || !dhtNode.listening) return;
+    await dhtPublishSelf();
+    const nowMs = Date.now();
+    const online = [];
+    for (const [did, v] of ren) {
+      if (nowMs - v.lastSeen < zaiXianTtl()) online.push(did);
+    }
+    online.sort((a, b) => (didLastPub.get(a) || 0) - (didLastPub.get(b) || 0));
+    for (const did of online.slice(0, 200)) {
+      const last = didLastPub.get(did) || 0;
+      if (nowMs - last < DHT_REFRESH_MS) continue;
+      await dhtPublishLocator(did);
+    }
+  }
+  const dhtRefreshTimer = setInterval(() => { void dhtRefreshLoop(); }, DHT_REFRESH_MS);
+  dhtRefreshTimer.unref();
+  /** 投递失败时定位目标：查 DHT 得到目标所在中继站的地址/身份；查不到返回 null，不阻塞原转发路径。 */
+  async function dhtRouteTarget(to) {
+    if (!dhtNode || !dhtNode.listening || !cfg.dht.routeByDht) return null;
+    const loc = dhtLocatorRecord(to);
+    if (!loc) return null;
+    const r = await dhtNode.query(loc.zhiWen, { requireDecrypt: true }).catch(() => null);
+    if (!r || !r.ok || !r.record) return null;
+    const rec = r.record;
+    return {
+      host: rec.host, port: rec.port,
+      instanceId: (rec.extra && rec.extra.relay) || rec.bieMing || '',
+      tlsFingerprint: (rec.extra && rec.extra.tlsFingerprint) || '',
+      scope: rec.scope || '',
+    };
+  }
+  function dhtPublicView() {
+    const node = dhtNode;
+    return {
+      ok: true,
+      protocol: DHT_PROTOCOL,
+      enabled: cfg.dht.enabled,
+      running: !!(node && node.listening),
+      udp: node ? node.address : null,
+      advertised: { host: pickAdvertiseHost(), port: boundPort || opt.port },
+      instanceId: expand.instanceId,
+      fingerprint: dhtZhiWen,
+      nodeIdHex: node ? node.id.toString('hex') : '',
+      contacts: node ? node.contactCount : 0,
+      contactsList: node ? node.contacts.slice(0, 20) : [],
+      stats: node ? node.statsSnapshot : null,
+      lastPublishAt: dhtState.lastPublishAt || 0,
+      lastPublishSeq: dhtState.lastPublishSeq || 0,
+      lastStoredOn: dhtState.lastStoredOn || [],
+      lastError: dhtState.lastError || '',
+      lastYindao: dhtState.lastYindao,
+      selfPublishes: dhtState.selfPublishes,
+      anchors: cfg.dht.anchors,
+      config: {
+        enabled: cfg.dht.enabled, port: cfg.dht.port,
+        advertiseHost: cfg.dht.advertiseHost, anchors: cfg.dht.anchors,
+        routeByDht: cfg.dht.routeByDht,
+      },
+      refreshMs: DHT_REFRESH_MS,
+      ttlMs: DEFAULT_RECORD_TTL_MS,
     };
   }
 
@@ -1614,6 +1903,19 @@ export async function startServer(options = {}) {
     const cur = m.get(sec) || { r: 0, b: 0 };
     cur.r++; cur.b += bytes;
     m.set(sec, cur);
+    return true;
+  }
+  // 无凭据（未配对）来源按 IP 限速：直接丢弃 + 限速（防滥用 §9.1/§9.2）。
+  const unauthRecent = new Map(); // ip → Map(sec → n)
+  function unauthRateOk(ip, at = Date.now()) {
+    if (!ip) return false;
+    const sec = Math.floor(at / 1000);
+    let m = unauthRecent.get(ip);
+    if (!m) { m = new Map(); unauthRecent.set(ip, m); }
+    let n = 0;
+    for (const [s, v] of m) { if (s <= sec - 60) m.delete(s); else n += v; }
+    if (n + 1 > UNAUTH_RATE_PER_MIN) return false;
+    m.set(sec, (m.get(sec) || 0) + 1);
     return true;
   }
   const recent = new Map(); // cid → Map(sec → {r,b})
@@ -1814,13 +2116,24 @@ export async function startServer(options = {}) {
    * 扩网：把本机无法投递的信封按顺序转给上游 FWArmy。
    * 8 秒是**整次投递**的预算（不是每个上游 8 秒）；超时只记失败，不落盘、不排队重试。
    * 同一 messageId 最多试 3 个上游，避免一个请求放大成 N 次外呼。
+   * prefer（DHT 定位到的目标所在中继站）：匹配的 peer 排最前优先尝试；
+   * 转发仍只走已配置互信（凭据 + TLS 指纹固定）的 peer，DHT 不做无凭据投递。
    */
-  async function forwardToPeers(to, env, msgId, meta, route) {
+  async function forwardToPeers(to, env, msgId, meta, route, prefer = null) {
     const attempts = [];
     const bytes = Buffer.byteLength(env, 'utf8');
     const deadline = Date.now() + UPSTREAM_TIMEOUT_MS;
+    let list = expand.outbound.filter((x) => x.enabled);
+    if (prefer) {
+      const hit = list.find((p) => {
+        const t = peerTls(p);
+        if (prefer.tlsFingerprint && t.fingerprint && t.fingerprint === prefer.tlsFingerprint) return true;
+        return p.host === prefer.host && p.port === prefer.port;
+      });
+      if (hit) list = [hit, ...list.filter((p) => p.id !== hit.id)];
+    }
     let tried = 0;
-    for (const p of expand.outbound.filter((x) => x.enabled)) {
+    for (const p of list) {
       if (tried >= MAX_FORWARD_PEERS) break;
       const t = peerTls(p);
       if (t.mode === 'pin' && t.fingerprint.length !== 64) {
@@ -1873,7 +2186,12 @@ export async function startServer(options = {}) {
   /** 被扩网：别的 FWArmy 用我们生成的凭据把信封交过来；本机尝试投递并如实返回结果。 */
   async function handleExpandRelay(req, res) {
     const cred = expandCred(req);
-    if (!cred) return send(res, 401, { ok: false, error: 'expand-credential-required' });
+    if (!cred) {
+      // 未配对请求直接丢弃（401），并按来源 IP 限速，防止陌生人打满资源。
+      const ip = String(req.socket.remoteAddress || '').slice(0, 80);
+      if (!unauthRateOk(ip)) return send(res, 429, { ok: false, error: 'rate-limit', instanceId: expand.instanceId });
+      return send(res, 401, { ok: false, error: 'expand-credential-required' });
+    }
     // 暂停 truth table：新投递入口（relay、expand relay）一律 503，不入队。
     if (!cfg.accepting) return send(res, 503, { ok: false, error: 'not-accepting', instanceId: expand.instanceId });
     if (updateFreeze) return send(res, 503, { ok: false, error: 'updating', instanceId: expand.instanceId });
@@ -1922,7 +2240,7 @@ export async function startServer(options = {}) {
     // 本机确实送不到：带着原来源签名继续转发（中间跳不能改任何签名覆盖字段）。
     const fwd = await forwardToPeers(to, env, msgId, {
       origin: String(j.origin), originPub: String(j.originPub), originSig: String(j.originSig), createdAt,
-    }, routeJ.route);
+    }, routeJ.route, cfg.dht.routeByDht ? (await dhtRouteTarget(to)) : null);
     const ok = fwd.ok;
     recordExpand('inbound', source, {
       requests: 1, bytesIn: bytes, relayed: 1,
@@ -1942,7 +2260,7 @@ export async function startServer(options = {}) {
     if (!c) return send(res, 401, { ok: false, error: 'expand-credential-required' });
     return send(res, 200, {
       ok: true, instanceId: expand.instanceId, product: PRODUCT, version: VERSION,
-      port: boundPort || opt.port, tls: tlsPublicView(), msgPolicy: { maxForwards: MAX_FORWARDS, windowMs: MESSAGE_WINDOW_MS },
+      port: boundPort || opt.port, tls: tlsPublicView(), msgPolicy: { replayMaxPasses: REPLAY_MAX_PASSES, windowMs: MESSAGE_WINDOW_MS },
     });
   }
   /** 不鉴权的指纹引导端点：只给实例 ID/版本/证书指纹，不含任何凭据或消息。 */
@@ -1950,7 +2268,7 @@ export async function startServer(options = {}) {
     return send(res, 200, {
       ok: true, instanceId: expand.instanceId, product: PRODUCT, version: VERSION,
       port: boundPort || opt.port, tls: tlsPublicView(), identityPub: expand.identity.pub,
-      msgPolicy: { maxForwards: MAX_FORWARDS, windowMs: MESSAGE_WINDOW_MS, maxRoute: MAX_ROUTE },
+      msgPolicy: { replayMaxPasses: REPLAY_MAX_PASSES, windowMs: MESSAGE_WINDOW_MS, maxRoute: MAX_ROUTE },
     });
   }
 
@@ -2662,23 +2980,30 @@ export async function startServer(options = {}) {
     }
     if (req.method === 'POST' && p === '/api/admin/expand-outbound') {
       const j = await body(req);
-      let addr;
-      try { addr = parseExpandAddress(j.address); }
-      catch (e) { return send(res, 400, { ok: false, error: String(e.message || 'bad-address') }); }
       const credential = String(j.credential || '').trim();
       if (!credential) return send(res, 400, { ok: false, error: 'credential-required' });
+      // 地址：显式填写优先；否则从凭证 v2 自带地址解析（旧格式凭证无地址，必须手填）。
+      const tok = parseExpandToken(credential);
+      let addr = null;
+      let addrFrom = 'manual';
+      const addrRaw = String(j.address || '').trim();
+      if (addrRaw) {
+        try { addr = parseExpandAddress(addrRaw); }
+        catch (e) { return send(res, 400, { ok: false, error: String(e.message || 'bad-address') }); }
+      } else if (tok) { addr = tok; addrFrom = 'credential'; }
+      else return send(res, 400, { ok: false, error: 'address-required', hint: '该凭据不含地址；请填写对方地址，或让对方重新生成新版（含地址）凭证' });
       const ts = tlsFromInput(j.tls, null);
       if (!ts.ok) return send(res, 400, { ok: false, error: ts.error });
       const name = String(j.name || '').trim().slice(0, 40) || (addr.host + ':' + addr.port);
       const item = {
         id: crypto.randomUUID(), name, host: addr.host, port: addr.port,
-        credential: '', hint: '', tls: ts.tls,
+        credential: '', hint: '', tls: ts.tls, addrFrom,
         enabled: true, createdAt: Date.now(), lastTest: 0, lastTestOk: false,
       };
       setPeerCredential(item, credential);
       expand.outbound.push(item);
       if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' });
-      log('INFO', `扩网：添加 ${name} → ${addr.host}:${addr.port}（TLS ${ts.tls.mode}）`);
+      log('INFO', `扩网：添加 ${name} → ${addr.host}:${addr.port}（TLS ${ts.tls.mode}${addrFrom === 'credential' ? '，地址来自凭证' : ''}）`);
       return send(res, 200, { ok: true, item: expandView().outbound.find((x) => x.id === item.id) });
     }
     if (req.method === 'POST' && p === '/api/admin/expand-update') {
@@ -2691,15 +3016,23 @@ export async function startServer(options = {}) {
         item.name = name;
       }
       if (j.address !== undefined) {
-        let addr;
-        try { addr = parseExpandAddress(j.address); }
-        catch (e) { return send(res, 400, { ok: false, error: String(e.message || 'bad-address') }); }
-        item.host = addr.host; item.port = addr.port;
+        const addrRaw = String(j.address || '').trim();
+        if (addrRaw) {
+          let addr;
+          try { addr = parseExpandAddress(j.address); }
+          catch (e) { return send(res, 400, { ok: false, error: String(e.message || 'bad-address') }); }
+          item.host = addr.host; item.port = addr.port; item.addrFrom = 'manual';
+        }
+        // address 显式为空白 = 不清除地址（仅凭据可带地址，见下）
       }
       if (j.credential !== undefined) {
         const credential = String(j.credential || '').trim();
         if (!credential) return send(res, 400, { ok: false, error: 'credential-required' });
         setPeerCredential(item, credential);
+        const tok = parseExpandToken(credential);
+        if (tok && !(j.address !== undefined && String(j.address || '').trim())) {
+          item.host = tok.host; item.port = tok.port; item.addrFrom = 'credential';
+        }
       }
       if (j.tls !== undefined) {
         const ts = tlsFromInput(j.tls, item.tls);
@@ -2792,6 +3125,39 @@ export async function startServer(options = {}) {
       }
     }
     if (req.method === 'GET' && p === '/api/admin/security') return send(res, 200, securityView());
+    if (req.method === 'GET' && p === '/api/admin/dht') return send(res, 200, dhtPublicView());
+    if (req.method === 'POST' && p === '/api/admin/dht-config') {
+      const j = await body(req);
+      const next = normDhtCfg({ ...cfg.dht, ...j });
+      if (j.anchors !== undefined) {
+        const list = Array.isArray(j.anchors) ? j.anchors : String(j.anchors || '').split(/[\r\n,]+/);
+        next.anchors = guiFanAnChors(list);
+      }
+      const prev = cfg.dht;
+      cfg.dht = next;
+      if (!saveCfg()) { cfg.dht = prev; return send(res, 500, { ok: false, error: 'persist-failed' }); }
+      log('INFO', `DHT 配置已保存 enabled=${next.enabled} port=${next.port} anchors=${next.anchors.length} routeByDht=${next.routeByDht}`);
+      const r = next.enabled ? await dhtStart() : await dhtStop();
+      return send(res, 200, { ok: true, restart: next.enabled ? (r.ok ? 'started' : r.error || 'failed') : 'stopped', dht: dhtPublicView() });
+    }
+    if (req.method === 'POST' && p === '/api/admin/dht-publish') {
+      const r = await dhtPublishSelf();
+      return send(res, 200, { ok: true, publish: r, dht: dhtPublicView() });
+    }
+    if (req.method === 'POST' && p === '/api/admin/dht-query') {
+      const j = await body(req);
+      const fp = String(j.fingerprint || '').trim();
+      if (!fp || !/^[A-Z2-7]{40,60}$/.test(fp)) return send(res, 400, { ok: false, error: 'bad-fingerprint' });
+      if (!dhtNode || !dhtNode.listening) {
+        return send(res, 200, { ok: true, found: false, error: 'dht-not-running', dht: dhtPublicView() });
+      }
+      const r = await dhtNode.query(fp, { requireDecrypt: true }).catch((e) => ({ ok: false, error: String((e && e.message) || e) }));
+      return send(res, 200, {
+        ok: true, found: r.ok === true, record: r.record || null,
+        attempts: r.attempts || [], rejected: r.rejected || [], error: r.error || '',
+        dht: dhtPublicView(),
+      });
+    }
     if (req.method === 'POST' && p === '/api/admin/security-gc') {
       const r = pruneSecurity(now());
       if (!saveSecurity()) return send(res, 500, { ok: false, error: 'persist-failed' });
@@ -3087,6 +3453,8 @@ export async function startServer(options = {}) {
         try { xPub(boxPub); } catch { return fail(400, 'bad-box-key'); }
         const jiu = ren.get(did);
         ren.set(did, { boxPub, lastSeen: Date.now(), queue: jiu ? jiu.queue : [] });
+        // DHT 发现：注册即把「该客户端当前所在中继站 = 本站」签入 DHT（异步，失败只记日志）。
+        if (cfg.dht.enabled && dhtNode) void dhtPublishLocator(did);
         return reply(200, { ok: true, online: true });
       }
       if (req.method === 'POST' && u.pathname === '/api/bye') {
@@ -3132,13 +3500,14 @@ export async function startServer(options = {}) {
         if (!meta.originSig) {
           return reply(200, { ...local.body, forwarded: false, error: 'signing-unavailable' }, local.offline ? { offline: 1 } : { rejected: 1 });
         }
-        const fwd = await forwardToPeers(to, env, msgId, meta, []);
+        const fwd = await forwardToPeers(to, env, msgId, meta, [], cfg.dht.routeByDht ? (await dhtRouteTarget(to)) : null);
         if (fwd.ok) {
           return reply(200, { ok: true, queued: true, forwarded: true, via: fwd.via.name, msgId },
             { bytesIn: bytes, relayed: 1 });
         }
         return reply(local.code === 'queue-full' ? 429 : 200, {
           ...local.body, forwarded: false, attempts: fwd.attempts, msgId,
+          error: local.code, // 明确失败码：'offline' / 'queue-full' / 'not-accepting'
         }, local.offline ? { offline: 1 } : { rejected: 1 });
       }
       if (req.method === 'POST' && u.pathname === '/api/heartbeat') {
@@ -3285,6 +3654,11 @@ export async function startServer(options = {}) {
     }, 15_000).unref();
   }
   scheduleUpdateCheck(60_000);
+  if (cfg.dht.enabled) {
+    void dhtStart().then((r) => { if (!r.ok && r.error !== 'disabled') log('WARN', '[dht] 启动失败：' + (r.error || '')); });
+  } else {
+    log('INFO', '[dht] 已按配置关闭（cfg.dht.enabled=false）');
+  }
 
   function openBrowser(url) {
     try {
@@ -3327,8 +3701,10 @@ export async function startServer(options = {}) {
     clearInterval(pruneTimer);
     clearInterval(queueClean);
     clearInterval(securityGc);
+    clearInterval(dhtRefreshTimer);
     if (statsTimer) clearTimeout(statsTimer);
     if (expandTimer) clearTimeout(expandTimer);
+    await dhtStop();
     try { flushStats(true); } catch { /* noop */ }
     try { saveCreds(); } catch { /* noop */ }
     try { saveExpand(); } catch { /* noop */ }
