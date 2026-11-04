@@ -90,6 +90,8 @@ stats | ip | update | version               usage stats, public IP probe, update
   Message identity is the `msgId` in the header — **content is never compared**: resends or retries
   with a fresh `msgId` always pass (clients should generate a new msgId per attempt; requests without
   a msgId fall back to an envelope hash, so identical resends without msgId count as the same message).
+  `msgId` is covered by the Ed25519 origin signature (canonical string), so a malicious or broken
+  relay cannot rewrite it to bypass loop protection — tampering fails signature verification (403).
 - **DHT (discovery layer, default on)**: `warmy-dht/1` node, signed service/locator records (Ed25519,
   AES-256-GCM, seq anti-rollback, ±10 min clock tolerance), anchor bootstrap with exponential backoff,
   and per-source rate limiting. DHT never authorizes delivery — forwarding always requires configured
