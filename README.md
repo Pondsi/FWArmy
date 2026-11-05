@@ -122,6 +122,12 @@ node packaging/package.mjs --platform=win-x64   # verify version/BUILD-INFO/hash
 
 The packager refuses inconsistent version metadata or a stale binary, and never ships `data/`.
 
+## Sponsors
+
+FWArmy is free and open source — no paid tier, no locked features. If you would like to support the
+project, see **[SPONSORS.md](SPONSORS.md)** for donation options (WeChat Pay / Alipay / PayPal) and
+other ways to help.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). **Attribution to Pondsi is mandatory** (see the license text):

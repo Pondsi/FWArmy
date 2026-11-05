@@ -32,15 +32,11 @@ Every option is labelled in **English and Chinese**, so it can be understood in 
 
 ### WeChat Pay · 微信支付
 
-Scan the QR code below.
-
-<img src="sponsors/wxd.png" width="240" alt="WeChat Pay QR code (微信支付收款码)">
+> QR code image pending — the real payment QR code will be added at `sponsors/wxd.png`.
 
 ### Alipay · 支付宝
 
-Scan the QR code below.
-
-<img src="sponsors/zfbd.png" width="240" alt="Alipay QR code (支付宝收款码)">
+> QR code image pending — the real payment QR code will be added at `sponsors/zfbd.png`.
 
 ### PayPal
 
