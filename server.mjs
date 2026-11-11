@@ -3470,8 +3470,8 @@ export async function startServer(options = {}) {
         const to = String(j.to || '').slice(0, 200), env = String(j.envelope || '');
         const bytes = Buffer.byteLength(env, 'utf8');
         if (!to || !bytes || bytes > cfg.maxEnvelope) return fail(400, 'bad-envelope');
-        // 客户端没带 messageId 时用信封哈希兜底：完全相同的信封会被当成同一条消息。
-        const msgId = j.msgId === undefined || j.msgId === '' ? ('sha256:' + sha(env).slice(0, 32)) : String(j.msgId);
+        // 消息身份必须由客户端显式给出：不带 msgId（缺失/空串）视为不合规消息，直接丢弃，不做信封哈希兜底。
+        const msgId = String(j.msgId || '');
         if (!isMessageId(msgId)) return fail(400, 'bad-msg-id');
         const at = Date.now();
         const createdAt = at;
