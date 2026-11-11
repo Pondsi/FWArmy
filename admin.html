@@ -115,6 +115,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
       <span class="muted" id="credCount"></span>
     </div>
     <div class="tablewrap"><table id="credTable"></table></div>
+    <div class="toolbar" id="credPager"></div>
     <div class="hint">首次不会自动生成凭据；点击生成，可创建多个。留空 = 继承全局默认；分钟次数和流量必须大于 0，其余额度填 0 = 不限。服务器只存 sha256，明文仅生成时显示。删除需输入名称确认。</div>
     <div class="hint">次数 = 有效凭据的业务请求（含拒绝/失败）；流量 = 实际入队与取走的 UTF-8 信封字节之和，不含 HTTP 开销。失败只记实际发生的用量；分钟限速与速度统计共用最近 60 秒窗口。重启清空分钟窗口，不清累计额度。</div>
   </div>
@@ -491,7 +492,15 @@ function render() {
       `<td><div class="toolbar" style="margin:0"><button class="sm" data-act="edit" data-id="${esc(c.id)}">编辑</button>` +
       `<button class="sm" data-act="toggle" data-id="${esc(c.id)}">${c.disabled ? '启用' : '停用'}</button>` +
       `<button class="sm danger" data-act="del" data-id="${esc(c.id)}">删除</button></div></td></tr>`).join('') || `<tr><td colspan="11" class="empty">还没有凭据。点“新建凭据”生成一个。</td></tr>`);
-  $('#credCount').textContent = `共 ${S.perCredential.length} 个 · 有效 ${S.perCredential.filter((c) => !c.disabled).length} 个`;
+  $('#credCount').textContent = `共 ${S.credTotal} 个 · 有效 ${S.credEnabled} 个`;
+  const credPages = Math.max(1, Math.ceil((S.credTotal || 0) / CRED_PAGE_SIZE));
+  $('#credPager').innerHTML = (S.credTotal || 0) > CRED_PAGE_SIZE
+    ? `<button class="sm" data-act="page" data-to="0" ${credPage === 0 ? 'disabled' : ''}>« 首页</button>` +
+      `<button class="sm" data-act="page" data-to="${credPage - 1}" ${credPage === 0 ? 'disabled' : ''}>‹ 上一页</button>` +
+      `<span class="muted">第 ${Math.min(credPage + 1, credPages)} / ${credPages} 页 · 每页 ${CRED_PAGE_SIZE} 个</span>` +
+      `<button class="sm" data-act="page" data-to="${credPage + 1}" ${credPage >= credPages - 1 ? 'disabled' : ''}>下一页 ›</button>` +
+      `<button class="sm" data-act="page" data-to="${credPages - 1}" ${credPage >= credPages - 1 ? 'disabled' : ''}>末页 »</button>`
+    : '';
   $('#dataDir').textContent = S.dataDir || '—';
   const sec = S.security || {};
   $('#secCards').innerHTML = [
@@ -540,11 +549,18 @@ function showFirstRun() {
   $('#firstRunToken').textContent = firstRun.token || '';
 }
 let refreshInFlight = false;
+const CRED_PAGE_SIZE = 200;
+let credPage = 0;
 async function refresh() {
   if (refreshInFlight) return;
   refreshInFlight = true;
   try {
-    S = await api('/api/admin/stats');
+    S = await api(`/api/admin/stats?limit=${CRED_PAGE_SIZE}&offset=${credPage * CRED_PAGE_SIZE}`);
+    // 翻页后删掉了最后一页的凭据 → 回退到最后一页再取一次
+    if (S && S.credTotal > 0 && credPage > 0 && S.credOffset >= S.credTotal) {
+      credPage = Math.max(0, Math.ceil(S.credTotal / CRED_PAGE_SIZE) - 1);
+      S = await api(`/api/admin/stats?limit=${CRED_PAGE_SIZE}&offset=${credPage * CRED_PAGE_SIZE}`);
+    }
     SEC = await api('/api/admin/security').catch(() => null);
     render();
   } catch (e) { toast('连不上服务器：' + e.message, true); }
@@ -1129,6 +1145,12 @@ $('#cfgEnv').addEventListener('input', () => { cfgDirty = true; });
 $('#cfgQueue').addEventListener('input', () => { cfgDirty = true; });
 $('#cfgTtl').addEventListener('input', () => { cfgDirty = true; });
 $('#cfgAccept').addEventListener('change', () => { cfgDirty = true; });
+$('#credPager').addEventListener('click', (ev) => {
+  const b = ev.target.closest('button[data-act="page"]');
+  if (!b || !S || b.disabled) return;
+  const to = Number(b.dataset.to);
+  if (Number.isFinite(to) && to >= 0) { credPage = to; refresh(); }
+});
 $('#credTable').addEventListener('click', (ev) => {
   const b = ev.target.closest('button[data-act]');
   if (!b || !S) return;

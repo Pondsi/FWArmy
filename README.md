@@ -88,8 +88,8 @@ stats | ip | update | version               usage stats, public IP probe, update
   (a third sighting is dropped and the message id itself is blacklisted, so relay rings never loop
   forever; no hop-count limit is used), plus route-based loop detection.
   Message identity is the `msgId` in the header — **content is never compared**: resends or retries
-  with a fresh `msgId` always pass (clients should generate a new msgId per attempt; requests without
-  a msgId fall back to an envelope hash, so identical resends without msgId count as the same message).
+  with a fresh `msgId` always pass (clients should generate a new msgId per attempt). Requests without
+  a `msgId` are rejected with HTTP 400 (`bad-msg-id`) and never enqueued.
   `msgId` is covered by the Ed25519 origin signature (canonical string), so a malicious or broken
   relay cannot rewrite it to bypass loop protection — tampering fails signature verification (403).
 - **DHT (discovery layer, default on)**: `warmy-dht/1` node, signed service/locator records (Ed25519,

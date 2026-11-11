@@ -6,8 +6,8 @@
  *
  * 管理面（只允许本机回环访问，打开即用、无需登录）：
  *   GET  / 或 /admin                    自包含管理页（无外部资源）
- *   GET  /api/admin/stats               总统计 + 按凭据统计（日/月/年/速度/峰值）
- *   GET  /api/admin/credentials         凭据列表
+ *   GET  /api/admin/stats[?limit=&offset=]   总统计 + 按凭据统计（日/月/年/速度/峰值；凭据分页默认 200/页、上限 5000、新凭据在前）
+ *   GET  /api/admin/credentials[?limit=&offset=]   凭据列表（分页同上）
  *   POST /api/admin/credentials         新建凭据 {name, limits?}
  *   POST /api/admin/credential-update   改名/停用/改限额 {id, name?, disabled?, limits?}
  *   POST /api/admin/credential-revoke   停用（兼容旧名）{id}
@@ -2383,16 +2383,31 @@ export async function startServer(options = {}) {
       lastUsed: c.lastUsed || s.lastUsed || 0,
     };
   }
-  function buildStats() {
+  /** 管理面列表分页：limit 默认 200、上限 5000；offset 默认 0；非法值回退默认。 */
+  function adminPage(u) {
+    let limit = Math.floor(Number(u && u.searchParams.get('limit')));
+    if (!Number.isFinite(limit) || limit <= 0) limit = 200;
+    limit = Math.min(5000, limit);
+    let offset = Math.floor(Number(u && u.searchParams.get('offset')));
+    if (!Number.isFinite(offset) || offset < 0) offset = 0;
+    return { limit, offset };
+  }
+  /** 凭据按创建时间倒序（新凭据排第一页，创建后刷新立即可见；同毫秒保持插入序）。 */
+  function credsNewestFirst() {
+    return Object.values(creds).sort((a, b) => (a.createdAt === b.createdAt ? 0 : a.createdAt < b.createdAt ? 1 : -1));
+  }
+  function buildStats(u) {
     const now = Date.now();
-    const list = Object.values(creds).map(viewCred);
-    const all = Object.values(stats.credentials);
-    const total = aggTotal(all.map((s) => s.total));
-    const today = aggTotal(all.map((s) => s.days[dayKey()]));
-    const month = aggTotal(all.map((s) => s.months[monthKey()]));
-    const year = aggTotal(all.map((s) => s.years[yearKey()]));
+    const all = Object.values(creds);
+    const page = adminPage(u);
+    const list = credsNewestFirst().slice(page.offset, page.offset + page.limit).map(viewCred);
+    const st = Object.values(stats.credentials);
+    const total = aggTotal(st.map((s) => s.total));
+    const today = aggTotal(st.map((s) => s.days[dayKey()]));
+    const month = aggTotal(st.map((s) => s.months[monthKey()]));
+    const year = aggTotal(st.map((s) => s.years[yearKey()]));
     const withBytes = (b) => ({ ...b, bytes: (b.bytesIn || 0) + (b.bytesOut || 0) });
-    const peak = Math.max(stats.peakPerMin, ...all.map((s) => s.peakPerMin || 0));
+    const peak = Math.max(stats.peakPerMin, ...st.map((s) => s.peakPerMin || 0));
     return {
       ok: true,
       server: 'fwarmy-relay',
@@ -2405,6 +2420,10 @@ export async function startServer(options = {}) {
       config: cfg,
       totals: { ...withBytes(total), today: withBytes(today), month: withBytes(month), year: withBytes(year), speed: totalSpeed(), peakPerMin: peak, peakAt: stats.peakAt },
       perCredential: list,
+      credTotal: all.length,
+      credEnabled: all.reduce((n, c) => n + (c.disabled ? 0 : 1), 0),
+      credOffset: page.offset,
+      credLimit: page.limit,
       unauthorized: stats.unauthorized,
       firstRunPending: firstRunPending(),
       dataDir: DATA,
@@ -2912,7 +2931,7 @@ export async function startServer(options = {}) {
 
   async function adminApi(req, res, u) {
     const p = u.pathname;
-    if (req.method === 'GET' && p === '/api/admin/stats') return send(res, 200, buildStats());
+    if (req.method === 'GET' && p === '/api/admin/stats') return send(res, 200, buildStats(u));
     if (req.method === 'GET' && p === '/api/admin/update') return send(res, 200, updateView());
     if (req.method === 'POST' && p === '/api/admin/update-check') {
       await checkUpdate(true);
@@ -3227,7 +3246,15 @@ export async function startServer(options = {}) {
       return send(res, 200, { ok: true, tls: tlsPublicView(), restartRequired: true });
     }
     if (req.method === 'GET' && p === '/api/admin/credentials') {
-      return send(res, 200, { ok: true, items: Object.values(creds).map(viewCred) });
+      const page = adminPage(u);
+      const all = credsNewestFirst();
+      return send(res, 200, {
+        ok: true,
+        items: all.slice(page.offset, page.offset + page.limit).map(viewCred),
+        total: all.length,
+        offset: page.offset,
+        limit: page.limit,
+      });
     }
     if (req.method === 'POST' && p === '/api/admin/credentials') {
       const j = await body(req);
