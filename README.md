@@ -113,11 +113,12 @@ stats | ip | update | version               usage stats, public IP probe, update
   added/removed on the admin page. External addresses (domain/IP:port) are a managed list with
   per-entry health (verified / failed / paused) and an auto fallback pair (inferred IP : 443/62666)
   that always stays enabled.
-- **Ports (R133)**: FWArmy now listens on **multiple business ports** (default **59599** for relay
-  credentials and **58588** for expand credentials, no more auto-increment on conflict). The "端口"
-  admin tab shows every port's state (listening / paused / error), which credentials reference it,
-  and lets you add / pause / resume / remove ports — occupying processes can be force-killed to take
-  the port back. A credential is only usable while its port is in the listening set.
+- **Ports (R133/R134)**: FWArmy listens on **multiple business ports** — default **8787** (admin
+  entry, changeable below the public-IP bar), **59599** (relay credentials) and **58588** (expand
+  credentials); no more auto-increment on conflict. The "端口" admin tab shows every port's state
+  (listening / paused / error, TCP and DHT-UDP 443/62666), which credentials reference it, and lets
+  you add / pause / resume / remove ports — occupying processes can be force-killed to take the port
+  back. A credential is only usable while its port is in the listening set.
 - **Relay credentials v2**: generated tokens embed host + port (`fwnexp_v2_<payload>`), so clients fill
   in only "name + credential"; legacy tokens without an address still work with a manual address.
   Inbound relay responses distinguish `offline` (recipient offline — never cached, sender retries later)

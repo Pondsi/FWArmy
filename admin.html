@@ -94,6 +94,12 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <span class="ico" id="pubIpIco">⟳</span>
     <span id="pubIpText">公网 IP：检测中…</span>
   </div>
+  <div class="pubip" id="entryPortBar" title="后台管理页面端口（默认 8787，可修改）">
+    <span>管理端口</span>
+    <input id="entryPort" type="number" min="1" max="65535" step="1" style="width:72px" value="8787">
+    <button class="sm" id="entryPortSave">修改</button>
+    <span class="muted" id="entryPortHint"></span>
+  </div>
   <div class="pills"><div class="pills" id="pills"></div><button id="powerBtn" class="good" disabled>加载状态…</button></div>
 </header>
 
@@ -234,7 +240,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <div id="exInTokenBox" class="tokenbox" hidden>
       <code id="exInToken"></code>
       <button class="sm" id="exInCopy">复制</button>
-      <span class="hint" style="margin:0">只显示这一次；<b>已包含你填写的域名/IP 和端口</b>（不填端口 = 8787），对方只需填「名称 + 凭证」。每个实例可有多条，可单独管理/停用/删除。</span>
+      <span class="hint" style="margin:0">只显示这一次；<b>已包含你填写的域名/IP 和端口</b>（不填端口 = 58588），对方只需填「名称 + 凭证」。每个实例可有多条，可单独管理/停用/删除。</span>
       <div id="exInPortWarn" class="hint" style="margin:0;color:var(--danger,#c0392b)" hidden></div>
     </div>
     <div class="hint" id="exAddrHint">加载中…</div>
@@ -274,7 +280,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
         </span>
         <span id="dhtAdvList" class="hint" style="margin-top:4px;display:block"></span>
       </label>
-      <label class="f">默认锚点（自动生效，与 WArmy 对齐）<input id="dhtAnchorDef" readonly placeholder="DHT.pondsi.com:443"></label>
+      <label class="f">默认锚点（自动生效，与 WArmy 对齐）<span id="dhtAnchorDef" class="hint" style="display:block;margin-top:4px"></span></label>
       <label class="f">手动锚点（或入网端点）
         <span style="display:flex;gap:6px;width:100%">
           <input id="dhtAnchorNew" placeholder="host 或 host:port，如 1.2.3.4:443" style="flex:1">
@@ -540,17 +546,22 @@ function render() {
   const ov = S.perCredential.map((c) =>
     `<tr><td>${esc(c.name)}</td><td>${c.disabled ? '<span class="tag off">已停用</span>' : '<span class="tag on">有效</span>'}</td><td class="num">${num(c.speed.reqPerMin)}/分<div class="cell-sub">${fmtBytes(c.speed.bytesPerMin)}/分</div></td><td>${usageCell(c.today)}</td><td>${usageCell(c.month)}</td><td>${usageCell(c.year)}</td><td>${usageCell(c.total)}</td><td class="num">${num(c.peakPerMin)}</td><td>${limText(c)}</td><td class="muted">${fmtTime(c.lastUsed)}</td></tr>`).join('');
 
+  // R134：与 F中继相同的列表格式——名称 / 标识（中间+末尾）/ 端口 / 状态 / 请求 / 最近使用 / 操作
+  const lp = S.listeningPorts || [];
   $('#credTable').innerHTML =
-    `<tr><th>名称</th><th>状态</th><th class="num">速度（最近 60s）</th><th>今日</th><th>本月</th><th>今年</th><th>累计</th><th class="num">峰值/分</th><th>限额</th><th>最近使用</th><th>操作</th></tr>` +
+    `<tr><th>名称</th><th>标识（中间+末尾）</th><th>端口</th><th>状态</th><th class="num">请求</th><th>最近使用</th><th>操作</th></tr>` +
     (S.perCredential.map((c) =>
-      `<tr><td>${esc(c.name)}<div class="cell-sub"><code>${esc(c.hash8)}…</code> · 建于 ${fmtTime(Date.parse(c.createdAt))}${c.endpoint ? ' · 端点 ' + esc(c.endpoint.host) + ':' + c.endpoint.port : ''}</div></td>` +
+      `<tr><td>${esc(c.name)}<div class="cell-sub">${c.endpoint ? '端点 ' + esc(c.endpoint.host) + ':' + c.endpoint.port : '无端点'}</div></td>` +
+      `<td><code>${esc(c.masked || '—')}</code></td>` +
+      `<td>${c.endpoint
+        ? `<code>${c.endpoint.port}</code> ${lp.includes(c.endpoint.port) ? '<span class="tag on">端口可用</span>' : '<span class="tag off">端口不可用</span>'}`
+        : '<span class="muted">—</span>'}</td>` +
       `<td>${c.disabled ? '<span class="tag off">已停用</span>' : '<span class="tag on">有效</span>'}</td>` +
-      `<td class="num">${num(c.speed.reqPerMin)} 次/分<div class="cell-sub">${fmtBytes(c.speed.bytesPerMin)}/分</div></td>` +
-      `<td>${usageCell(c.today)}</td><td>${usageCell(c.month)}</td><td>${usageCell(c.year)}</td><td>${usageCell(c.total)}</td>` +
-      `<td class="num">${num(c.peakPerMin)}</td><td>${limText(c)}</td><td class="muted">${fmtTime(c.lastUsed)}</td>` +
-      `<td><div class="toolbar" style="margin:0"><button class="sm" data-act="edit" data-id="${esc(c.id)}">编辑</button>` +
+      `<td class="num">${num(c.total.requests)}</td>` +
+      `<td class="muted">${fmtTime(c.lastUsed)}</td>` +
+      `<td><div class="toolbar" style="margin:0"><button class="sm" data-act="edit" data-id="${esc(c.id)}">管理</button>` +
       `<button class="sm" data-act="toggle" data-id="${esc(c.id)}">${c.disabled ? '启用' : '停用'}</button>` +
-      `<button class="sm danger" data-act="del" data-id="${esc(c.id)}">删除</button></div></td></tr>`).join('') || `<tr><td colspan="11" class="empty">还没有凭据。点“新建凭据”生成一个。</td></tr>`);
+      `<button class="sm danger" data-act="del" data-id="${esc(c.id)}">删除</button></div></td></tr>`).join('') || `<tr><td colspan="7" class="empty">还没有凭据。点“新建凭据”生成一个。</td></tr>`);
   $('#credCount').textContent = `共 ${S.credTotal} 个 · 有效 ${S.credEnabled} 个`;
   const credPages = Math.max(1, Math.ceil((S.credTotal || 0) / CRED_PAGE_SIZE));
   $('#credPager').innerHTML = (S.credTotal || 0) > CRED_PAGE_SIZE
@@ -657,6 +668,7 @@ async function refresh() {
       S = await api(`/api/admin/stats?limit=${CRED_PAGE_SIZE}&offset=${credPage * CRED_PAGE_SIZE}`);
     }
     renderPubIp(S.publicIp);
+    if (S.entryPort) $('#entryPort').value = S.entryPort;
     // R131：公网 IP 自动探测（页面加载且缓存为空时静默触发一次，无需用户点击）
     if ((!S.publicIp || !S.publicIp.at) && !pubIpLoading) void refreshPublicIp(false);
     SEC = await api('/api/admin/security').catch(() => null);
@@ -739,24 +751,36 @@ async function loadPorts() {
 function renderPorts() {
   if (!P) return;
   $('#ptTable').innerHTML =
-    `<tr><th>端口</th><th>状态</th><th class="num">凭据引用</th><th>说明</th><th>操作</th></tr>` +
+    `<tr><th>端口</th><th>类型</th><th>状态</th><th class="num">凭据引用</th><th>说明</th><th>操作</th></tr>` +
     (P.items.map((it) => {
       const stTag = it.status === 'listening' ? '<span class="tag on">监听中</span>'
         : it.status === 'paused' ? '<span class="tag off">暂停</span>'
           : `<span class="tag off">异常${it.error === 'occupied' ? '（被占用）' : '：' + esc(it.error)}</span>`;
       const btns = [];
-      if (it.status === 'listening') btns.push(`<button class="sm" data-pt-act="pause" data-port="${it.port}">暂停</button>`);
-      else btns.push(`<button class="sm good" data-pt-act="resume" data-port="${it.port}">启用</button>`);
-      if (it.status === 'error' && it.error === 'occupied') btns.push(`<button class="sm danger" data-pt-act="force" data-port="${it.port}">强制启用</button>`);
-      btns.push(`<button class="sm danger" data-pt-act="remove" data-port="${it.port}">删除</button>`);
-      return `<tr><td><code>${it.port}</code>${it.main ? ' <span class="tag on">入口</span>' : ''}</td><td>${stTag}</td><td class="num">${it.creds}</td><td class="muted">${it.status === 'error' && it.error ? esc(it.error) : (it.main ? '主入口端口' : '')}</td><td><div class="toolbar" style="margin:0">${btns.join('')}</div></td></tr>`;
-    }).join('') || '<tr><td colspan="5" class="empty">没有端口。点「添加新的端口」。</td></tr>');
+      if (it.status === 'listening') btns.push(`<button class="sm" data-pt-act="pause" data-port="${it.port}" data-pt-proto="${it.protocol}">暂停</button>`);
+      else btns.push(`<button class="sm good" data-pt-act="resume" data-port="${it.port}" data-pt-proto="${it.protocol}">启用</button>`);
+      if (it.status === 'error' && it.error === 'occupied' && it.protocol === 'tcp') btns.push(`<button class="sm danger" data-pt-act="force" data-port="${it.port}" data-pt-proto="tcp">强制启用</button>`);
+      btns.push(`<button class="sm danger" data-pt-act="remove" data-port="${it.port}" data-pt-proto="${it.protocol}">删除</button>`);
+      return `<tr><td><code>${it.port}</code>${it.main ? ' <span class="tag on">入口</span>' : ''}</td><td>${it.protocol === 'udp' ? '<span class="tag">UDP·DHT</span>' : 'TCP'}</td><td>${stTag}</td><td class="num">${it.creds}</td><td class="muted">${it.status === 'error' && it.error ? esc(it.error) : (it.main ? '管理入口端口' : '')}</td><td><div class="toolbar" style="margin:0">${btns.join('')}</div></td></tr>`;
+    }).join('') || '<tr><td colspan="6" class="empty">没有端口。点「添加新的端口」。</td></tr>');
 }
-async function ptAction(action, port) {
+$('#entryPortSave').addEventListener('click', async () => {
+  const v = Number($('#entryPort').value);
+  if (!Number.isInteger(v) || v < 1 || v > 65535) { toast('请输入 1–65535 的端口号', true); return; }
+  try {
+    const j = await api('/api/admin/ports', { action: 'entry', port: v });
+    P = j.ports; renderPorts();
+    $('#entryPort').value = j.entryPort || v;
+    $('#entryPortHint').textContent = '管理页已切换：' + (location.protocol === 'https:' ? 'https' : 'http') + '://127.0.0.1:' + (j.entryPort || v) + '/';
+    toast('管理端口已改为 ' + (j.entryPort || v));
+    await refresh();
+  } catch (e) { toast(e.message, true); }
+});
+async function ptAction(action, port, protocol) {
   try {
     if (action === 'force' && !confirm(`强制启用端口 ${port}？会结束占用该端口的进程！`)) return;
     if (action === 'remove' && !confirm(`删除端口 ${port}？引用它的凭据将立即失效。`)) return;
-    const j = await api('/api/admin/ports', { action, port });
+    const j = await api('/api/admin/ports', { action, port, ...(protocol ? { protocol } : {}) });
     P = j.ports; renderPorts();
     if (j.start && !j.start.ok) toast('启用失败：' + (j.start.error === 'occupied' ? '端口被占用（可点「强制启用」）' : j.start.error), true);
     else toast(action === 'remove' ? '端口已删除' : '端口操作完成');
@@ -771,7 +795,7 @@ $('#ptAdd').addEventListener('click', () => {
 $('#ptTable').addEventListener('click', (ev) => {
   const b = ev.target.closest('button[data-pt-act]');
   if (!b) return;
-  ptAction(b.dataset.ptAct, Number(b.dataset.port));
+  ptAction(b.dataset.ptAct, Number(b.dataset.port), b.dataset.ptProto);
 });
 async function saveUpdPrefs() {
   try {
@@ -913,6 +937,7 @@ function renderDht() {
     ['发布次数', String(d.selfPublishes || 0), '本站记录 + 客户端定位记录'],
   ].map(([k, v, s]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join('');
   const addrs = d.addresses || [];
+  const portStates = new Map((P && P.items || []).map((it) => [it.port, it]));
   $('#dhtAdvNew').value = '';
   $('#dhtAdvList').innerHTML = addrs.length
     ? addrs.map((a) => {
@@ -920,15 +945,25 @@ function renderDht() {
           ? '<span class="tag on">自动兜底</span>'
           : (!a.enabled ? '<span class="tag off">暂停</span>'
             : (a.valid ? '<span class="tag on">正常</span>' : '<span class="tag off" title="' + esc(a.lastError || '') + '">异常</span>'));
+        const ps = portStates.get(a.port);
+        const portTag = !a.manual
+          ? ''
+          : (!ps ? '<span class="tag off">端口未配置</span>'
+            : (ps.status === 'listening' ? '<span class="tag on">端口监听中</span>'
+              : (ps.status === 'paused' ? '<span class="tag off">端口暂停</span>' : '<span class="tag off">端口异常</span>')));
+        const portBtn = a.manual && ps && ps.status !== 'listening'
+          ? `<button class="sm" data-dht-enable-port="${a.port}">${ps.status === 'paused' ? '启用端口' : '启用端口'}</button>`
+          : '';
         const op = a.manual
           ? `<button class="sm" data-dht-tgl-addr="${esc(a.host + ':' + a.port)}">${a.enabled ? '暂停' : '启用'}</button>` +
             `<button class="sm danger" data-dht-del-addr="${esc(a.host + ':' + a.port)}">删除</button>`
           : '';
-        return `<span style="display:inline-flex;align-items:center;gap:6px;margin:2px 8px 2px 0"><code>${esc(a.host)}:${a.port}</code>${tag}${op}</span>`;
+        return `<span style="display:inline-flex;align-items:center;gap:6px;margin:2px 8px 2px 0;flex-wrap:wrap"><code>${esc(a.host)}:${a.port}</code>${tag}${portTag}${portBtn}${op}</span>`;
       }).join('')
     : '<span class="muted">（无手动地址；自动兜底生效）</span>';
-  const defA = (d.defaultAnchors || [])[0];
-  $('#dhtAnchorDef').value = defA ? `${defA.host}:${defA.port}` : '';
+  $('#dhtAnchorDef').innerHTML = (d.defaultAnchors || []).length
+    ? (d.defaultAnchors || []).map((a) => `<span style="display:inline-block;margin:2px 8px 2px 0"><code>${esc(a.host)}:${a.port}</code></span>`).join('')
+    : '<span class="muted">（无）</span>';
   $('#dhtAnchorNew').value = '';
   $('#dhtAnchorList').innerHTML = (d.anchors || []).length
     ? (d.anchors || []).map((a) => `<span style="display:inline-flex;align-items:center;gap:6px;margin:2px 8px 2px 0"><code>${esc(a.host)}:${a.port}</code><button class="sm danger" data-dht-del-anchor="${esc(a.host + ':' + a.port)}">×</button></span>`).join('')
@@ -943,8 +978,11 @@ function renderDht() {
   $('#dhtMsg').textContent = '';
 }
 async function loadDht() {
-  try { D = await api('/api/admin/dht'); renderDht(); }
-  catch (e) { toast('DHT 状态读取失败：' + e.message, true); }
+  try {
+    D = await api('/api/admin/dht');
+    try { P = await api('/api/admin/ports'); } catch { /* 端口视图失败不阻塞 DHT 页 */ }
+    renderDht();
+  } catch (e) { toast('DHT 状态读取失败：' + e.message, true); }
 }
 async function dhtAdvNow() {
   const v = $('#dhtAdvNew').value.trim();
@@ -1013,7 +1051,7 @@ async function genInbound() {
       port = Number(portRaw);
       if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('端口必须是 1–65535 的整数（不填默认 58588）');
     }
-    const chosen = port || 8787;
+    const chosen = port || 58588;
     const r = await api('/api/admin/expand-inbound', { name: $('#exInName').value.trim(), ...(port ? { port } : {}), ...(host ? { host } : {}) });
     $('#exInName').value = ''; $('#exInPort').value = '';
     $('#exInHost').value = ''; exInHostTouched = false; fillExInHostDefault();
@@ -1139,7 +1177,7 @@ async function saveCred() {
     let port = null;
     if (portRaw !== '') {
       port = Number(portRaw);
-      if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('端点端口必须是 1–65535 的整数（不填默认 8787）');
+      if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('端点端口必须是 1–65535 的整数（不填默认 59599）');
     }
     if (editing) {
       await api('/api/admin/credential-update', { id: editing.id, name, limits, host, port });
@@ -1323,10 +1361,22 @@ $('#dhtAdvAdd').addEventListener('click', dhtAdvNow);
 $('#dhtAdvList').addEventListener('click', async (ev) => {
   const tgl = ev.target.closest('button[data-dht-tgl-addr]');
   const del = ev.target.closest('button[data-dht-del-addr]');
-  if (!tgl && !del) return;
+  const enp = ev.target.closest('button[data-dht-enable-port]');
+  if (!tgl && !del && !enp) return;
   if (!D) return;
   const list = (D.addresses || []).filter((a) => a.manual);
   try {
+    if (enp) {
+      const port = Number(enp.dataset.dhtEnablePort);
+      const j = await api('/api/admin/ports', { action: 'resume', port });
+      if (j.start && !j.start.ok) {
+        const f = await api('/api/admin/ports', { action: 'force', port }).catch(() => null);
+        if (!f || !f.start || !f.start.ok) { toast('端口启用失败（被占用；可到「端口」页强制启用）', true); return; }
+      }
+      toast('端口已启用');
+      await loadDht();
+      return;
+    }
     if (tgl) {
       const key = tgl.dataset.dhtTglAddr;
       const items = list.map((a) => ({ host: a.host, port: a.port, enabled: `${a.host}:${a.port}` === key ? !a.enabled : a.enabled }));

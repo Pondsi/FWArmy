@@ -117,8 +117,8 @@ const INBOUND_BYTES_PER_MIN = 20 * 1024 * 1024;
 const EXPAND_DEFAULT_PORT = 58588;
 /** 中继页业务凭据默认端口（R133 用户拍板：中继默认 59599）。 */
 const CRED_DEFAULT_PORT = 59599;
-/** 默认业务监听端口列表（R133：多端口体系，不再自动顺延；被占端口在「端口」页显示异常并可强制启用）。 */
-const DEFAULT_PORTS = [CRED_DEFAULT_PORT, EXPAND_DEFAULT_PORT];
+/** 默认业务监听端口列表（R134：管理入口 8787 + 中继 59599 + 扩网 58588；被占端口在「端口」页可处理）。 */
+const DEFAULT_PORTS = [8787, CRED_DEFAULT_PORT, EXPAND_DEFAULT_PORT];
 /** 内置引导锚点（R133 用户拍板：443 与 62666 双端口 × DHT/DHT2 两域名；原话 https://DHT.pondsi.com 等，剥协议取主机）。 */
 const DEFAULT_ANCHORS = ['DHT.pondsi.com', 'DHT.pondsi.com:62666', 'DHT2.pondsi.com', 'DHT2.pondsi.com:62666'];
 /** 手动对外地址的验证周期：验证通过才用于宣告，失效自动回退自动推断。 */
@@ -1612,25 +1612,31 @@ export async function startServer(options = {}) {
       originSig: crypto.sign(null, Buffer.from(msg, 'utf8'), identityKey).toString('base64'),
     };
   }
-  /** R133：端口管理视图（状态 + 各端口被哪些凭据使用）。 */
+  /** R133/R134：端口管理视图（TCP 业务端口 + UDP DHT 端口；状态 + 凭据引用）。 */
   function portsView() {
     const credsUse = (port) => Object.values(creds).filter((c) => (c.port || 0) === port).length
       + expand.inbound.filter((c) => (c.port || 0) === port).length;
+    const tcpItems = cfg.ports.map((port) => {
+      const st = portStates.get(port) || { status: 'error', error: 'unknown' };
+      return {
+        port, protocol: 'tcp', status: st.status, error: st.error || '',
+        creds: credsUse(port), main: port === cfg.ports[0],
+      };
+    });
+    const udpItems = cfg.dht.udpPorts.map((port) => {
+      const up = dhtNodes.some((n) => n.listening && n.address.port === port);
+      return {
+        port, protocol: 'udp', status: up ? 'listening' : 'error',
+        error: up ? '' : 'udp-bind-failed', creds: 0, main: false,
+      };
+    });
     return {
       ok: true,
       defaultCredPort: CRED_DEFAULT_PORT,
       defaultExpandPort: EXPAND_DEFAULT_PORT,
+      entryPort: cfg.ports[0],
       mainPort: boundPort || opt.port,
-      items: cfg.ports.map((port) => {
-        const st = portStates.get(port) || { status: 'error', error: 'unknown' };
-        return {
-          port,
-          status: st.status, // listening | paused | error
-          error: st.error || '',
-          creds: credsUse(port),
-          main: port === (boundPort || opt.port),
-        };
-      }),
+      items: [...tcpItems, ...udpItems],
     };
   }
   function findListeningPid(port) {
@@ -1739,8 +1745,9 @@ export async function startServer(options = {}) {
   let dhtRetryDelayMs = cfg.dht.retryBaseMs;
   let dhtState = { lastPublishAt: 0, lastPublishSeq: 0, lastStoredOn: [], lastError: '', lastYindao: null, selfPublishes: 0 };
   const didLastPub = new Map(); // did → 上次代发布定位记录的时间
-  /** 自动推断 IP：STUN > NAT-PMP > 本机非回环 IPv6 > IPv4 > 回环（R132：优先 IPv6）。 */
+  /** 自动推断 IP：探测到的公网 IP（ipify）优先（R134），其次 STUN > NAT-PMP > 本机非回环 IPv6 > IPv4 > 回环。 */
   function autoAdvIp() {
+    if (lastPub && (lastPub.ipv4 || lastPub.ipv6)) return lastPub.ipv4 || lastPub.ipv6;
     if (lastStun && lastStun.ok && lastStun.publicAddress) return lastStun.publicAddress.host;
     if (lastNatpmp && lastNatpmp.externalIp) return lastNatpmp.externalIp;
     for (const a of localAddresses()) {
@@ -2618,6 +2625,7 @@ export async function startServer(options = {}) {
       id: c.id,
       name: c.name,
       hash8: c.hash8,
+      masked: c.hash ? '…' + String(c.hash).slice(30, 35) + '…' + String(c.hash).slice(-5) : '', // R134：与 F中继一致（最中间 5 + 末尾 5）
       createdAt: c.createdAt,
       disabled: !!c.disabled,
       limits: c.limits,
@@ -2686,6 +2694,8 @@ export async function startServer(options = {}) {
         lastInbound: security.lastInbound,
       },
       publicIp: { ...lastPub },
+      listeningPorts: listeningPorts(),
+      entryPort: cfg.ports[0],
       update: updateSummary(),
     };
   }
@@ -3399,6 +3409,39 @@ export async function startServer(options = {}) {
       const action = String(j.action || '');
       const port = Math.floor(Number(j.port));
       if (!Number.isInteger(port) || port < 1 || port > 65535) return send(res, 400, { ok: false, error: 'bad-port' });
+      // R134：UDP（DHT 监听端口）走 dht.udpPorts；TCP 走业务端口
+      if (j.protocol === 'udp') {
+        if (action === 'pause' || action === 'remove') {
+          const next = cfg.dht.udpPorts.filter((x) => x !== port);
+          if (!next.length) return send(res, 400, { ok: false, error: 'udp-port-required', hint: 'DHT 至少保留一个 UDP 端口' });
+          cfg.dht = { ...cfg.dht, udpPorts: next };
+          if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
+          await dhtStart();
+          return send(res, 200, { ok: true, ports: portsView() });
+        }
+        if (action === 'resume' || action === 'add') {
+          if (!cfg.dht.udpPorts.includes(port)) {
+            cfg.dht = { ...cfg.dht, udpPorts: normPorts([...cfg.dht.udpPorts, port], cfg.dht.udpPorts, 8) };
+            if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
+          }
+          const r = await dhtStart();
+          return send(res, 200, { ok: true, start: r, ports: portsView() });
+        }
+        return send(res, 400, { ok: false, error: 'bad-action' });
+      }
+      // R134：管理入口端口修改（移到列表首位并启用）
+      if (action === 'entry') {
+        cfg.ports = normPorts([port, ...cfg.ports.filter((x) => x !== port)]);
+        if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
+        const r = await startPort(port);
+        if (!r.ok && r.error === 'occupied') {
+          const k = await forceKillPort(port);
+          if (k.ok) { const r2 = await startPort(port); return send(res, 200, { ok: true, entryPort: port, start: r2, killed: k.killed, ports: portsView() }); }
+          return send(res, 400, { ok: false, error: 'occupied', hint: '端口被占用，强制启用失败' });
+        }
+        log('INFO', `端口管理：管理入口改为 ${port}`);
+        return send(res, 200, { ok: true, entryPort: port, start: r, ports: portsView() });
+      }
       if (action === 'add') {
         if (cfg.ports.includes(port)) return send(res, 400, { ok: false, error: 'port-exists' });
         cfg.ports = normPorts([...cfg.ports, port]);
