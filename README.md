@@ -87,16 +87,25 @@ stats | ip | update | version               usage stats, public IP probe, update
   messages carry signed origins and unique IDs — the same message id passes at most twice per 24h
   (a third sighting is dropped and the message id itself is blacklisted, so relay rings never loop
   forever; no hop-count limit is used), plus route-based loop detection.
+  Inbound ("被扩网") credentials carry the server's address and port (`fwnexp_v2_<base64url{host,port,rand}>`)
+  — the peer only needs name + credential, no manual address (legacy tokens without an address are
+  rejected). The credential port must equal the port this server is actually listening on (default
+  **8787**, a cold IANA-registered port with no mainstream use); if that port is occupied and startup
+  rolled over, the credential is hard-disabled (`401 credential-port-unavailable`) until the conflict
+  is resolved — the admin page shows the actual port. Generated credentials can also be managed
+  (rename, rate/bytes limits, expiry) and are disabled while expired.
   Message identity is the `msgId` in the header — **content is never compared**: resends or retries
   with a fresh `msgId` always pass (clients should generate a new msgId per attempt). Requests without
   a `msgId` are rejected with HTTP 400 (`bad-msg-id`) and never enqueued.
   `msgId` is covered by the Ed25519 origin signature (canonical string), so a malicious or broken
   relay cannot rewrite it to bypass loop protection — tampering fails signature verification (403).
-- **DHT (discovery layer, default on)**: `warmy-dht/1` node, signed service/locator records (Ed25519,
+- **DHT (discovery layer, always on)**: `warmy-dht/1` node, signed service/locator records (Ed25519,
   AES-256-GCM, seq anti-rollback, ±10 min clock tolerance), anchor bootstrap with exponential backoff,
   and per-source rate limiting. DHT never authorizes delivery — forwarding always requires configured
   mutual credentials and pinned TLS fingerprints; unauthenticated relay requests are dropped (401) and
-  rate-limited by source IP.
+  rate-limited by source IP. The advertised address is auto-inferred (STUN > NAT-PMP > local IPv4);
+  an optional manual host/domain is used only while it verifies as this instance (checked every 5 min),
+  falling back to auto inference when it fails.
 - **Relay credentials v2**: generated tokens embed host + port (`fwnexp_v2_<payload>`), so clients fill
   in only "name + credential"; legacy tokens without an address still work with a manual address.
   Inbound relay responses distinguish `offline` (recipient offline — never cached, sender retries later)

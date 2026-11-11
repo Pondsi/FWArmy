@@ -113,6 +113,10 @@ const MAX_MSG_ID = 128;
 /** 单条被扩网凭据的入站速率上限（防放大/洪泛）；只影响扩网 ingress，不影响普通业务凭据。 */
 const INBOUND_RATE_PER_MIN = 240;
 const INBOUND_BYTES_PER_MIN = 20 * 1024 * 1024;
+/** 被扩网凭据默认端口（用户拍板：生成时选填，不填 = 8787；凭据自带端口，对方无需再填）。 */
+const EXPAND_DEFAULT_PORT = 8787;
+/** 手动对外地址的验证周期：验证通过才用于宣告，失效自动回退自动推断。 */
+const MANUAL_ADDR_CHECK_MS = 5 * 60_000;
 /** 无凭据来源（未配对）的 /api/expand/relay 请求按来源 IP 限速（防滥用 §9：直接丢弃 + 限速）。 */
 const UNAUTH_RATE_PER_MIN = 30;
 const LIMIT_KEYS = ['ratePerMin', 'bytesPerMin', 'dailyRequests', 'dailyBytes', 'monthlyRequests', 'monthlyBytes', 'totalRequests', 'totalBytes', 'yearlyBytes'];
@@ -789,16 +793,29 @@ function normInbound(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const hash = String(raw.hash || raw.tokenHash || '');
   if (!/^[0-9a-f]{64}$/.test(hash)) return null;
+  const port = Number(raw.port);
   return {
     id: String(raw.id || crypto.randomUUID()),
     name: String(raw.name || '接入凭据').slice(0, 40),
     hash,
-    prefix: String(raw.prefix || '').slice(0, 24),
+    masked: '…' + hash.slice(12, 28) + '…' + hash.slice(-8), // 持久化不带，重启后从哈希重算
+    port: Number.isInteger(port) && port >= 1 && port <= 65535 ? port : 0,
+    addr: String(raw.addr || '').slice(0, 253),
     createdAt: Number(raw.createdAt) || 0,
     lastAt: Number(raw.lastAt) || 0,
     lastResult: String(raw.lastResult || '').slice(0, 120),
     disabled: raw.disabled === true,
+    limits: raw.limits && typeof raw.limits === 'object' ? normLimitsStored(raw.limits) : null,
+    expiresAt: Number(raw.expiresAt) > 0 ? Number(raw.expiresAt) : 0,
   };
+}
+function normLimitsStored(raw) {
+  const out = {};
+  for (const k of LIMIT_KEYS) {
+    const v = raw[k];
+    out[k] = v === null || v === undefined ? null : (typeof v === 'number' && validLimit(k, v) ? v : null);
+  }
+  return out;
 }
 function normOutbound(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -860,37 +877,13 @@ function normDhtCfg(raw) {
   const t = raw && typeof raw === 'object' ? raw : {};
   const port = Number(t.port);
   return {
-    enabled: t.enabled !== false,
+    enabled: true, // R129 拍板：DHT 强制开启（使用 FWArmy 就必须进网），配置不再接受关闭
     port: Number.isInteger(port) && port >= 0 && port <= 65535 ? port : d.port,
-    advertiseHost: String(t.advertiseHost || '').trim().slice(0, 253),
+    advertiseHost: String(t.advertiseHost || '').trim().slice(0, 253), // 手动对外地址候选（验证通过才用）
     anchors: guiFanAnChors(t.anchors),
     routeByDht: t.routeByDht !== false,
     retryBaseMs: Math.max(200, Math.min(60_000, Number(t.retryBaseMs) || d.retryBaseMs)),
   };
-}
-/** 地址：IP 或域名；不写端口默认 59599；可写 host:port / [v6]:port / http(s)://host:port。 */
-export function parseExpandAddress(raw) {
-  let s = String(raw || '').trim();
-  if (!s) throw new Error('bad-address');
-  s = s.replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
-  let host = '';
-  let port = 59599;
-  if (s.startsWith('[')) {
-    const m = /^\[([^\]]+)\](?::(\d+))?$/.exec(s);
-    if (!m) throw new Error('bad-address');
-    host = m[1];
-    if (m[2]) port = Number(m[2]);
-  } else {
-    const i = s.lastIndexOf(':');
-    if (i > 0 && s.indexOf(':') === i) {
-      host = s.slice(0, i);
-      port = Number(s.slice(i + 1));
-    } else host = s;
-  }
-  host = host.trim();
-  if (!host || /[\s/?#]/.test(host)) throw new Error('bad-address');
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('bad-port');
-  return { host, port };
 }
 export function expandBaseUrl(p) {
   return `http://${String(p.host).includes(':') ? `[${p.host}]` : p.host}:${p.port}`;
@@ -1323,8 +1316,10 @@ export async function startServer(options = {}) {
     for (const [k, s] of Object.entries(expand.stats.perSource)) perSource[k] = sideView(s);
     const inboundStats = sideView(expand.stats.inbound);
     const creds = expand.inbound.map((c) => ({
-      id: c.id, name: c.name, prefix: c.prefix, addr: c.addr || '', createdAt: c.createdAt, lastAt: c.lastAt,
-      lastResult: c.lastResult, disabled: c.disabled,
+      id: c.id, name: c.name, masked: c.masked, addr: c.addr || '', createdAt: c.createdAt, lastAt: c.lastAt,
+      lastResult: c.lastResult, disabled: c.disabled, limits: c.limits || null, expiresAt: c.expiresAt || 0,
+      port: c.port || 0, portOk: (c.port || 0) === (boundPort || opt.port), // R129：凭据端口必须等于本机监听端口
+      effective: eff(c),
       stats: sideView(expand.stats.perInbound[c.id] || emptySide()),
     }));
     return {
@@ -1358,16 +1353,19 @@ export async function startServer(options = {}) {
       stats: { inbound: inboundStats, outbound: sideView(expand.stats.outbound), perOutbound, perSource },
     };
   }
-  function generateInboundToken(name = '') {
-    // 凭证自带本站对外地址（宣告地址 + 实际业务端口）：拿到凭证即可连接，不再单独填域名/端口。
+  function generateInboundToken(name = '', portRaw) {
+    // 凭证自带本站对外地址（宣告地址 + 生成时选择的端口，不填默认 8787）：拿到凭证即可连接。
     const host = pickAdvertiseHost();
-    const port = boundPort || opt.port;
+    let port = Math.floor(Number(portRaw));
+    if (!Number.isInteger(port) || port < 1 || port > 65535) port = EXPAND_DEFAULT_PORT;
     const payload = Buffer.from(JSON.stringify({ h: host, p: port, r: crypto.randomBytes(16).toString('base64url') }), 'utf8').toString('base64url');
     const token = 'fwnexp_v2_' + payload;
+    const hash = sha(token);
     const item = {
       id: crypto.randomUUID(), name: String(name || '').trim().slice(0, 40) || ('接入凭据 ' + (expand.inbound.length + 1)),
-      hash: sha(token), prefix: token.slice(0, 13) + '…',
-      addr: host + ':' + port, createdAt: now(), lastAt: 0, lastResult: '', disabled: false,
+      hash, masked: '…' + hash.slice(12, 28) + '…' + hash.slice(-8), // 前缀都一样没意义：显示中间+后缀
+      port, addr: host + ':' + port, createdAt: now(), lastAt: 0, lastResult: '', disabled: false,
+      limits: null, expiresAt: 0, // R129：可管理（改名/流量/速度/有效期）
     };
     expand.inbound.push(item);
     saveExpand();
@@ -1385,6 +1383,10 @@ export async function startServer(options = {}) {
       if (want.length === h.length && crypto.timingSafeEqual(want, h)) hit = c;
     }
     return hit;
+  }
+  /** R129：凭据端口必须等于本机实际监听端口——8787 被占顺延时凭据不随动，端口不符 = 强制禁止并提醒。 */
+  function credPortUnavailable(c) {
+    return (Number(c.port) || 0) !== (boundPort || opt.port);
   }
 
   /* ── 重放窗口 / 黑名单 / 来源公钥固定（security.json，同步落盘）── */
@@ -1610,14 +1612,73 @@ export async function startServer(options = {}) {
   let dhtRetryDelayMs = cfg.dht.retryBaseMs;
   let dhtState = { lastPublishAt: 0, lastPublishSeq: 0, lastStoredOn: [], lastError: '', lastYindao: null, selfPublishes: 0 };
   const didLastPub = new Map(); // did → 上次代发布定位记录的时间
-  /** 对外宣告地址：显式配置 > STUN 公网映射 > NAT-PMP 外部 IP > 本机非回环 IPv4 > 回环。 */
+  /** 对外宣告地址：手动地址验证通过优先（R129），否则自动推断 STUN > NAT-PMP > 本机非回环 IPv4 > 回环。 */
   function pickAdvertiseHost() {
-    if (cfg.dht.advertiseHost) return cfg.dht.advertiseHost;
+    if (manualAddr.valid && manualAddr.host) return manualAddr.host;
     if (lastStun && lastStun.ok && lastStun.publicAddress) return lastStun.publicAddress.host;
     if (lastNatpmp && lastNatpmp.externalIp) return lastNatpmp.externalIp;
     for (const a of localAddresses()) if (!a.internal && a.family === 'IPv4') return a.address;
     return '127.0.0.1';
   }
+  /** 手动对外地址状态：valid 时才停止自动推断；定时复查，失效立即回退自动。 */
+  let manualAddr = { host: '', port: 0, valid: false, lastCheckAt: 0, lastError: '', checking: false };
+  async function probeOwnAddress(host, port) {
+    const t0 = Date.now();
+    const once = (secure) => new Promise((resolve) => {
+      const mod = secure ? https : http;
+      const req = mod.request({
+        host, port, path: '/api/expand/identify', method: 'GET',
+        ...(secure ? { rejectUnauthorized: false } : {}), agent: false, timeout: 5000,
+      }, (res) => {
+        const bu = [];
+        res.on('data', (d) => bu.push(d));
+        res.on('end', () => {
+          let j = null;
+          try { j = JSON.parse(Buffer.concat(bu).toString('utf8')); } catch { /* noop */ }
+          resolve(j && String(j.identityPub || '') === expand.identity.pub
+            ? { ok: true, ms: Date.now() - t0 }
+            : { ok: false, error: 'identify 不匹配（不是本实例）', ms: Date.now() - t0 });
+        });
+      });
+      req.on('error', (e) => resolve({ ok: false, error: String((e && e.message) || e).slice(0, 60), ms: Date.now() - t0 }));
+      req.setTimeout(5000, () => { req.destroy(new Error('timeout')); resolve({ ok: false, error: '超时', ms: Date.now() - t0 }); });
+      req.end();
+    });
+    const r1 = await once(true);
+    if (r1.ok) return r1;
+    const r2 = await once(false);
+    if (r2.ok) return r2;
+    return r1.error && r1.error.includes('identify') ? r1 : r2;
+  }
+  /** 验证 cfg.dht.advertiseHost（手动地址候选）：能连上且 identify 确认是本实例才算有效。 */
+  async function checkManualAddr() {
+    const raw = String(cfg.dht.advertiseHost || '').trim();
+    if (!raw) {
+      manualAddr = { host: '', port: 0, valid: false, lastCheckAt: 0, lastError: '', checking: false };
+      return { ok: false, error: 'no-manual-host' };
+    }
+    let host = raw, port = EXPAND_DEFAULT_PORT;
+    if (raw.startsWith('[')) {
+      const m = /^\[([^\]]+)\](?::(\d+))?$/.exec(raw);
+      if (!m) { manualAddr = { host: '', port: 0, valid: false, lastCheckAt: Date.now(), lastError: '地址格式无效（host 或 host:port）', checking: false }; return { ok: false, error: 'bad-manual-host' }; }
+      host = m[1];
+      if (m[2]) port = Number(m[2]);
+    } else {
+      const i = raw.lastIndexOf(':');
+      if (i > 0 && /^\d+$/.test(raw.slice(i + 1))) { host = raw.slice(0, i); port = Number(raw.slice(i + 1)); }
+    }
+    if (!host || /[\s/?#]/.test(host) || !Number.isInteger(port) || port < 1 || port > 65535) {
+      manualAddr = { host: '', port: 0, valid: false, lastCheckAt: Date.now(), lastError: '地址格式无效（host 或 host:port）', checking: false };
+      return { ok: false, error: 'bad-manual-host' };
+    }
+    manualAddr = { host, port, valid: false, lastCheckAt: manualAddr.lastCheckAt, lastError: '', checking: true };
+    const r = await probeOwnAddress(host, port);
+    manualAddr = { host, port, valid: r.ok, lastCheckAt: Date.now(), lastError: r.ok ? '' : r.error, checking: false };
+    log(r.ok ? 'INFO' : 'WARN', `[dht] 手动对外地址 ${host}:${port} ${r.ok ? '验证通过，宣告优先使用' : '验证失败，继续自动推断（' + r.error + '）'}`);
+    return r;
+  }
+  const manualAddrTimer = setInterval(() => { if (cfg.dht.advertiseHost) void checkManualAddr(); }, MANUAL_ADDR_CHECK_MS);
+  manualAddrTimer.unref();
   async function dhtStop() {
     const n = dhtNode;
     dhtNode = null;
@@ -1802,7 +1863,11 @@ export async function startServer(options = {}) {
       enabled: cfg.dht.enabled,
       running: !!(node && node.listening),
       udp: node ? node.address : null,
-      advertised: { host: pickAdvertiseHost(), port: boundPort || opt.port },
+      advertised: { host: pickAdvertiseHost(), port: boundPort || opt.port, source: manualAddr.valid ? 'manual' : 'auto' },
+      manual: {
+        host: manualAddr.host, port: manualAddr.port, valid: manualAddr.valid,
+        lastCheckAt: manualAddr.lastCheckAt, lastError: manualAddr.lastError,
+      },
       instanceId: expand.instanceId,
       fingerprint: dhtZhiWen,
       nodeIdHex: node ? node.id.toString('hex') : '',
@@ -1904,6 +1969,30 @@ export async function startServer(options = {}) {
     cur.r++; cur.b += bytes;
     m.set(sec, cur);
     return true;
+  }
+  function inboundSpeedFor(id, at = Date.now()) {
+    const sec = Math.floor(at / 1000);
+    let r = 0, b = 0;
+    const m = inboundRecent.get(id);
+    if (m) for (const [s, v] of m) if (s > sec - 60) { r += v.r; b += v.b; }
+    return { reqPerMin: r, bytesPerMin: b };
+  }
+  /** 被扩网凭据限额（R129）：速度/日/月/总次数与流量，缺省继承全局默认；只核预算不预扣（同 gate）。 */
+  function inboundGate(c, costBytes = 0, at = Date.now()) {
+    if (!c.limits) return { ok: true };
+    const lim = eff(c), s = expand.stats.perInbound[c.id] || (expand.stats.perInbound[c.id] = emptySide());
+    const date = new Date(at);
+    const reject = (error, scope, limit, used) => ({ ok: false, code: 429, error, scope, limit, used });
+    for (const [scope, bucket] of [['daily', s.days[dayKey(date)]], ['monthly', s.months[monthKey(date)]], ['total', s.total]]) {
+      const requests = bucket?.requests || 0, bytes = (bucket?.bytesIn || 0) + (bucket?.bytesOut || 0);
+      const rq = lim[scope + 'Requests'], bq = lim[scope + 'Bytes'];
+      if (rq > 0 && requests + 1 > rq) return reject(scope + '-requests-quota', scope, rq, requests);
+      if (costBytes > 0 && bq > 0 && bytes + costBytes > bq) return reject(scope + '-quota', scope, bq, bytes);
+    }
+    const speed = inboundSpeedFor(c.id, at);
+    if (speed.reqPerMin + 1 > lim.ratePerMin) return reject('rate-limit', 'rate', lim.ratePerMin, speed.reqPerMin);
+    if (costBytes > 0 && speed.bytesPerMin + costBytes > lim.bytesPerMin) return reject('bytes-rate-limit', 'rate', lim.bytesPerMin, speed.bytesPerMin);
+    return { ok: true };
   }
   // 无凭据（未配对）来源按 IP 限速：直接丢弃 + 限速（防滥用 §9.1/§9.2）。
   const unauthRecent = new Map(); // ip → Map(sec → n)
@@ -2192,6 +2281,14 @@ export async function startServer(options = {}) {
       if (!unauthRateOk(ip)) return send(res, 429, { ok: false, error: 'rate-limit', instanceId: expand.instanceId });
       return send(res, 401, { ok: false, error: 'expand-credential-required' });
     }
+    if (cred.expiresAt && now() > cred.expiresAt) {
+      cred.lastAt = now(); cred.lastResult = 'expired'; markExpandDirty();
+      return send(res, 401, { ok: false, error: 'credential-expired', instanceId: expand.instanceId });
+    }
+    if (credPortUnavailable(cred)) {
+      cred.lastAt = now(); cred.lastResult = 'port-unavailable'; markExpandDirty();
+      return send(res, 401, { ok: false, error: 'credential-port-unavailable', instanceId: expand.instanceId, boundPort: boundPort || opt.port });
+    }
     // 暂停 truth table：新投递入口（relay、expand relay）一律 503，不入队。
     if (!cfg.accepting) return send(res, 503, { ok: false, error: 'not-accepting', instanceId: expand.instanceId });
     if (updateFreeze) return send(res, 503, { ok: false, error: 'updating', instanceId: expand.instanceId });
@@ -2201,8 +2298,8 @@ export async function startServer(options = {}) {
     let j;
     try { j = await body(req, cfg.maxEnvelope + 8192); }
     catch { return send(res, 400, { ok: false, error: 'bad-json' }); }
-    // 读慢正文期间凭据可能被停用/删除：复核后才继续。
-    if (cred.disabled || !expand.inbound.includes(cred)) {
+    // 读慢正文期间凭据可能被停用/删除/过期/端口失效：复核后才继续。
+    if (cred.disabled || !expand.inbound.includes(cred) || (cred.expiresAt && now() > cred.expiresAt) || credPortUnavailable(cred)) {
       return send(res, 401, { ok: false, error: 'expand-credential-required' });
     }
     const to = String(j.to || '').slice(0, 200);
@@ -2226,6 +2323,8 @@ export async function startServer(options = {}) {
       return fail(409, routeJ.error);
     }
     if (!inboundRateCheck(cred.id, bytes)) return fail(429, 'rate-limit');
+    const ig = inboundGate(cred, bytes);
+    if (!ig.ok) return fail(429, ig.error);
     const vo = verifyOrigin({ msgId, origin: String(j.origin || ''), originPub: String(j.originPub || ''), originSig: String(j.originSig || ''), to, createdAt, envelope: env });
     if (!vo.ok) return fail(vo.reason === 'loop' ? 409 : 403, vo.reason);
     const note = noteMessage(msgId, String(j.origin || ''));
@@ -2258,6 +2357,14 @@ export async function startServer(options = {}) {
   function handleExpandPing(req, res) {
     const c = expandCred(req);
     if (!c) return send(res, 401, { ok: false, error: 'expand-credential-required' });
+    if (c.expiresAt && now() > c.expiresAt) {
+      c.lastAt = now(); c.lastResult = 'expired'; markExpandDirty();
+      return send(res, 401, { ok: false, error: 'credential-expired' });
+    }
+    if (credPortUnavailable(c)) {
+      c.lastAt = now(); c.lastResult = 'port-unavailable'; markExpandDirty();
+      return send(res, 401, { ok: false, error: 'credential-port-unavailable', boundPort: boundPort || opt.port });
+    }
     return send(res, 200, {
       ok: true, instanceId: expand.instanceId, product: PRODUCT, version: VERSION,
       port: boundPort || opt.port, tls: tlsPublicView(), msgPolicy: { replayMaxPasses: REPLAY_MAX_PASSES, windowMs: MESSAGE_WINDOW_MS },
@@ -2966,9 +3073,9 @@ export async function startServer(options = {}) {
     if (req.method === 'GET' && p === '/api/admin/expand') return send(res, 200, expandView());
     if (req.method === 'POST' && p === '/api/admin/expand-inbound') {
       const j = await body(req);
-      const { token, item } = generateInboundToken(j.name);
-      log('INFO', `被扩网：已生成新的接入凭据 #${expand.inbound.length}（只显示一次）`);
-      return send(res, 200, { ok: true, token, item: { id: item.id, name: item.name, prefix: item.prefix }, inbound: expandView().inbound });
+      const { token, item } = generateInboundToken(j.name, j.port);
+      log('INFO', `被扩网：已生成新的接入凭据 #${expand.inbound.length}（端口 ${item.addr.split(':').pop()}，只显示一次）`);
+      return send(res, 200, { ok: true, token, item: { id: item.id, name: item.name, masked: item.masked }, inbound: expandView().inbound });
     }
     if (req.method === 'POST' && p === '/api/admin/expand-inbound-update') {
       const j = await body(req);
@@ -2983,8 +3090,19 @@ export async function startServer(options = {}) {
         if (typeof j.disabled !== 'boolean') return send(res, 400, { ok: false, error: 'bad-disabled' });
         item.disabled = j.disabled;
       }
+      if (j.limits !== undefined) {
+        let lim;
+        try { lim = parseLimits(j.limits, item.limits || {}); }
+        catch (e) { return send(res, 400, { ok: false, error: String(e.message || 'bad-limits') }); }
+        item.limits = lim;
+      }
+      if (j.expiresAt !== undefined) {
+        const exp = Number(j.expiresAt);
+        if (!Number.isInteger(exp) || exp < 0) return send(res, 400, { ok: false, error: 'bad-expires-at' });
+        item.expiresAt = exp;
+      }
       if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' });
-      log('INFO', `被扩网：凭据 ${item.id.slice(0, 8)} ${item.disabled ? '停用' : '启用'}`);
+      log('INFO', `被扩网：凭据 ${item.id.slice(0, 8)} 已更新（名称/停用/限额/有效期）`);
       return send(res, 200, { ok: true, item: expandView().inbound.credentials.find((x) => x.id === item.id) });
     }
     if (req.method === 'POST' && p === '/api/admin/expand-inbound-remove') {
@@ -3001,28 +3119,21 @@ export async function startServer(options = {}) {
       const j = await body(req);
       const credential = String(j.credential || '').trim();
       if (!credential) return send(res, 400, { ok: false, error: 'credential-required' });
-      // 地址：显式填写优先；否则从凭证 v2 自带地址解析（旧格式凭证无地址，必须手填）。
+      // R129：扩网不再显示/填写地址、不再兼容旧版——地址只能来自新版凭证（fwnexp_v2_ 自带 host:port）。
       const tok = parseExpandToken(credential);
-      let addr = null;
-      let addrFrom = 'manual';
-      const addrRaw = String(j.address || '').trim();
-      if (addrRaw) {
-        try { addr = parseExpandAddress(addrRaw); }
-        catch (e) { return send(res, 400, { ok: false, error: String(e.message || 'bad-address') }); }
-      } else if (tok) { addr = tok; addrFrom = 'credential'; }
-      else return send(res, 400, { ok: false, error: 'address-required', hint: '该凭据不含地址；请填写对方地址，或让对方重新生成新版（含地址）凭证' });
+      if (!tok) return send(res, 400, { ok: false, error: 'legacy-token-not-supported', hint: '该凭据不是新版（fwnexp_v2_ 开头、自带地址）；请让对方重新生成' });
       const ts = tlsFromInput(j.tls, null);
       if (!ts.ok) return send(res, 400, { ok: false, error: ts.error });
-      const name = String(j.name || '').trim().slice(0, 40) || (addr.host + ':' + addr.port);
+      const name = String(j.name || '').trim().slice(0, 40) || (tok.host + ':' + tok.port);
       const item = {
-        id: crypto.randomUUID(), name, host: addr.host, port: addr.port,
-        credential: '', hint: '', tls: ts.tls, addrFrom,
+        id: crypto.randomUUID(), name, host: tok.host, port: tok.port,
+        credential: '', hint: '', tls: ts.tls, addrFrom: 'credential',
         enabled: true, createdAt: Date.now(), lastTest: 0, lastTestOk: false,
       };
       setPeerCredential(item, credential);
       expand.outbound.push(item);
       if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' });
-      log('INFO', `扩网：添加 ${name} → ${addr.host}:${addr.port}（TLS ${ts.tls.mode}${addrFrom === 'credential' ? '，地址来自凭证' : ''}）`);
+      log('INFO', `扩网：添加 ${name} → ${tok.host}:${tok.port}（TLS ${ts.tls.mode}，地址来自凭证）`);
       return send(res, 200, { ok: true, item: expandView().outbound.find((x) => x.id === item.id) });
     }
     if (req.method === 'POST' && p === '/api/admin/expand-update') {
@@ -3034,24 +3145,13 @@ export async function startServer(options = {}) {
         if (!name) return send(res, 400, { ok: false, error: 'bad-name' });
         item.name = name;
       }
-      if (j.address !== undefined) {
-        const addrRaw = String(j.address || '').trim();
-        if (addrRaw) {
-          let addr;
-          try { addr = parseExpandAddress(j.address); }
-          catch (e) { return send(res, 400, { ok: false, error: String(e.message || 'bad-address') }); }
-          item.host = addr.host; item.port = addr.port; item.addrFrom = 'manual';
-        }
-        // address 显式为空白 = 不清除地址（仅凭据可带地址，见下）
-      }
       if (j.credential !== undefined) {
         const credential = String(j.credential || '').trim();
         if (!credential) return send(res, 400, { ok: false, error: 'credential-required' });
-        setPeerCredential(item, credential);
         const tok = parseExpandToken(credential);
-        if (tok && !(j.address !== undefined && String(j.address || '').trim())) {
-          item.host = tok.host; item.port = tok.port; item.addrFrom = 'credential';
-        }
+        if (!tok) return send(res, 400, { ok: false, error: 'legacy-token-not-supported', hint: '请让对方重新生成新版（自带地址）凭证' });
+        setPeerCredential(item, credential);
+        item.host = tok.host; item.port = tok.port; item.addrFrom = 'credential';
       }
       if (j.tls !== undefined) {
         const ts = tlsFromInput(j.tls, item.tls);
@@ -3147,6 +3247,7 @@ export async function startServer(options = {}) {
     if (req.method === 'GET' && p === '/api/admin/dht') return send(res, 200, dhtPublicView());
     if (req.method === 'POST' && p === '/api/admin/dht-config') {
       const j = await body(req);
+      if (j.enabled === false) return send(res, 400, { ok: false, error: 'dht-always-on', hint: 'DHT 发现层强制开启，不可关闭' });
       const next = normDhtCfg({ ...cfg.dht, ...j });
       if (j.anchors !== undefined) {
         const list = Array.isArray(j.anchors) ? j.anchors : String(j.anchors || '').split(/[\r\n,]+/);
@@ -3155,9 +3256,10 @@ export async function startServer(options = {}) {
       const prev = cfg.dht;
       cfg.dht = next;
       if (!saveCfg()) { cfg.dht = prev; return send(res, 500, { ok: false, error: 'persist-failed' }); }
-      log('INFO', `DHT 配置已保存 enabled=${next.enabled} port=${next.port} anchors=${next.anchors.length} routeByDht=${next.routeByDht}`);
-      const r = next.enabled ? await dhtStart() : await dhtStop();
-      return send(res, 200, { ok: true, restart: next.enabled ? (r.ok ? 'started' : r.error || 'failed') : 'stopped', dht: dhtPublicView() });
+      log('INFO', `DHT 配置已保存 port=${next.port} anchors=${next.anchors.length} routeByDht=${next.routeByDht}`);
+      const r = await dhtStart();
+      if (j.advertiseHost !== undefined) void checkManualAddr();
+      return send(res, 200, { ok: true, restart: r.ok ? 'started' : r.error || 'failed', dht: dhtPublicView() });
     }
     if (req.method === 'POST' && p === '/api/admin/dht-publish') {
       const r = await dhtPublishSelf();
@@ -3681,11 +3783,12 @@ export async function startServer(options = {}) {
     }, 15_000).unref();
   }
   scheduleUpdateCheck(60_000);
-  if (cfg.dht.enabled) {
-    void dhtStart().then((r) => { if (!r.ok && r.error !== 'disabled') log('WARN', '[dht] 启动失败：' + (r.error || '')); });
-  } else {
-    log('INFO', '[dht] 已按配置关闭（cfg.dht.enabled=false）');
-  }
+  // 先验证手动对外地址再启动节点：首次发布的记录就用最终宣告地址（避免先用自动地址发布后被手动覆盖）。
+  void (async () => {
+    if (cfg.dht.advertiseHost) await checkManualAddr();
+    const r = await dhtStart();
+    if (!r.ok) log('WARN', '[dht] 启动失败：' + (r.error || ''));
+  })();
 
   function openBrowser(url) {
     try {

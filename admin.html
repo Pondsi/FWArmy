@@ -94,7 +94,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
 </div>
 
 <div class="tabs" id="tabs">
-  <button class="tab active" data-tab="overview">总览</button>
+  <button class="tab active" data-tab="overview">中继</button>
   <button class="tab" data-tab="expand">扩网</button>
   <button class="tab" data-tab="dht">DHT 组网</button>
   <button class="tab" data-tab="logs">日志</button>
@@ -186,8 +186,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <h2>扩网 · 我连接别人 <small>本机送不到的消息，按顺序转发给这些 FWArmy</small></h2>
     <div class="grid">
       <label class="f">名称（可选）<input id="exName" maxlength="40" placeholder="例如：家里的 FWArmy"></label>
-      <label class="f">地址（可选）<input id="exAddr" placeholder="新版凭证自带地址，可留空；填写则覆盖凭证地址"></label>
-      <label class="f">对方的被扩网凭据<input id="exCred" type="password" autocomplete="off" placeholder="对方「被扩网」页生成（新版含地址）"></label>
+      <label class="f">对方的被扩网凭据<input id="exCred" type="password" autocomplete="off" placeholder="对方「被扩网」页生成（自带地址和端口）"></label>
       <label class="f">传输安全
         <select id="exTls">
           <option value="pin">TLS 自签 + 指纹固定（推荐）</option>
@@ -201,7 +200,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
       <button class="primary" id="exAdd">添加</button>
       <span class="muted" id="exMsg"></span>
     </div>
-    <div class="hint">新版「被扩网」凭证<b>已包含本站地址</b>：对方只需填「名称 + 凭证」即可连接，不用再填域名/端口。旧版凭据不含地址，仍需手填：不填端口就是默认 59599；在域名或 IP 后面加 <code>:端口</code> 可以指定（例如 <code>1.2.3.4:60000</code>）。
+    <div class="hint">「被扩网」凭证<b>已包含本站地址和端口</b>：对方只需填「名称 + 凭证」即可连接，不用再填域名/端口，也不再支持旧版（不含地址）凭证。
       TLS 默认「自签 + 指纹固定」：添加后先点「识别指纹」，核对对方屏幕上/管理页里的指纹一致，再点「信任」。**未信任前不会发送凭据**。对方用正式证书时选「用户证书」，按系统 CA 校验域名。</div>
     <div class="cards" id="exOutCards"></div>
     <div class="tablewrap"><table id="exOutTable"></table></div>
@@ -213,13 +212,15 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <h2>被扩网 · 别人连接我 <small>生成凭据，让别的 FWArmy 把送不到的消息转给我</small></h2>
     <div class="toolbar">
       <input id="exInName" maxlength="40" placeholder="凭据名称（可选）" style="max-width:220px">
+      <input id="exInPort" type="number" min="1" max="65535" step="1" placeholder="对外端口（默认 8787）" style="max-width:180px" title="对方连接这个端口；不填默认 8787。本站实际端口见下方提示">
       <button class="primary" id="exGen">生成接入凭据</button>
       <span class="muted" id="exInState">加载中…</span>
     </div>
     <div id="exInTokenBox" class="tokenbox" hidden>
       <code id="exInToken"></code>
       <button class="sm" id="exInCopy">复制</button>
-      <span class="hint" style="margin:0">只显示这一次；<b>已包含本站地址</b>，对方只需填「名称 + 凭证」。每个实例可有多条，可单独停用/删除。</span>
+      <span class="hint" style="margin:0">只显示这一次；<b>已包含本站地址和你填的端口</b>（不填 = 8787），对方只需填「名称 + 凭证」。每个实例可有多条，可单独管理/停用/删除。</span>
+      <div id="exInPortWarn" class="hint" style="margin:0;color:var(--danger,#c0392b)" hidden></div>
     </div>
     <div class="hint" id="exAddrHint">加载中…</div>
     <div class="tablewrap" style="margin-bottom:10px"><table id="exInCredTable"></table></div>
@@ -252,8 +253,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <div class="cards" id="dhtCards"></div>
     <div class="grid">
       <label class="f">UDP 端口（0 = 自动：7800 起递增）<input id="dhtPort" type="number" min="0" max="65535" step="1"></label>
-      <label class="f">对外宣告地址（留空自动推断：STUN &gt; NAT-PMP &gt; 本机 IPv4）<input id="dhtAdv" placeholder="relay.example.com 或公网 IP"></label>
-      <label class="f" style="flex-direction:row;align-items:center;gap:6px"><input id="dhtEnabled" type="checkbox"> 启用 DHT 节点（默认开）</label>
+      <label class="f">对外地址（手动候选；验证通过才优先使用，失效自动回退自动推断）<input id="dhtAdv" placeholder="relay.example.com 或公网 IP，可带 :端口（默认 8787）"></label>
       <label class="f">锚点（每行一个 host 或 host:port，支持 [IPv6]）<textarea id="dhtAnchors" rows="4" placeholder="anchor1.example.com:7800"></textarea></label>
     </div>
     <div class="toolbar" style="margin-top:12px">
@@ -268,7 +268,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
   <div class="panel">
     <h2>DHT 对端（contacts） <small>路由表里最近的节点</small></h2>
     <div class="tablewrap"><table id="dhtTable"></table></div>
-    <div class="hint">客户端注册到本机时，本机会把「该客户端当前所在中继站 = 本站」签名发布到 DHT；其它中继站投递失败时据此定位目标所在站，且只转发给已配置互信（凭据 + 指纹固定）的对端。定位记录随客户端在线每 10 分钟保鲜，离线约 30 分钟后自然过期。锚点域名待定：默认空列表时本机仍监听 UDP 并保存记录，配置锚点后即可引导入网。</div>
+    <div class="hint">客户端注册到本机时，本机会把「该客户端当前所在中继站 = 本站」签名发布到 DHT；其它中继站投递失败时据此定位目标所在站，且只转发给已配置互信（凭据 + 指纹固定）的对端。定位记录随客户端在线每 10 分钟保鲜，离线约 30 分钟后自然过期。DHT 强制开启：默认空锚点列表时本机仍监听 UDP 并保存记录，配置锚点后即可引导入网。</div>
   </div>
 </section>
 
@@ -356,6 +356,28 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
   </div>
 </div>
 
+<!-- 被扩网凭据管理（改名/流量/速度/有效期） -->
+<div class="modal" id="inCredModal">
+  <div class="box">
+    <h3 id="inCredModalTitle">管理接入凭据</h3>
+    <p>留空 = 继承全局默认；填 0 = 不限制。名称最多 40 字；有效期 0 天 = 永久。</p>
+    <div class="grid">
+      <label class="f">名称<input id="inFName" maxlength="40" placeholder="例如：客厅的电脑"></label>
+      <label class="f">请求速度（次/分钟）<input id="inFRate" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f">流量速度（MB/分钟）<input id="inFByteRate" type="number" min="0" step="0.1" placeholder="继承全局"></label>
+      <label class="f">每日次数上限（次）<input id="inFDailyReq" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f">每日流量上限（MB）<input id="inFDaily" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f">每月次数上限（次）<input id="inFMonthlyReq" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f">每月流量上限（MB）<input id="inFMonthly" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f">总次数上限（次）<input id="inFTotalReq" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f">总流量上限（MB）<input id="inFTotal" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f">每年流量上限（MB）<input id="inFYearly" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f">有效期（天，0 = 永久）<input id="inFDays" type="number" min="0" max="36500" step="1" placeholder="0"></label>
+    </div>
+    <div class="row"><button class="ghost" data-close="inCredModal">取消</button><button class="primary" id="saveInCred">保存</button></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -426,18 +448,15 @@ function switchTab(name) {
 function usageCell(b) {
   return `<div class="cell-main">${num(b.requests)} 次</div><div class="cell-sub">${fmtBytes(b.bytes)}</div>`;
 }
-function limTag(v, text) {
-  return v === null || v === undefined ? `<span class="tag inherit">继承 ${text}</span>` : esc(text);
-}
 function limText(c) {
-  const e = c.effective, l = c.limits;
-  const rl = l.ratePerMin === null ? `<span class="tag inherit">继承</span>` : (e.ratePerMin ? `${num(e.ratePerMin)}/分` : '不限');
-  const bl = l.bytesPerMin === null ? `<span class="tag inherit">继承</span>` : (e.bytesPerMin ? `${fmtBytes(e.bytesPerMin)}/分` : '不限');
-  const dl = l.dailyBytes === null ? `<span class="tag inherit">继承</span>` : (e.dailyBytes ? fmtBytes(e.dailyBytes) : '不限');
-  const ml = l.monthlyBytes === null ? `<span class="tag inherit">继承</span>` : (e.monthlyBytes ? fmtBytes(e.monthlyBytes) : '不限');
-  const yl = l.yearlyBytes === null ? `<span class="tag inherit">继承</span>` : (e.yearlyBytes ? fmtBytes(e.yearlyBytes) : '不限');
-  const req = (k) => l[k + 'Requests'] === null ? `<span class="tag inherit">继承</span>` : (e[k + 'Requests'] ? num(e[k + 'Requests']) + '次' : '不限');
-  const dt = l.totalBytes === null ? `<span class="tag inherit">继承</span>` : (e.totalBytes ? fmtBytes(e.totalBytes) : '不限');
+  const e = c.effective;
+  const rl = e.ratePerMin ? `${num(e.ratePerMin)}/分` : '不限';
+  const bl = e.bytesPerMin ? `${fmtBytes(e.bytesPerMin)}/分` : '不限';
+  const dl = e.dailyBytes ? fmtBytes(e.dailyBytes) : '不限';
+  const ml = e.monthlyBytes ? fmtBytes(e.monthlyBytes) : '不限';
+  const yl = e.yearlyBytes ? fmtBytes(e.yearlyBytes) : '不限';
+  const req = (k) => (e[k + 'Requests'] ? num(e[k + 'Requests']) + '次' : '不限');
+  const dt = e.totalBytes ? fmtBytes(e.totalBytes) : '不限';
   return `<div class="cell-sub">速度 ${rl} · ${bl}</div><div class="cell-sub">日 ${req('daily')} / ${dl} · 月 ${req('monthly')} / ${ml}</div><div class="cell-sub">总 ${req('total')} / ${dt} · 年 ${yl}</div>`;
 }
 function render() {
@@ -668,12 +687,12 @@ function renderExpand() {
   $('#exOutCards').innerHTML = exCards(E.stats.outbound);
   $('#exOutTotals').innerHTML = exTotalsTable(E.stats.outbound);
   $('#exOutTable').innerHTML =
-    `<tr><th>名称</th><th>地址</th><th>传输</th><th>状态</th><th>今日</th><th>本月</th><th>累计</th><th class="num">成功/失败</th><th>最近结果</th><th>最近测试</th><th>操作</th></tr>` +
+    `<tr><th>名称</th><th>传输</th><th>状态</th><th>今日</th><th>本月</th><th>累计</th><th class="num">成功/失败</th><th>最近结果</th><th>最近测试</th><th>操作</th></tr>` +
     (E.outbound.map((p) => {
       const st = p.stats;
       const ok = st.total.delivered || 0;
       const fail = (st.total.rejected || 0) + (st.total.offline || 0);
-      return `<tr><td>${esc(p.name)}</td><td><code>${esc(p.host)}:${p.port}</code><div class="cell-sub">${p.addrFrom === 'credential' ? '<span class="tag on">地址来自凭证</span>' : esc(p.credentialMasked)}</div></td>` +
+      return `<tr><td>${esc(p.name)}<div class="cell-sub"><span class="tag on">地址来自凭证</span></div></td>` +
         `<td>${tlsTag(p)}<div class="cell-sub">${p.tls && p.tls.fingerprint ? esc(p.tls.fingerprint.slice(0, 16)) + '…' : '—'}</div></td>` +
         `<td>${p.enabled ? '<span class="tag on">启用</span>' : '<span class="tag off">停用</span>'}</td>` +
         `<td>${exPeerUsage(st)}</td><td>${num(st.month.requests)} 次<div class="cell-sub">${fmtBytes(st.month.bytes)}</div></td><td>${num(st.total.requests)} 次<div class="cell-sub">${fmtBytes(st.total.bytes)}</div></td>` +
@@ -684,22 +703,36 @@ function renderExpand() {
         (p.tls && p.tls.mode === 'pin' && !p.trusted ? `<button class="sm good" data-ex-act="trust" data-id="${esc(p.id)}">信任</button>` : '') +
         `<button class="sm" data-ex-act="toggle" data-id="${esc(p.id)}">${p.enabled ? '停用' : '启用'}</button>` +
         `<button class="sm danger" data-ex-act="remove" data-id="${esc(p.id)}">移除</button></div></td></tr>`;
-    }).join('') || `<tr><td colspan="11" class="empty">还没有扩网地址。把对方的地址与「被扩网凭据」加进来。</td></tr>`);
+    }).join('') || `<tr><td colspan="10" class="empty">还没有扩网地址。把对方的「被扩网凭据」加进来（凭证自带地址）。</td></tr>`);
 
   const inb = E.inbound;
   $('#exInCards').innerHTML = exCards(E.stats.inbound);
   $('#exInTotals').innerHTML = exTotalsTable(E.stats.inbound);
   const creds = inb.credentials || [];
+  const expText = (c) => {
+    const exp = c.expiresAt || 0;
+    if (!exp) return '<span class="muted">永久</span>';
+    const left = exp - Date.now();
+    return left <= 0 ? '<span class="tag off">已过期</span>' : `<span class="tag on">剩 ${Math.ceil(left / 86400000)} 天</span>`;
+  };
+  const portCell = (c) => {
+    const p = c.port || 0;
+    return c.portOk
+      ? `<code>${p}</code> <span class="tag on">端口可用</span>`
+      : `<code>${p}</code> <span class="tag off" title="本机实际监听 ${E.port}；该端口被占用或未监听，此凭据被强制禁止，对方无法连接">端口不可用（实际 ${E.port}）</span>`;
+  };
   $('#exInCredTable').innerHTML =
-    `<tr><th>名称</th><th>前缀</th><th>地址</th><th>状态</th><th class="num">请求</th><th>最近使用</th><th>最近结果</th><th>操作</th></tr>` +
-    (creds.map((c) => `<tr><td>${esc(c.name)}</td><td><code>${esc(c.prefix)}</code></td>` +
-      `<td><code>${esc(c.addr || '—')}</code></td>` +
+    `<tr><th>名称</th><th>标识（中间+末尾）</th><th>端口</th><th>状态</th><th>有效期</th><th class="num">请求</th><th>最近使用</th><th>最近结果</th><th>操作</th></tr>` +
+    (creds.map((c) => `<tr><td>${esc(c.name)}</td><td><code>${esc(c.masked || '—')}</code></td>` +
+      `<td>${portCell(c)}</td>` +
       `<td>${c.disabled ? '<span class="tag off">已停用</span>' : '<span class="tag on">有效</span>'}</td>` +
+      `<td>${expText(c)}</td>` +
       `<td class="num">${num(c.stats && c.stats.total ? c.stats.total.requests : 0)}</td>` +
       `<td class="muted">${c.lastAt ? fmtTime(c.lastAt) : '—'}</td><td class="muted">${esc(c.lastResult || '—')}</td>` +
-      `<td><div class="toolbar" style="margin:0"><button class="sm" data-in-act="toggle" data-id="${esc(c.id)}">${c.disabled ? '启用' : '停用'}</button>` +
+      `<td><div class="toolbar" style="margin:0"><button class="sm" data-in-act="manage" data-id="${esc(c.id)}">管理</button>` +
+      `<button class="sm" data-in-act="toggle" data-id="${esc(c.id)}">${c.disabled ? '启用' : '停用'}</button>` +
       `<button class="sm danger" data-in-act="remove" data-id="${esc(c.id)}" data-name="${esc(c.name)}">删除</button></div></td></tr>`).join('')
-      || `<tr><td colspan="8" class="empty">还没有接入凭据。点「生成接入凭据」。</td></tr>`);
+      || `<tr><td colspan="9" class="empty">还没有接入凭据。点「生成接入凭据」。</td></tr>`);
   const src = Object.entries(inb.sources || {}).sort((a, b) => (b[1].lastAt || 0) - (a[1].lastAt || 0));
   $('#exInTable').innerHTML =
     `<tr><th>来源</th><th class="num">请求</th><th class="num">流量</th><th class="num">成功</th><th class="num">失败</th><th>最近结果</th><th>最近时间</th></tr>` +
@@ -710,9 +743,8 @@ function renderExpand() {
   $('#exInState').textContent = inb.configured
     ? `已配置 ${num(inb.count || creds.length)} 条 · 有效 ${num(creds.filter((c) => !c.disabled).length)} 条`
     : '尚未生成（别人无法连接）';
-  $('#exAddrHint').textContent = Number(E.port) === 59599
-    ? '新版凭证已包含本站地址（域名或公网 IP，端口默认 59599 已带上），对方只需填「名称 + 凭证」。手动填写地址仍支持：不写端口默认 59599；传输请选 TLS 并核对指纹。'
-    : `新版凭证已包含本站地址（域名或公网 IP:${E.port}），对方只需填「名称 + 凭证」。手动填写地址仍支持：不写端口默认 59599，若本站端口不是 59599 请明确带上 :${E.port}；传输请选 TLS 并核对指纹。`;
+  $('#exAddrHint').textContent =
+    `凭据里的地址 = 本站对外域名/IP（自动推断，见 DHT 页；手动地址验证通过后优先）＋ 你选择的端口（不填默认 8787）。凭据端口必须等于本机实际监听端口（当前实际 ${E.port}）才可用——若 ${E.port === 8787 ? '8787 被占用导致启动顺延' : '本机监听 ' + E.port + '（8787 被占顺延到此）'}，旧凭据会显示「端口不可用」并被强制禁止，请解决占用后重启，或用实际端口重新生成。`;
   renderReach();
 }
 function renderReach() {
@@ -739,10 +771,16 @@ function renderReach() {
 function renderDht() {
   if (!D) return;
   const d = D;
-  const st = d.running ? '运行中' : (d.enabled ? '启动失败' : '已关闭');
+  const st = d.running ? '运行中' : '启动失败';
   const lastPub = d.lastPublishAt ? fmtTime(d.lastPublishAt) : '—';
+  const adv = d.advertised || {};
+  const man = d.manual || {};
+  const advSrc = adv.source === 'manual'
+    ? `${esc(adv.host)}（手动地址 · 验证有效）`
+    : `${esc(adv.host)}（自动推断${man.host ? `；手动 ${esc(man.host)} 验证${man.valid ? '通过' : '失败'}，未启用` : ''}）`;
   $('#dhtCards').innerHTML = [
-    ['节点', st, d.enabled ? 'enabled（默认开）' : 'disabled'],
+    ['节点', st, 'DHT 发现层强制开启，不可关闭'],
+    ['对外地址', advSrc, adv.source === 'manual' ? `手动验证 ${man.lastCheckAt ? fmtTime(man.lastCheckAt) : '尚未验证'}${man.lastError ? ' · ' + esc(man.lastError) : ''}` : '自动推断：STUN > NAT-PMP > 本机 IPv4；每 5 分钟复查手动地址'],
     ['指纹', d.fingerprint ? d.fingerprint.slice(0, 20) + '…' : '—', 'base32(sha256(公钥))，52 位'],
     ['节点 ID', d.nodeIdHex ? d.nodeIdHex.slice(0, 20) + '…' : '—', '由指纹派生（sha256）'],
     ['UDP 监听', d.udp ? `${d.udp.host}:${d.udp.port}` : '—', `配置 ${d.config.port || '自动（7800 起）'}`],
@@ -751,7 +789,6 @@ function renderDht() {
     ['引导', d.lastYindao ? (d.lastYindao.detail || `成功 ${d.lastYindao.ok} / 失败 ${d.lastYindao.failed}`) : '尚未引导', d.lastYindao ? fmtTime(d.lastYindao.at) : ''],
     ['发布次数', String(d.selfPublishes || 0), '本站记录 + 客户端定位记录'],
   ].map(([k, v, s]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join('');
-  $('#dhtEnabled').checked = d.enabled;
   $('#dhtPort').value = d.config.port;
   $('#dhtAdv').value = d.config.advertiseHost || '';
   $('#dhtAnchors').value = (d.anchors || []).map((a) => `${a.host}:${a.port}`).join('\n');
@@ -761,7 +798,7 @@ function renderDht() {
       || `<tr><td colspan="4" class="empty">还没有对端。配置锚点后本机会引导入网；无锚点时只监听、等待被引导。</td></tr>`);
   $('#dhtHint').textContent = d.lastError
     ? '最近错误：' + d.lastError
-    : '锚点域名待定：默认空列表，本机仍监听 UDP 并保存记录；配置锚点（每行一个）后立即引导入网，全部失败会指数退避重试。';
+    : 'DHT 强制开启：使用 FWArmy 就必须进网。默认空锚点列表时本机仍监听 UDP 并保存记录；配置锚点（每行一个）后立即引导入网，全部失败会指数退避重试。手动对外地址只有验证通过（能从该地址连回本实例）才优先用于宣告，每 5 分钟复查，失效自动回退自动推断。';
   $('#dhtMsg').textContent = '';
 }
 async function loadDht() {
@@ -773,14 +810,13 @@ async function saveDht() {
     const port = Number($('#dhtPort').value) || 0;
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('端口必须是 0–65535 的整数');
     const j = await api('/api/admin/dht-config', {
-      enabled: $('#dhtEnabled').checked,
       port,
       advertiseHost: $('#dhtAdv').value.trim(),
       anchors: $('#dhtAnchors').value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean),
     });
     D = j.dht;
     renderDht();
-    toast(j.restart === 'started' ? 'DHT 配置已保存并生效' : 'DHT 配置已保存（节点已停止）');
+    toast(j.restart === 'started' ? 'DHT 配置已保存并生效' : 'DHT 配置已保存');
   } catch (e) { toast(e.message, true); }
 }
 async function dhtPublishNow() {
@@ -829,14 +865,82 @@ async function addExpandPeer() {
 }
 async function genInbound() {
   try {
-    const r = await api('/api/admin/expand-inbound', { name: $('#exInName').value.trim() });
-    $('#exInName').value = '';
+    const portRaw = $('#exInPort').value.trim();
+    let port = null;
+    if (portRaw !== '') {
+      port = Number(portRaw);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('端口必须是 1–65535 的整数（不填默认 8787）');
+    }
+    const chosen = port || 8787;
+    const r = await api('/api/admin/expand-inbound', { name: $('#exInName').value.trim(), ...(port ? { port } : {}) });
+    $('#exInName').value = ''; $('#exInPort').value = '';
     $('#exInToken').textContent = r.token || '';
     $('#exInTokenBox').hidden = false;
+    const warn = $('#exInPortWarn');
+    if (chosen !== (E && E.port)) {
+      warn.hidden = false;
+      warn.textContent = `⚠ 端口 ${chosen} 未被本机监听（本机实际监听 ${E ? E.port : '?'}，可能被占用后自动顺延）。对方连 ${chosen} 连不到本机——此凭据已被强制禁止，无法使用。请解决 ${chosen} 端口占用后重启，或在端口框填 ${E ? E.port : '?'} 重新生成。`;
+    } else {
+      warn.hidden = true;
+    }
     toast('已生成；请立即复制给对方');
     await loadExpand();
   } catch (e) { toast(e.message, true); }
 }
+
+let editingIn = null;
+function openInCred(c) {
+  editingIn = c;
+  $('#inCredModalTitle').textContent = '管理接入凭据';
+  $('#inFName').value = c.name;
+  const l = c.limits || {};
+  const f = (v) => (v === null || v === undefined ? '' : v);
+  $('#inFRate').value = f(l.ratePerMin);
+  $('#inFByteRate').value = l.bytesPerMin === null || l.bytesPerMin === undefined ? '' : mb(l.bytesPerMin);
+  $('#inFDailyReq').value = f(l.dailyRequests);
+  $('#inFDaily').value = l.dailyBytes === null || l.dailyBytes === undefined ? '' : mb(l.dailyBytes);
+  $('#inFMonthlyReq').value = f(l.monthlyRequests);
+  $('#inFMonthly').value = l.monthlyBytes === null || l.monthlyBytes === undefined ? '' : mb(l.monthlyBytes);
+  $('#inFTotalReq').value = f(l.totalRequests);
+  $('#inFTotal').value = l.totalBytes === null || l.totalBytes === undefined ? '' : mb(l.totalBytes);
+  $('#inFYearly').value = l.yearlyBytes === null || l.yearlyBytes === undefined ? '' : mb(l.yearlyBytes);
+  const exp = c.expiresAt || 0;
+  $('#inFDays').value = exp ? Math.max(0, Math.ceil((exp - Date.now()) / 86400000)) : 0;
+  $('#inCredModal').classList.add('open');
+  setTimeout(() => $('#inFName').focus(), 30);
+}
+async function saveInCred() {
+  try {
+    const name = $('#inFName').value.trim();
+    if (!name) throw new Error('请填写名称');
+    const limits = readLimits2('inF');
+    const days = Number($('#inFDays').value);
+    if (!Number.isInteger(days) || days < 0 || days > 36500) throw new Error('有效期必须是 0–36500 的整数天');
+    const expiresAt = days === 0 ? 0 : Date.now() + days * 86400000;
+    await api('/api/admin/expand-inbound-update', { id: editingIn.id, name, limits, expiresAt });
+    toast('已保存');
+    $('#inCredModal').classList.remove('open');
+    await loadExpand();
+  } catch (e) { toast(e.message, true); }
+}
+function readLimits2(prefix) {
+  const g = (id) => $(`#${id}`).value.trim();
+  const num0 = (s, what) => { if (s === '') return null; const n = Number(s); if (!Number.isFinite(n) || n < 0) throw new Error(what + '必须是 ≥0 的数字'); return Math.round(n); };
+  const mb0 = (s, what) => { if (s === '') return null; const n = Number(s); if (!Number.isFinite(n) || n < 0) throw new Error(what + '必须是 ≥0 的数字'); return n === 0 ? 0 : Math.round(n * 1048576); };
+  return {
+    ratePerMin: num0(g(prefix + 'Rate'), '请求速度'),
+    bytesPerMin: mb0(g(prefix + 'ByteRate'), '流量速度'),
+    dailyRequests: num0(g(prefix + 'DailyReq'), '每日次数'),
+    dailyBytes: mb0(g(prefix + 'Daily'), '每日流量'),
+    monthlyRequests: num0(g(prefix + 'MonthlyReq'), '每月次数'),
+    monthlyBytes: mb0(g(prefix + 'Monthly'), '每月流量'),
+    totalRequests: num0(g(prefix + 'TotalReq'), '总次数'),
+    totalBytes: mb0(g(prefix + 'Total'), '总流量'),
+    yearlyBytes: mb0(g(prefix + 'Yearly'), '每年流量'),
+  };
+}
+$('#saveInCred').addEventListener('click', saveInCred);
+$('#inCredModal').addEventListener('click', (ev) => { if (ev.target === $('#inCredModal')) $('#inCredModal').classList.remove('open'); });
 
 function openCredModal(c) {
   editing = c || null;
@@ -1005,7 +1109,9 @@ $('#exInCredTable').addEventListener('click', async (ev) => {
   const c = (E.inbound.credentials || []).find((x) => x.id === id);
   if (!c) return;
   try {
-    if (b.dataset.inAct === 'toggle') {
+    if (b.dataset.inAct === 'manage') {
+      openInCred(c);
+    } else if (b.dataset.inAct === 'toggle') {
       await api('/api/admin/expand-inbound-update', { id, disabled: !c.disabled });
       toast(c.disabled ? '已启用' : '已停用');
     } else if (b.dataset.inAct === 'remove') {
@@ -1013,7 +1119,7 @@ $('#exInCredTable').addEventListener('click', async (ev) => {
       await api('/api/admin/expand-inbound-remove', { id });
       toast('已删除');
     }
-    await loadExpand();
+    if (b.dataset.inAct !== 'manage') await loadExpand();
   } catch (e) { toast(e.message, true); }
 });
 $('#secGc').addEventListener('click', async () => {
