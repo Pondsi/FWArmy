@@ -107,9 +107,17 @@ stats | ip | update | version               usage stats, public IP probe, update
   rate-limited by source IP. The advertised address is auto-inferred (STUN > NAT-PMP > local IPv6 >
   local IPv4; IPv6 preferred); an optional manual host/domain is used only while it verifies as this
   instance (checked every 5 min), falling back to auto inference when it fails.
-  The default anchor is **`DHT.pondsi.com`** (UDP 7800, aligned with WArmy); additional anchors can be
-  added/removed on the admin page — anchors need no credential (anonymous discovery; security comes
-  from node Ed25519 signatures, group-key encryption and inbound rate limiting).
+  The default anchor is **`DHT.pondsi.com`** and **`DHT2.pondsi.com`**, each on UDP **443** and **62666**
+  (aligned with WArmy; anchors need no credential — anonymous discovery; security comes from node
+  Ed25519 signatures, group-key encryption and inbound rate limiting). Additional anchors can be
+  added/removed on the admin page. External addresses (domain/IP:port) are a managed list with
+  per-entry health (verified / failed / paused) and an auto fallback pair (inferred IP : 443/62666)
+  that always stays enabled.
+- **Ports (R133)**: FWArmy now listens on **multiple business ports** (default **59599** for relay
+  credentials and **58588** for expand credentials, no more auto-increment on conflict). The "端口"
+  admin tab shows every port's state (listening / paused / error), which credentials reference it,
+  and lets you add / pause / resume / remove ports — occupying processes can be force-killed to take
+  the port back. A credential is only usable while its port is in the listening set.
 - **Relay credentials v2**: generated tokens embed host + port (`fwnexp_v2_<payload>`), so clients fill
   in only "name + credential"; legacy tokens without an address still work with a manual address.
   Inbound relay responses distinguish `offline` (recipient offline — never cached, sender retries later)
