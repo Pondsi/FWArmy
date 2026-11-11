@@ -79,11 +79,21 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
 .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#222c37;border:1px solid var(--line);border-radius:9px;padding:10px 16px;font-size:13px;box-shadow:0 10px 30px #0008;opacity:0;pointer-events:none;transition:.2s;z-index:40;max-width:90vw}
 .toast.show{opacity:1}
 .toast.err{border-color:#5c2626;color:#ffb4b4}
+.pubip{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);cursor:pointer;user-select:none;padding:4px 10px;border:1px solid var(--line);border-radius:20px;margin:0 8px 0 0;white-space:nowrap}
+.pubip:hover{border-color:var(--accent);color:var(--text)}
+.pubip .ico{display:inline-block;font-size:13px;line-height:1}
+.pubip .ico.spin{animation:spin 1.1s linear infinite}
+.pubip b{color:var(--text);font-weight:600}
+@keyframes spin{to{transform:rotate(360deg)}}
 @media(max-width:620px){body{padding:14px 12px 40px}.brand b{font-size:20px}.card .v{font-size:17px}}
 </style>
 <div class="wrap">
 <header>
   <div class="brand"><img src="/assets/logo.svg" alt="FWArmy logo"><b>FWArmy</b><span>WArmy专属服务器</span></div>
+  <div class="pubip" id="pubIpBar" title="点击重新探测公网 IP">
+    <span class="ico" id="pubIpIco">⟳</span>
+    <span id="pubIpText">公网 IP：检测中…</span>
+  </div>
   <div class="pills"><div class="pills" id="pills"></div><button id="toggleService" class="good" disabled>加载业务状态…</button><button class="danger" id="shutdown">退出进程</button></div>
 </header>
 
@@ -138,8 +148,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <div class="toolbar" style="margin-top:12px">
       <label class="f" style="flex-direction:row;align-items:center;gap:6px"><input id="cfgAccept" type="checkbox"> 接受新投递（取消勾选 = 暂停；只拦新投递，不拦收信）</label>
       <button class="primary" id="saveCfg">保存设置</button>
-      <button id="pip">探测公网 IP</button>
-      <span class="muted" id="pipResult"></span>
+      <button id="pip">重新探测公网 IP</button>
     </div>
     <div class="hint">保存立即生效，不重置已有用量。暂停只拦新投递（relay 与扩网投递返回 503），poll/lookup 等收信查询不受影响；管理页仍可用。退出进程后需手动重新启动程序，页面不能自启动。公网 IP 探测不会改绑定地址。</div>
   </div>
@@ -572,6 +581,45 @@ function showFirstRun() {
 let refreshInFlight = false;
 const CRED_PAGE_SIZE = 200;
 let credPage = 0;
+/* ── 公网 IP（R131：顶部常驻显示 IPv4/IPv6；启动自动探测，点击重新探测带 ≥1s 转圈动画）── */
+let pubIpLoading = false;
+function renderPubIp(p) {
+  p = p || {};
+  const bar = $('#pubIpBar');
+  if (!bar) return;
+  if (p.at) {
+    const parts = [];
+    if (p.ipv4) parts.push(`IPv4 <b>${esc(p.ipv4)}</b>`);
+    if (p.ipv6) parts.push(`IPv6 <b>${esc(p.ipv6)}</b>`);
+    $('#pubIpText').innerHTML = parts.length
+      ? '公网 IP：' + parts.join(' · ')
+      : '公网 IP：无 <span style="opacity:.6">（未探测到，点击重试）</span>';
+  } else {
+    $('#pubIpText').textContent = '公网 IP：检测中…';
+  }
+}
+async function refreshPublicIp(animate) {
+  if (pubIpLoading) return;
+  pubIpLoading = true;
+  const ico = $('#pubIpIco');
+  if (animate && ico) ico.classList.add('spin');
+  $('#pubIpText').textContent = '公网 IP：探测中…';
+  const t0 = Date.now();
+  let j = null;
+  try { j = await api('/api/admin/public-ip', {}); } catch { $('#pubIpText').textContent = '公网 IP：探测失败'; }
+  const rest = Math.max(0, 1100 - (Date.now() - t0)); // 点击后动画 ≥1 秒，让用户知道在刷新
+  if (rest > 0) await new Promise((r) => setTimeout(r, rest));
+  if (ico) ico.classList.remove('spin');
+  pubIpLoading = false;
+  if (j) {
+    const np = { ipv4: String(j.ipv4 || ''), ipv6: String(j.ipv6 || ''), at: j.at || Date.now(), via: String(j.via || 'ipify') };
+    if (S) S.publicIp = np;
+    if (E) E.publicIp = np;
+    renderPubIp(np);
+    fillExInHostDefault();
+  }
+}
+$('#pubIpBar').addEventListener('click', () => refreshPublicIp(true));
 async function refresh() {
   if (refreshInFlight) return;
   refreshInFlight = true;
@@ -582,6 +630,9 @@ async function refresh() {
       credPage = Math.max(0, Math.ceil(S.credTotal / CRED_PAGE_SIZE) - 1);
       S = await api(`/api/admin/stats?limit=${CRED_PAGE_SIZE}&offset=${credPage * CRED_PAGE_SIZE}`);
     }
+    renderPubIp(S.publicIp);
+    // R131：公网 IP 自动探测（页面加载且缓存为空时静默触发一次，无需用户点击）
+    if ((!S.publicIp || !S.publicIp.at) && !pubIpLoading) void refreshPublicIp(false);
     SEC = await api('/api/admin/security').catch(() => null);
     render();
   } catch (e) { toast('连不上服务器：' + e.message, true); }
@@ -898,7 +949,8 @@ let exInHostTouched = false; // 用户手动改过地址框后不再自动覆盖
 function fillExInHostDefault() {
   const el = $('#exInHost');
   if (el && !exInHostTouched && !el.value.trim()) {
-    const d = (E && (E.publicIp || E.defaultAdvHost)) || '';
+    const p = E && E.publicIp;
+    const d = (p && (p.ipv4 || p.ipv6)) || (E && E.defaultAdvHost) || '';
     if (d) el.value = d;
   }
 }
@@ -1225,22 +1277,7 @@ $('#firstRunAck').addEventListener('click', async () => {
   catch (e) { toast(e.message, true); }
 });
 $('#copyToken').addEventListener('click', () => copyText($('#newToken').textContent));
-$('#pip').addEventListener('click', async () => {
-  try {
-    const j = await api('/api/admin/public-ip', {});
-    const ip = j.publicIp || '';
-    $('#pipResult').textContent = ip
-      ? `公网 IP：${ip}${j.via === 'peer-address' ? '（来自对端地址）' : ''}`
-      : '未探测到公网 IP';
-    if (E) E.publicIp = ip;
-    const el = $('#exInHost');
-    if (el && !exInHostTouched && !el.value.trim() && ip) el.value = ip;
-    toast(ip ? '已探测到公网 IP' : '未探测到公网 IP', !ip);
-  } catch (e) {
-    $('#pipResult').textContent = '探测失败';
-    toast(e.message, true);
-  }
-});
+$('#pip').addEventListener('click', () => refreshPublicIp(true));
 $('#exInHost').addEventListener('input', () => { exInHostTouched = true; });
 $('#shutdown').addEventListener('click', async () => {
   if (!confirm('确定关闭服务器？关闭后所有客户端都会断开。')) return;

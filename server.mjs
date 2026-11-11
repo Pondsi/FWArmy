@@ -1212,7 +1212,26 @@ export async function startServer(options = {}) {
 
   // ── 扩网 / 被扩网状态 ──
   let expand = emptyExpand();
-  let lastPublicIp = ''; // 探测公网 IP 的结果缓存，供被扩网生成凭据的默认地址
+  /** 公网 IP 探测缓存（R131：启动自动探测 + 30 分钟定时 + 手动刷新；顶部常驻显示 IPv4/IPv6）。 */
+  let lastPub = { ipv4: '', ipv6: '', at: 0, via: 'none' };
+  async function probePublicIp() {
+    const once = async (url) => {
+      try {
+        const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
+        const j = await r.json();
+        const ip = String(j.ip || '').trim();
+        return /^[0-9A-Fa-f.:]+$/.test(ip) ? ip : '';
+      } catch { return ''; }
+    };
+    const [v4, v6] = await Promise.all([
+      once('https://api.ipify.org?format=json'),
+      once('https://api6.ipify.org?format=json'), // IPv6 专用端点；无 IPv6 出口时失败 → 显示「无」
+    ]);
+    const v4b = v4 || v6; // 只有 v6 时也让默认地址可用
+    lastPub = { ipv4: v4, ipv6: v6, at: Date.now(), via: v4 || v6 ? 'ipify' : 'none' };
+    log('INFO', `[fwarmy] 公网 IP 自动探测：IPv4=${v4 || '无'} IPv6=${v6 || '无'}`);
+    return { ...lastPub, defaultHost: v4b };
+  }
   try {
     expand = normExpand(JSON.parse(fs.readFileSync(EXPAND_FILE, 'utf8')));
   } catch (e) {
@@ -1328,7 +1347,7 @@ export async function startServer(options = {}) {
       instanceId: expand.instanceId,
       identityPub: expand.identity.pub,
       port: boundPort || opt.port,
-      publicIp: lastPublicIp, // R130：探测公网 IP 结果缓存（生成凭据默认地址）
+      publicIp: { ...lastPub }, // R130/R131：探测结果缓存（生成凭据默认地址 + 顶部常驻显示）
       defaultAdvHost: pickAdvertiseHost(),
       tls: tlsPublicView(),
       inbound: {
@@ -2544,6 +2563,7 @@ export async function startServer(options = {}) {
         origins: Object.keys(security.origins).length,
         lastInbound: security.lastInbound,
       },
+      publicIp: { ...lastPub },
       update: updateSummary(),
     };
   }
@@ -3463,16 +3483,8 @@ export async function startServer(options = {}) {
       return send(res, 200, { ok: true, lines, file: path.basename(LOG) });
     }
     if (req.method === 'POST' && p === '/api/admin/public-ip') {
-      const pu = await (async () => {
-        try {
-          const r = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(4000) });
-          const j = await r.json();
-          return String(j.ip || '');
-        } catch { return ''; }
-      })();
-      const hou = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || String(req.socket.remoteAddress || '');
-      lastPublicIp = pu || hou || '';
-      return send(res, 200, { ok: true, publicIp: lastPublicIp, via: pu ? 'ipify' : (hou ? 'peer-address' : 'none') });
+      const r = await probePublicIp();
+      return send(res, 200, { ok: true, ...r });
     }
     if (req.method === 'POST' && p === '/api/admin/shutdown') {
       send(res, 200, { ok: true, bye: true });
@@ -3791,6 +3803,9 @@ export async function startServer(options = {}) {
     }, 15_000).unref();
   }
   scheduleUpdateCheck(60_000);
+  // 公网 IP 自动探测（R131）：启动即探测，之后每 30 分钟刷新；页面点击可手动刷新。
+  void probePublicIp();
+  setInterval(() => void probePublicIp(), 30 * 60_000).unref();
   // 先验证手动对外地址再启动节点：首次发布的记录就用最终宣告地址（避免先用自动地址发布后被手动覆盖）。
   void (async () => {
     if (cfg.dht.advertiseHost) await checkManualAddr();
