@@ -87,12 +87,13 @@ stats | ip | update | version               usage stats, public IP probe, update
   messages carry signed origins and unique IDs — the same message id passes at most twice per 24h
   (a third sighting is dropped and the message id itself is blacklisted, so relay rings never loop
   forever; no hop-count limit is used), plus route-based loop detection.
-  Inbound ("被扩网") credentials carry the server's address and port (`fwnexp_v2_<base64url{host,port,rand}>`)
-  — the peer only needs name + credential, no manual address (legacy tokens without an address are
-  rejected). The credential port must equal the port this server is actually listening on (default
-  **8787**, a cold IANA-registered port with no mainstream use); if that port is occupied and startup
-  rolled over, the credential is hard-disabled (`401 credential-port-unavailable`) until the conflict
-  is resolved — the admin page shows the actual port. Generated credentials can also be managed
+  Inbound ("被扩网") credentials carry the address and port you enter when generating them
+  (`fwnexp_v2_<base64url{host,port,rand}>`) — the address field defaults to your probed public IP
+  (refresh it with the "探测公网 IP" button) and can be edited, the port defaults to **8787** and must
+  equal the port this server is actually listening on; if that port is occupied and startup rolled
+  over, the credential is hard-disabled (`401 credential-port-unavailable`) until the conflict is
+  resolved — the admin page shows the actual port. The peer only needs name + credential, no manual
+  address (legacy tokens without an address are rejected). Generated credentials can also be managed
   (rename, rate/bytes limits, expiry) and are disabled while expired.
   Message identity is the `msgId` in the header — **content is never compared**: resends or retries
   with a fresh `msgId` always pass (clients should generate a new msgId per attempt). Requests without

@@ -139,6 +139,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
       <label class="f" style="flex-direction:row;align-items:center;gap:6px"><input id="cfgAccept" type="checkbox"> 接受新投递（取消勾选 = 暂停；只拦新投递，不拦收信）</label>
       <button class="primary" id="saveCfg">保存设置</button>
       <button id="pip">探测公网 IP</button>
+      <span class="muted" id="pipResult"></span>
     </div>
     <div class="hint">保存立即生效，不重置已有用量。暂停只拦新投递（relay 与扩网投递返回 503），poll/lookup 等收信查询不受影响；管理页仍可用。退出进程后需手动重新启动程序，页面不能自启动。公网 IP 探测不会改绑定地址。</div>
   </div>
@@ -211,15 +212,16 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
   <div class="panel">
     <h2>被扩网 · 别人连接我 <small>生成凭据，让别的 FWArmy 把送不到的消息转给我</small></h2>
     <div class="toolbar">
-      <input id="exInName" maxlength="40" placeholder="凭据名称（可选）" style="max-width:220px">
-      <input id="exInPort" type="number" min="1" max="65535" step="1" placeholder="对外端口（默认 8787）" style="max-width:180px" title="对方连接这个端口；不填默认 8787。本站实际端口见下方提示">
+      <input id="exInHost" maxlength="253" placeholder="对外域名或 IP（默认=探测到的公网 IP，可改）" style="max-width:300px">
+      <input id="exInName" maxlength="40" placeholder="凭据名称（可选）" style="max-width:200px">
+      <input id="exInPort" type="number" min="1" max="65535" step="1" placeholder="端口（默认 8787）" style="max-width:150px" title="对方连接这个端口；不填默认 8787，且必须等于本机实际监听端口">
       <button class="primary" id="exGen">生成接入凭据</button>
       <span class="muted" id="exInState">加载中…</span>
     </div>
     <div id="exInTokenBox" class="tokenbox" hidden>
       <code id="exInToken"></code>
       <button class="sm" id="exInCopy">复制</button>
-      <span class="hint" style="margin:0">只显示这一次；<b>已包含本站地址和你填的端口</b>（不填 = 8787），对方只需填「名称 + 凭证」。每个实例可有多条，可单独管理/停用/删除。</span>
+      <span class="hint" style="margin:0">只显示这一次；<b>已包含你填写的域名/IP 和端口</b>（不填端口 = 8787），对方只需填「名称 + 凭证」。每个实例可有多条，可单独管理/停用/删除。</span>
       <div id="exInPortWarn" class="hint" style="margin:0;color:var(--danger,#c0392b)" hidden></div>
     </div>
     <div class="hint" id="exAddrHint">加载中…</div>
@@ -744,7 +746,7 @@ function renderExpand() {
     ? `已配置 ${num(inb.count || creds.length)} 条 · 有效 ${num(creds.filter((c) => !c.disabled).length)} 条`
     : '尚未生成（别人无法连接）';
   $('#exAddrHint').textContent =
-    `凭据里的地址 = 本站对外域名/IP（自动推断，见 DHT 页；手动地址验证通过后优先）＋ 你选择的端口（不填默认 8787）。凭据端口必须等于本机实际监听端口（当前实际 ${E.port}）才可用——若 ${E.port === 8787 ? '8787 被占用导致启动顺延' : '本机监听 ' + E.port + '（8787 被占顺延到此）'}，旧凭据会显示「端口不可用」并被强制禁止，请解决占用后重启，或用实际端口重新生成。`;
+    `凭据里的地址 = 生成时填写的域名/IP（默认 = 探测到的公网 IP——在中继页点「探测公网 IP」刷新；留空则用自动推断地址，见 DHT 页）＋ 端口（不填默认 8787）。凭据端口必须等于本机实际监听端口（当前实际 ${E.port}）才可用——若 ${E.port === 8787 ? '8787 被占用导致启动顺延' : '本机监听 ' + E.port + '（8787 被占顺延到此）'}，旧凭据会显示「端口不可用」并被强制禁止，请解决占用后重启，或用实际端口重新生成。`;
   renderReach();
 }
 function renderReach() {
@@ -840,7 +842,7 @@ async function dhtQueryNow() {
 }
 
 async function loadExpand() {
-  try { E = await api('/api/admin/expand'); R = await api('/api/admin/reach').catch(() => null); renderExpand(); }
+  try { E = await api('/api/admin/expand'); R = await api('/api/admin/reach').catch(() => null); fillExInHostDefault(); renderExpand(); }
   catch (e) { toast('扩网页读取失败：' + e.message, true); }
 }
 async function addExpandPeer() {
@@ -865,6 +867,8 @@ async function addExpandPeer() {
 }
 async function genInbound() {
   try {
+    const host = $('#exInHost').value.trim();
+    if (/[\s/?#]/.test(host)) throw new Error('域名或 IP 不能含空格/斜杠/问号/井号');
     const portRaw = $('#exInPort').value.trim();
     let port = null;
     if (portRaw !== '') {
@@ -872,8 +876,9 @@ async function genInbound() {
       if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('端口必须是 1–65535 的整数（不填默认 8787）');
     }
     const chosen = port || 8787;
-    const r = await api('/api/admin/expand-inbound', { name: $('#exInName').value.trim(), ...(port ? { port } : {}) });
+    const r = await api('/api/admin/expand-inbound', { name: $('#exInName').value.trim(), ...(port ? { port } : {}), ...(host ? { host } : {}) });
     $('#exInName').value = ''; $('#exInPort').value = '';
+    $('#exInHost').value = ''; exInHostTouched = false; fillExInHostDefault();
     $('#exInToken').textContent = r.token || '';
     $('#exInTokenBox').hidden = false;
     const warn = $('#exInPortWarn');
@@ -889,6 +894,14 @@ async function genInbound() {
 }
 
 let editingIn = null;
+let exInHostTouched = false; // 用户手动改过地址框后不再自动覆盖默认值
+function fillExInHostDefault() {
+  const el = $('#exInHost');
+  if (el && !exInHostTouched && !el.value.trim()) {
+    const d = (E && (E.publicIp || E.defaultAdvHost)) || '';
+    if (d) el.value = d;
+  }
+}
 function openInCred(c) {
   editingIn = c;
   $('#inCredModalTitle').textContent = '管理接入凭据';
@@ -1213,9 +1226,22 @@ $('#firstRunAck').addEventListener('click', async () => {
 });
 $('#copyToken').addEventListener('click', () => copyText($('#newToken').textContent));
 $('#pip').addEventListener('click', async () => {
-  try { const j = await api('/api/admin/public-ip', {}); toast('公网 IP：' + (j.publicIp || '未探测到')); }
-  catch (e) { toast(e.message, true); }
+  try {
+    const j = await api('/api/admin/public-ip', {});
+    const ip = j.publicIp || '';
+    $('#pipResult').textContent = ip
+      ? `公网 IP：${ip}${j.via === 'peer-address' ? '（来自对端地址）' : ''}`
+      : '未探测到公网 IP';
+    if (E) E.publicIp = ip;
+    const el = $('#exInHost');
+    if (el && !exInHostTouched && !el.value.trim() && ip) el.value = ip;
+    toast(ip ? '已探测到公网 IP' : '未探测到公网 IP', !ip);
+  } catch (e) {
+    $('#pipResult').textContent = '探测失败';
+    toast(e.message, true);
+  }
 });
+$('#exInHost').addEventListener('input', () => { exInHostTouched = true; });
 $('#shutdown').addEventListener('click', async () => {
   if (!confirm('确定关闭服务器？关闭后所有客户端都会断开。')) return;
   try { await api('/api/admin/shutdown', {}); toast('服务器已关闭'); S = null; $('#pills').innerHTML = '<span class="pill bad">已关闭</span>'; }

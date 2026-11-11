@@ -1212,6 +1212,7 @@ export async function startServer(options = {}) {
 
   // ── 扩网 / 被扩网状态 ──
   let expand = emptyExpand();
+  let lastPublicIp = ''; // 探测公网 IP 的结果缓存，供被扩网生成凭据的默认地址
   try {
     expand = normExpand(JSON.parse(fs.readFileSync(EXPAND_FILE, 'utf8')));
   } catch (e) {
@@ -1327,6 +1328,8 @@ export async function startServer(options = {}) {
       instanceId: expand.instanceId,
       identityPub: expand.identity.pub,
       port: boundPort || opt.port,
+      publicIp: lastPublicIp, // R130：探测公网 IP 结果缓存（生成凭据默认地址）
+      defaultAdvHost: pickAdvertiseHost(),
       tls: tlsPublicView(),
       inbound: {
         configured: creds.some((c) => !c.disabled),
@@ -1353,9 +1356,9 @@ export async function startServer(options = {}) {
       stats: { inbound: inboundStats, outbound: sideView(expand.stats.outbound), perOutbound, perSource },
     };
   }
-  function generateInboundToken(name = '', portRaw) {
-    // 凭证自带本站对外地址（宣告地址 + 生成时选择的端口，不填默认 8787）：拿到凭证即可连接。
-    const host = pickAdvertiseHost();
+  function generateInboundToken(name = '', portRaw, hostRaw) {
+    // 凭证自带地址 = 生成时填写的域名/IP（R130，默认探测到的公网 IP，可改）+ 端口（默认 8787）。
+    const host = String(hostRaw || '').trim() || pickAdvertiseHost();
     let port = Math.floor(Number(portRaw));
     if (!Number.isInteger(port) || port < 1 || port > 65535) port = EXPAND_DEFAULT_PORT;
     const payload = Buffer.from(JSON.stringify({ h: host, p: port, r: crypto.randomBytes(16).toString('base64url') }), 'utf8').toString('base64url');
@@ -3073,8 +3076,12 @@ export async function startServer(options = {}) {
     if (req.method === 'GET' && p === '/api/admin/expand') return send(res, 200, expandView());
     if (req.method === 'POST' && p === '/api/admin/expand-inbound') {
       const j = await body(req);
-      const { token, item } = generateInboundToken(j.name, j.port);
-      log('INFO', `被扩网：已生成新的接入凭据 #${expand.inbound.length}（端口 ${item.addr.split(':').pop()}，只显示一次）`);
+      if (j.host !== undefined) {
+        const h = String(j.host || '').trim();
+        if (!h || /[\s/?#]/.test(h) || h.length > 253) return send(res, 400, { ok: false, error: 'bad-host', hint: '域名或 IP 不能为空，且不能含空格/斜杠/问号/井号' });
+      }
+      const { token, item } = generateInboundToken(j.name, j.port, j.host);
+      log('INFO', `被扩网：已生成新的接入凭据 #${expand.inbound.length}（地址 ${item.addr}，只显示一次）`);
       return send(res, 200, { ok: true, token, item: { id: item.id, name: item.name, masked: item.masked }, inbound: expandView().inbound });
     }
     if (req.method === 'POST' && p === '/api/admin/expand-inbound-update') {
@@ -3464,7 +3471,8 @@ export async function startServer(options = {}) {
         } catch { return ''; }
       })();
       const hou = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || String(req.socket.remoteAddress || '');
-      return send(res, 200, { ok: true, publicIp: pu || hou, via: pu ? 'ipify' : 'peer-address' });
+      lastPublicIp = pu || hou || '';
+      return send(res, 200, { ok: true, publicIp: lastPublicIp, via: pu ? 'ipify' : (hou ? 'peer-address' : 'none') });
     }
     if (req.method === 'POST' && p === '/api/admin/shutdown') {
       send(res, 200, { ok: true, bye: true });
