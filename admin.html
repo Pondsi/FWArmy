@@ -94,7 +94,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <span class="ico" id="pubIpIco">⟳</span>
     <span id="pubIpText">公网 IP：检测中…</span>
   </div>
-  <div class="pills"><div class="pills" id="pills"></div><button id="toggleService" class="good" disabled>加载业务状态…</button><button class="danger" id="shutdown">退出进程</button></div>
+  <div class="pills"><div class="pills" id="pills"></div><button id="powerBtn" class="good" disabled>加载状态…</button></div>
 </header>
 
 <div id="firstRun" class="banner" hidden>
@@ -105,6 +105,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
 
 <div class="tabs" id="tabs">
   <button class="tab active" data-tab="overview">中继</button>
+  <button class="tab" data-tab="frelay">F中继</button>
   <button class="tab" data-tab="expand">扩网</button>
   <button class="tab" data-tab="dht">DHT 组网</button>
   <button class="tab" data-tab="logs">日志</button>
@@ -196,7 +197,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <h2>扩网 · 我连接别人 <small>本机送不到的消息，按顺序转发给这些 FWArmy</small></h2>
     <div class="grid">
       <label class="f">名称（可选）<input id="exName" maxlength="40" placeholder="例如：家里的 FWArmy"></label>
-      <label class="f">对方的被扩网凭据<input id="exCred" type="password" autocomplete="off" placeholder="对方「被扩网」页生成（自带地址和端口）"></label>
+      <label class="f">对方的被扩网凭据<input id="exCred" type="password" autocomplete="off" placeholder="对方「F中继」页生成（自带地址和端口）"></label>
       <label class="f">传输安全
         <select id="exTls">
           <option value="pin">TLS 自签 + 指纹固定（推荐）</option>
@@ -210,16 +211,18 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
       <button class="primary" id="exAdd">添加</button>
       <span class="muted" id="exMsg"></span>
     </div>
-    <div class="hint">「被扩网」凭证<b>已包含本站地址和端口</b>：对方只需填「名称 + 凭证」即可连接，不用再填域名/端口，也不再支持旧版（不含地址）凭证。
+    <div class="hint">「F中继」凭证<b>已包含地址和端口</b>：对方只需填「名称 + 凭证」即可连接，不用再填域名/端口，也不再支持旧版（不含地址）凭证。
       TLS 默认「自签 + 指纹固定」：添加后先点「识别指纹」，核对对方屏幕上/管理页里的指纹一致，再点「信任」。**未信任前不会发送凭据**。对方用正式证书时选「用户证书」，按系统 CA 校验域名。</div>
     <div class="cards" id="exOutCards"></div>
     <div class="tablewrap"><table id="exOutTable"></table></div>
     <div class="tablewrap" style="margin-top:10px"><table id="exOutTotals"></table></div>
     <div class="hint">这里只统计「我转发出去」的次数、字节、成功/失败；对方是否真正投递由对方再尝试并把结果返回。</div>
   </div>
+</section>
 
+<section id="tab-frelay">
   <div class="panel">
-    <h2>被扩网 · 别人连接我 <small>生成凭据，让别的 FWArmy 把送不到的消息转给我</small></h2>
+    <h2>F中继 · 别人连接我 <small>生成凭据，让别的 FWArmy 把送不到的消息转给我</small></h2>
     <div class="toolbar">
       <input id="exInHost" maxlength="253" placeholder="对外域名或 IP（默认=探测到的公网 IP，可改）" style="max-width:300px">
       <input id="exInName" maxlength="40" placeholder="凭据名称（可选）" style="max-width:200px">
@@ -265,7 +268,14 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <div class="grid">
       <label class="f">UDP 端口（0 = 自动：7800 起递增）<input id="dhtPort" type="number" min="0" max="65535" step="1"></label>
       <label class="f">对外地址（手动候选；验证通过才优先使用，失效自动回退自动推断）<input id="dhtAdv" placeholder="relay.example.com 或公网 IP，可带 :端口（默认 8787）"></label>
-      <label class="f">锚点（每行一个 host 或 host:port，支持 [IPv6]）<textarea id="dhtAnchors" rows="4" placeholder="anchor1.example.com:7800"></textarea></label>
+      <label class="f">默认锚点（自动生效，与 WArmy 对齐）<input id="dhtAnchorDef" readonly placeholder="DHT.pondsi.com:7800"></label>
+      <label class="f">手动锚点（或入网端点）
+        <span style="display:flex;gap:6px;width:100%">
+          <input id="dhtAnchorNew" placeholder="host 或 host:port，如 1.2.3.4:7800" style="flex:1">
+          <button class="sm" id="dhtAnchorAdd">添加</button>
+        </span>
+        <span id="dhtAnchorList" class="hint" style="margin-top:4px;display:block"></span>
+      </label>
     </div>
     <div class="toolbar" style="margin-top:12px">
       <button class="primary" id="dhtSave">保存并生效</button>
@@ -333,6 +343,8 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <p>留空 = 继承全局默认；填 0 = 不限制。名称最多 40 字。</p>
     <div class="grid">
       <label class="f">名称<input id="fName" maxlength="40" placeholder="例如：家里的电脑"></label>
+      <label class="f">端点域名或 IP（可选，默认公网 IP）<input id="fHost" maxlength="253" placeholder="自动探测的公网 IP"></label>
+      <label class="f">端点端口（可选，默认 8787）<input id="fPort" type="number" min="1" max="65535" step="1" placeholder="8787"></label>
       <label class="f">请求速度（次/分钟）<input id="fRate" type="number" min="0" step="1" placeholder="继承全局"></label>
       <label class="f">流量速度（MB/分钟）<input id="fByteRate" type="number" min="0" step="0.1" placeholder="继承全局"></label>
       <label class="f">每日次数上限（次）<input id="fDailyReq" type="number" min="0" step="1" placeholder="继承全局"></label>
@@ -362,6 +374,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
   <div class="box">
     <h3>凭据已生成</h3>
     <p>明文只显示这一次，请立即保存到 WArmy 的服务器设置里。</p>
+    <p id="newTokenEp" class="hint" style="margin:0 0 8px"></p>
     <div class="tokenbox"><code id="newToken" style="flex:1"></code><button class="sm" id="copyToken">复制</button></div>
     <div class="row"><button class="primary" data-close="tokenModal">我已保存</button></div>
   </div>
@@ -452,7 +465,7 @@ function switchTab(name) {
   $$('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   $$('section').forEach((s) => s.classList.toggle('active', s.id === 'tab-' + name));
   if (name === 'logs') loadLogs();
-  if (name === 'expand') loadExpand();
+  if (name === 'expand' || name === 'frelay') loadExpand();
   if (name === 'dht') loadDht();
   if (name === 'update') loadUpdate();
 }
@@ -485,13 +498,11 @@ function render() {
     `<span class="pill">运行 ${fmtDur(S.uptimeSec)}</span>` +
     `<span class="pill">v${esc(S.version)}</span>` +
     (S.update && S.update.available ? `<span class="pill warn">更新 ${esc(S.update.latest)}</span>` : '');
-  const tg = $('#toggleService');
+  const tg = $('#powerBtn');
   tg.disabled = false;
-  tg.textContent = S.config.accepting ? '暂停业务' : '恢复业务';
-  tg.className = S.config.accepting ? 'danger' : 'good';
-  tg.title = S.config.accepting
-    ? '暂停后不再接收新投递（relay/扩网投递返回 503）；poll/lookup 等收信查询不受影响'
-    : '恢复后重新接收新投递';
+  tg.textContent = '正在运行';
+  tg.className = 'good';
+  powerBtnState = 'running';
   $('#cards').innerHTML = [
     ['当前速度', `${num(t.speed.reqPerMin)} 次/分`, `${fmtBytes(t.speed.bytesPerMin)}/分`],
     ['峰值（每分钟）', `${num(t.peakPerMin)} 次`, t.peakAt ? fmtTime(t.peakAt) : '—'],
@@ -514,7 +525,7 @@ function render() {
   $('#credTable').innerHTML =
     `<tr><th>名称</th><th>状态</th><th class="num">速度（最近 60s）</th><th>今日</th><th>本月</th><th>今年</th><th>累计</th><th class="num">峰值/分</th><th>限额</th><th>最近使用</th><th>操作</th></tr>` +
     (S.perCredential.map((c) =>
-      `<tr><td>${esc(c.name)}<div class="cell-sub"><code>${esc(c.hash8)}…</code> · 建于 ${fmtTime(Date.parse(c.createdAt))}</div></td>` +
+      `<tr><td>${esc(c.name)}<div class="cell-sub"><code>${esc(c.hash8)}…</code> · 建于 ${fmtTime(Date.parse(c.createdAt))}${c.endpoint ? ' · 端点 ' + esc(c.endpoint.host) + ':' + c.endpoint.port : ''}</div></td>` +
       `<td>${c.disabled ? '<span class="tag off">已停用</span>' : '<span class="tag on">有效</span>'}</td>` +
       `<td class="num">${num(c.speed.reqPerMin)} 次/分<div class="cell-sub">${fmtBytes(c.speed.bytesPerMin)}/分</div></td>` +
       `<td>${usageCell(c.today)}</td><td>${usageCell(c.month)}</td><td>${usageCell(c.year)}</td><td>${usageCell(c.total)}</td>` +
@@ -588,12 +599,9 @@ function renderPubIp(p) {
   const bar = $('#pubIpBar');
   if (!bar) return;
   if (p.at) {
-    const parts = [];
-    if (p.ipv4) parts.push(`IPv4 <b>${esc(p.ipv4)}</b>`);
-    if (p.ipv6) parts.push(`IPv6 <b>${esc(p.ipv6)}</b>`);
-    $('#pubIpText').innerHTML = parts.length
-      ? '公网 IP：' + parts.join(' · ')
-      : '公网 IP：无 <span style="opacity:.6">（未探测到，点击重试）</span>';
+    // R132：IPv4/IPv6 固定都显示，没有则显示【无】（不能缺省不显示）
+    $('#pubIpText').innerHTML =
+      `公网 IP：IPv4 ${p.ipv4 ? `<b>${esc(p.ipv4)}</b>` : '<b>【无】</b>'} · IPv6 ${p.ipv6 ? `<b>${esc(p.ipv6)}</b>` : '<b>【无】</b>'}`;
   } else {
     $('#pubIpText').textContent = '公网 IP：检测中…';
   }
@@ -635,7 +643,10 @@ async function refresh() {
     if ((!S.publicIp || !S.publicIp.at) && !pubIpLoading) void refreshPublicIp(false);
     SEC = await api('/api/admin/security').catch(() => null);
     render();
-  } catch (e) { toast('连不上服务器：' + e.message, true); }
+  } catch (e) {
+    toast('连不上服务器：' + e.message, true);
+    setPowerStopped();
+  }
   finally { refreshInFlight = false; }
 }
 async function loadLogs() {
@@ -844,7 +855,12 @@ function renderDht() {
   ].map(([k, v, s]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join('');
   $('#dhtPort').value = d.config.port;
   $('#dhtAdv').value = d.config.advertiseHost || '';
-  $('#dhtAnchors').value = (d.anchors || []).map((a) => `${a.host}:${a.port}`).join('\n');
+  const defA = (d.defaultAnchors || [])[0];
+  $('#dhtAnchorDef').value = defA ? `${defA.host}:${defA.port}` : '';
+  $('#dhtAnchorNew').value = '';
+  $('#dhtAnchorList').innerHTML = (d.anchors || []).length
+    ? (d.anchors || []).map((a) => `<span style="display:inline-flex;align-items:center;gap:6px;margin:2px 8px 2px 0"><code>${esc(a.host)}:${a.port}</code><button class="sm danger" data-dht-del-anchor="${esc(a.host + ':' + a.port)}">×</button></span>`).join('')
+    : '<span class="muted">（无手动锚点）</span>';
   $('#dhtTable').innerHTML =
     `<tr><th>节点 ID</th><th>地址</th><th>指纹</th><th>最近见到</th></tr>` +
     ((d.contactsList || []).map((c) => `<tr><td><code>${esc(c.id.slice(0, 16))}…</code></td><td><code>${esc(c.host)}:${c.port}</code></td><td class="muted">${c.zhiWen ? esc(c.zhiWen.slice(0, 16)) + '…' : '—'}</td><td class="muted">${fmtTime(c.lastSeen)}</td></tr>`).join('')
@@ -865,7 +881,6 @@ async function saveDht() {
     const j = await api('/api/admin/dht-config', {
       port,
       advertiseHost: $('#dhtAdv').value.trim(),
-      anchors: $('#dhtAnchors').value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean),
     });
     D = j.dht;
     renderDht();
@@ -1011,6 +1026,8 @@ function openCredModal(c) {
   editing = c || null;
   $('#credModalTitle').textContent = c ? '编辑凭据' : '新建凭据';
   $('#fName').value = c ? c.name : '';
+  $('#fHost').value = c && c.endpoint ? c.endpoint.host : ((S && S.publicIp && (S.publicIp.ipv4 || S.publicIp.ipv6)) || '');
+  $('#fPort').value = c && c.endpoint ? String(c.endpoint.port) : '';
   $('#fRate').value = c && c.limits.ratePerMin !== null ? c.limits.ratePerMin : '';
   $('#fByteRate').value = c && c.limits.bytesPerMin !== null ? mb(c.limits.bytesPerMin) : '';
   $('#fDailyReq').value = c && c.limits.dailyRequests != null ? c.limits.dailyRequests : '';
@@ -1044,14 +1061,25 @@ async function saveCred() {
     const name = $('#fName').value.trim();
     if (!name) throw new Error('请填写名称');
     const limits = readLimits();
+    const host = $('#fHost').value.trim();
+    if (/[\s/?#]/.test(host)) throw new Error('端点域名或 IP 不能含空格/斜杠/问号/井号');
+    const portRaw = $('#fPort').value.trim();
+    let port = null;
+    if (portRaw !== '') {
+      port = Number(portRaw);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('端点端口必须是 1–65535 的整数（不填默认 8787）');
+    }
     if (editing) {
-      await api('/api/admin/credential-update', { id: editing.id, name, limits });
+      await api('/api/admin/credential-update', { id: editing.id, name, limits, host, port });
       toast('已保存');
       $('#credModal').classList.remove('open');
       await refresh();
     } else {
-      const r = await api('/api/admin/credentials', { name, limits });
+      const r = await api('/api/admin/credentials', { name, limits, host, port });
       $('#newToken').textContent = r.token;
+      $('#newTokenEp').textContent = host
+        ? `服务器端点：${host}:${port || 8787}（请填进 WArmy 的服务器地址；端口不填时默认 8787）`
+        : '';
       $('#credModal').classList.remove('open');
       $('#tokenModal').classList.add('open');
       await refresh();
@@ -1220,6 +1248,29 @@ $('#reachUnmap').addEventListener('click', async () => {
 $('#saveCred').addEventListener('click', saveCred);
 $('#saveCfg').addEventListener('click', saveCfg);
 $('#dhtSave').addEventListener('click', saveDht);
+$('#dhtAnchorAdd').addEventListener('click', async () => {
+  const v = $('#dhtAnchorNew').value.trim();
+  if (!v) { toast('请输入锚点 host 或 host:port', true); return; }
+  try {
+    const list = (D.anchors || []).map((a) => `${a.host}:${a.port}`);
+    list.push(v);
+    const j = await api('/api/admin/dht-config', { anchors: list });
+    D = j.dht; renderDht();
+    toast('锚点已添加并生效');
+  } catch (e) { toast(e.message, true); }
+});
+$('#dhtAnchorList').addEventListener('click', async (ev) => {
+  const b = ev.target.closest('button[data-dht-del-anchor]');
+  if (!b || !D) return;
+  const key = b.dataset.dhtDelAnchor;
+  if (!confirm('移除锚点 ' + key + '？')) return;
+  try {
+    const list = (D.anchors || []).map((a) => `${a.host}:${a.port}`).filter((x) => x !== key);
+    const j = await api('/api/admin/dht-config', { anchors: list });
+    D = j.dht; renderDht();
+    toast('锚点已移除');
+  } catch (e) { toast(e.message, true); }
+});
 $('#dhtPublish').addEventListener('click', dhtPublishNow);
 $('#dhtQueryBtn').addEventListener('click', dhtQueryNow);
 $('#updCheck').addEventListener('click', async () => {
@@ -1279,26 +1330,38 @@ $('#firstRunAck').addEventListener('click', async () => {
 $('#copyToken').addEventListener('click', () => copyText($('#newToken').textContent));
 $('#pip').addEventListener('click', () => refreshPublicIp(true));
 $('#exInHost').addEventListener('input', () => { exInHostTouched = true; });
-$('#shutdown').addEventListener('click', async () => {
-  if (!confirm('确定关闭服务器？关闭后所有客户端都会断开。')) return;
-  try { await api('/api/admin/shutdown', {}); toast('服务器已关闭'); S = null; $('#pills').innerHTML = '<span class="pill bad">已关闭</span>'; }
-  catch (e) { toast(e.message, true); }
-});
-let toggling = false;
-$('#toggleService').addEventListener('click', async () => {
-  if (!S || !S.config || toggling) return;
-  const next = !S.config.accepting;
-  toggling = true;
-  $('#toggleService').disabled = true;
-  try {
-    await api('/api/admin/config', { accepting: next });
-    toast(next ? '已恢复接收新投递' : '已暂停：不再接收新投递');
-    await refresh();
-  } catch (e) {
-    toast(e.message, true);
-  } finally {
-    toggling = false;
-    if (S) $('#toggleService').disabled = false;
+/* ── 电源按钮（R132：单按钮 正在运行/已停止；停止=关进程+关控制台窗口；启动=重开带控制台窗口的进程）── */
+let powerBtnState = 'unknown'; // 'running' | 'stopped'
+function setPowerStopped() {
+  const pb = $('#powerBtn');
+  if (!pb) return;
+  pb.className = 'danger';
+  pb.textContent = '已停止';
+  pb.disabled = false;
+  powerBtnState = 'stopped';
+}
+$('#powerBtn').addEventListener('click', async () => {
+  const pb = $('#powerBtn');
+  if (powerBtnState === 'running') {
+    if (!confirm('确定停止服务器？将关闭后台进程和控制台窗口，所有客户端都会断开。')) return;
+    pb.disabled = true;
+    pb.textContent = '正在停止…';
+    try { await fetch('/api/admin/shutdown', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); } catch { /* 进程先退也正常 */ }
+    await new Promise((r) => setTimeout(r, 800));
+    S = null;
+    $('#pills').innerHTML = '<span class="pill bad">已停止</span>';
+    setPowerStopped();
+    toast('服务器已停止，控制台窗口已关闭');
+  } else {
+    pb.disabled = true;
+    pb.textContent = '检测中…';
+    try {
+      const r = await fetch('/api/health', { signal: AbortSignal.timeout(2000) });
+      if (r.ok) { toast('服务器已在运行'); pb.disabled = false; await refresh(); return; }
+    } catch { /* 确认未运行 */ }
+    pb.disabled = false;
+    setPowerStopped();
+    toast('请双击 FWArmy.exe（或 fwarmy-console.bat）以控制台窗口重新启动', true);
   }
 });
 $('#cfgRate').addEventListener('input', () => { cfgDirty = true; });

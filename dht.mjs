@@ -16,6 +16,7 @@
  */
 import dgram from 'node:dgram';
 import net from 'node:net';
+import dns from 'node:dns';
 import crypto from 'node:crypto';
 
 export const DHT_PROTOCOL = 'warmy-dht/1';
@@ -119,6 +120,20 @@ export function gcmOpen(key, iv, ct, aad) {
 /* ────────────────────────────── 地址解析 ────────────────────────────── */
 
 /** 解析 `host` / `host:port` / `[::1]:port`；不合法返回 null（不猜、不静默兜底） */
+
+/** R132：域名解析优先 IPv6（IPv6 不可达回退 IPv4）；IP 字面量原样返回；解析失败返回 ''（调用方快速失败，绝不对域名发包——dgram 对域名 send 会触发 socket error 置空）。 */
+export function resolve6First(host) {
+  const h = String(host || '');
+  if (net.isIP(h)) return Promise.resolve(h);
+  return new Promise((resolve) => {
+    dns.lookup(h, { all: true }, (err, addrs) => {
+      if (err || !Array.isArray(addrs) || !addrs.length) return resolve('');
+      const v6 = addrs.find((a) => a.family === 6);
+      const v4 = addrs.find((a) => a.family === 4);
+      resolve((v6 || v4 || addrs[0]).address);
+    });
+  });
+}
 export function jieXiDhtDiZhi(raw, defaultPort = DEFAULT_DHT_PORT) {
   const s = String(raw || '').trim();
   if (!s) return null;
@@ -429,9 +444,11 @@ export class DhtJieDian {
     };
   }
 
-  /** 发送一条 RPC 并等待回复（单次，超时即失败；不重试） */
-  call(addr, xiaoXi, replyType, timeoutMs = this.rpcTimeoutMs) {
+  /** 发送一条 RPC 并等待回复（单次，超时即失败；不重试）。R132：域名解析优先 IPv6，解析失败快速失败。 */
+  async call(addr, xiaoXi, replyType, timeoutMs = this.rpcTimeoutMs) {
     if (!this.socket) return Promise.reject(new Error('DhtNode 未启动'));
+    const host = await resolve6First(addr.host);
+    if (!host) return Promise.reject(new Error(`RPC ${replyType} 无法解析 ${addr.host}`));
     const rid = crypto.randomBytes(6).toString('hex');
     const payload = Buffer.from(JSON.stringify({ ...xiaoXi, id: b64u(this.id), rid, reply: replyType }), 'utf8');
     this.stats.rpcSent += 1;
@@ -445,7 +462,7 @@ export class DhtJieDian {
       }, timeoutMs);
       this.pending.set(rid, { resolve, reject, timer, replyType, target: { host: addr.host, port: addr.port } });
       try {
-        this.sendTo(addr.host, addr.port, payload);
+        this.sendTo(host, addr.port, payload);
       } catch (e) {
         clearTimeout(timer);
         this.pending.delete(rid);

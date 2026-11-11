@@ -115,6 +115,8 @@ const INBOUND_RATE_PER_MIN = 240;
 const INBOUND_BYTES_PER_MIN = 20 * 1024 * 1024;
 /** 被扩网凭据默认端口（用户拍板：生成时选填，不填 = 8787；凭据自带端口，对方无需再填）。 */
 const EXPAND_DEFAULT_PORT = 8787;
+/** 默认引导锚点（R132 用户拍板，与 WArmy 对齐；原话「https://DHT.pondsi.com」→ 锚点主机 DHT.pondsi.com，UDP 7800）。 */
+const DEFAULT_ANCHORS = ['DHT.pondsi.com'];
 /** 手动对外地址的验证周期：验证通过才用于宣告，失效自动回退自动推断。 */
 const MANUAL_ADDR_CHECK_MS = 5 * 60_000;
 /** 无凭据来源（未配对）的 /api/expand/relay 请求按来源 IP 限速（防滥用 §9：直接丢弃 + 限速）。 */
@@ -798,7 +800,7 @@ function normInbound(raw) {
     id: String(raw.id || crypto.randomUUID()),
     name: String(raw.name || '接入凭据').slice(0, 40),
     hash,
-    masked: '…' + hash.slice(12, 28) + '…' + hash.slice(-8), // 持久化不带，重启后从哈希重算
+    masked: '…' + hash.slice(30, 35) + '…' + hash.slice(-5), // 持久化不带，重启后从哈希重算（最中间 5 个 + 末尾 5 个）
     port: Number.isInteger(port) && port >= 1 && port <= 65535 ? port : 0,
     addr: String(raw.addr || '').slice(0, 253),
     createdAt: Number(raw.createdAt) || 0,
@@ -1385,7 +1387,7 @@ export async function startServer(options = {}) {
     const hash = sha(token);
     const item = {
       id: crypto.randomUUID(), name: String(name || '').trim().slice(0, 40) || ('接入凭据 ' + (expand.inbound.length + 1)),
-      hash, masked: '…' + hash.slice(12, 28) + '…' + hash.slice(-8), // 前缀都一样没意义：显示中间+后缀
+      hash, masked: '…' + hash.slice(30, 35) + '…' + hash.slice(-5), // 前缀无意义：只显示最中间 5 个 + 末尾 5 个（R132）
       port, addr: host + ':' + port, createdAt: now(), lastAt: 0, lastResult: '', disabled: false,
       limits: null, expiresAt: 0, // R129：可管理（改名/流量/速度/有效期）
     };
@@ -1634,11 +1636,14 @@ export async function startServer(options = {}) {
   let dhtRetryDelayMs = cfg.dht.retryBaseMs;
   let dhtState = { lastPublishAt: 0, lastPublishSeq: 0, lastStoredOn: [], lastError: '', lastYindao: null, selfPublishes: 0 };
   const didLastPub = new Map(); // did → 上次代发布定位记录的时间
-  /** 对外宣告地址：手动地址验证通过优先（R129），否则自动推断 STUN > NAT-PMP > 本机非回环 IPv4 > 回环。 */
+  /** 对外宣告地址：手动地址验证通过优先（R129），否则自动推断 STUN > NAT-PMP > 本机非回环 IPv6 > IPv4 > 回环（R132：DHT 优先 IPv6）。 */
   function pickAdvertiseHost() {
     if (manualAddr.valid && manualAddr.host) return manualAddr.host;
     if (lastStun && lastStun.ok && lastStun.publicAddress) return lastStun.publicAddress.host;
     if (lastNatpmp && lastNatpmp.externalIp) return lastNatpmp.externalIp;
+    for (const a of localAddresses()) {
+      if (!a.internal && a.family === 'IPv6' && !/^fe80:/i.test(a.address) && !a.address.includes('%')) return a.address;
+    }
     for (const a of localAddresses()) if (!a.internal && a.family === 'IPv4') return a.address;
     return '127.0.0.1';
   }
@@ -1759,11 +1764,16 @@ export async function startServer(options = {}) {
     void dhtYindaoLoop(node);
     return { ok: true, bound };
   }
+  /** 引导种子 = 默认锚点（与 WArmy 对齐，自动生效）+ 手动锚点。 */
+  function yindaoSeeds() {
+    const def = process.env.FWARMY_DISABLE_DEFAULT_ANCHOR === '1' ? [] : guiFanAnChors(DEFAULT_ANCHORS);
+    return [...def, ...cfg.dht.anchors];
+  }
   /** 锚点引导：至少一个成功即发布本站记录并收工（之后靠 DHT 迭代查询自持）；全部失败则指数退避重试（可恢复）。 */
   async function dhtYindaoLoop(node) {
     for (;;) {
       if (!node.listening || !cfg.dht.enabled || dhtNode !== node) return;
-      const seeds = cfg.dht.anchors;
+      const seeds = yindaoSeeds();
       if (!seeds.length) { dhtState.lastYindao = { ok: 0, failed: 0, at: Date.now(), detail: 'no-anchors' }; return; }
       const r = await node.yindao(seeds);
       dhtState.lastYindao = { ok: r.ok, failed: r.failed, at: Date.now() };
@@ -1903,6 +1913,7 @@ export async function startServer(options = {}) {
       lastYindao: dhtState.lastYindao,
       selfPublishes: dhtState.selfPublishes,
       anchors: cfg.dht.anchors,
+      defaultAnchors: process.env.FWARMY_DISABLE_DEFAULT_ANCHOR === '1' ? [] : guiFanAnChors(DEFAULT_ANCHORS),
       config: {
         enabled: cfg.dht.enabled, port: cfg.dht.port,
         advertiseHost: cfg.dht.advertiseHost, anchors: cfg.dht.anchors,
@@ -2501,6 +2512,7 @@ export async function startServer(options = {}) {
       disabled: !!c.disabled,
       limits: c.limits,
       effective: eff(c),
+      endpoint: c.host ? { host: c.host, port: c.port || EXPAND_DEFAULT_PORT } : null,
       total: withBytes(total),
       today: withBytes(today),
       month: withBytes(month),
@@ -3389,14 +3401,20 @@ export async function startServer(options = {}) {
       const j = await body(req);
       const name = String(j.name || '').trim().slice(0, 40) || '未命名';
       const limits = parseLimits(j.limits);
+      // R132：业务凭据可选带端点（域名/IP + 端口，不填端口默认 8787）；token 结构不变（协议兼容，供客户端参考）。
+      const host = String(j.host || '').trim().slice(0, 253);
+      if (host && /[\s/?#]/.test(host)) return send(res, 400, { ok: false, error: 'bad-host' });
+      let port = Number(j.port);
+      if (host && (!Number.isInteger(port) || port < 1 || port > 65535)) port = EXPAND_DEFAULT_PORT;
       const token = b64u(crypto.randomBytes(32));
       const id = crypto.randomUUID();
       creds[id] = {
         id, name, hash: sha(token), hash8: sha(token).slice(0, 8),
         createdAt: new Date().toISOString(), disabled: false, limits, lastUsed: 0,
+        host, port: host ? port : 0,
       };
       rebuildIndex(); if (!saveCreds()) return send(res, 500, { ok: false, error: 'persist-failed' });
-      log('INFO', `新建凭据 id=${id} name=${JSON.stringify(name)}`);
+      log('INFO', `新建凭据 id=${id} name=${JSON.stringify(name)}${host ? ` endpoint=${host}:${port}` : ''}`);
       return send(res, 200, { ok: true, id, name, token, credential: viewCred(creds[id]) });
     }
     if (req.method === 'POST' && p === '/api/admin/credential-update') {
@@ -3411,6 +3429,14 @@ export async function startServer(options = {}) {
       c.name = name;
       c.disabled = j.disabled === undefined ? c.disabled : j.disabled;
       c.limits = limits;
+      if (j.host !== undefined || j.port !== undefined) {
+        const h = j.host !== undefined ? String(j.host || '').trim().slice(0, 253) : (c.host || '');
+        if (h && /[\s/?#]/.test(h)) return send(res, 400, { ok: false, error: 'bad-host' });
+        let port = j.port !== undefined ? Number(j.port) : (c.port || 0);
+        if (h && (!Number.isInteger(port) || port < 1 || port > 65535)) port = EXPAND_DEFAULT_PORT;
+        if (!h) port = 0;
+        c.host = h; c.port = port;
+      }
       credStat(c).name = name;
       if (!saveCreds()) return send(res, 500, { ok: false, error: 'persist-failed' });
       markStatsDirty();

@@ -104,9 +104,12 @@ stats | ip | update | version               usage stats, public IP probe, update
   AES-256-GCM, seq anti-rollback, ±10 min clock tolerance), anchor bootstrap with exponential backoff,
   and per-source rate limiting. DHT never authorizes delivery — forwarding always requires configured
   mutual credentials and pinned TLS fingerprints; unauthenticated relay requests are dropped (401) and
-  rate-limited by source IP. The advertised address is auto-inferred (STUN > NAT-PMP > local IPv4);
-  an optional manual host/domain is used only while it verifies as this instance (checked every 5 min),
-  falling back to auto inference when it fails.
+  rate-limited by source IP. The advertised address is auto-inferred (STUN > NAT-PMP > local IPv6 >
+  local IPv4; IPv6 preferred); an optional manual host/domain is used only while it verifies as this
+  instance (checked every 5 min), falling back to auto inference when it fails.
+  The default anchor is **`DHT.pondsi.com`** (UDP 7800, aligned with WArmy); additional anchors can be
+  added/removed on the admin page — anchors need no credential (anonymous discovery; security comes
+  from node Ed25519 signatures, group-key encryption and inbound rate limiting).
 - **Relay credentials v2**: generated tokens embed host + port (`fwnexp_v2_<payload>`), so clients fill
   in only "name + credential"; legacy tokens without an address still work with a manual address.
   Inbound relay responses distinguish `offline` (recipient offline — never cached, sender retries later)
