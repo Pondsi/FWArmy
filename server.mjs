@@ -113,10 +113,14 @@ const MAX_MSG_ID = 128;
 /** 单条被扩网凭据的入站速率上限（防放大/洪泛）；只影响扩网 ingress，不影响普通业务凭据。 */
 const INBOUND_RATE_PER_MIN = 240;
 const INBOUND_BYTES_PER_MIN = 20 * 1024 * 1024;
-/** 被扩网凭据默认端口（用户拍板：生成时选填，不填 = 8787；凭据自带端口，对方无需再填）。 */
-const EXPAND_DEFAULT_PORT = 8787;
-/** 默认引导锚点（R132 用户拍板，与 WArmy 对齐；原话「https://DHT.pondsi.com」→ 锚点主机 DHT.pondsi.com，UDP 7800）。 */
-const DEFAULT_ANCHORS = ['DHT.pondsi.com'];
+/** F中继（被扩网）凭据默认端口（R133 用户拍板：扩网默认 58588）。 */
+const EXPAND_DEFAULT_PORT = 58588;
+/** 中继页业务凭据默认端口（R133 用户拍板：中继默认 59599）。 */
+const CRED_DEFAULT_PORT = 59599;
+/** 默认业务监听端口列表（R133：多端口体系，不再自动顺延；被占端口在「端口」页显示异常并可强制启用）。 */
+const DEFAULT_PORTS = [CRED_DEFAULT_PORT, EXPAND_DEFAULT_PORT];
+/** 内置引导锚点（R133 用户拍板：443 与 62666 双端口 × DHT/DHT2 两域名；原话 https://DHT.pondsi.com 等，剥协议取主机）。 */
+const DEFAULT_ANCHORS = ['DHT.pondsi.com', 'DHT.pondsi.com:62666', 'DHT2.pondsi.com', 'DHT2.pondsi.com:62666'];
 /** 手动对外地址的验证周期：验证通过才用于宣告，失效自动回退自动推断。 */
 const MANUAL_ADDR_CHECK_MS = 5 * 60_000;
 /** 无凭据来源（未配对）的 /api/expand/relay 请求按来源 IP 限速（防滥用 §9：直接丢弃 + 限速）。 */
@@ -146,13 +150,14 @@ const DEFAULTS = {
   tls: { mode: 'self-signed', allowPlaintext: false, certFile: '', keyFile: '', hostnames: [] },
   /**
    * DHT 发现（默认强制开启，只做设备发现，消息仍走凭据通道）：
-   *  - enabled=false 才关闭；port=0 表示自动（7800 起递增），显式端口占用即失败；
-   *  - advertiseHost 对外宣告地址（留空自动推断：STUN > NAT-PMP > 本机 IPv4）；
-   *  - anchors 引导节点列表（域名待定，默认为空；每项 host 或 host:port，支持 [v6]:port）；
+   *  - udpPorts 监听端口列表（默认 443 与 62666；测试可用 FWARMY_DHT_PORTS 覆盖）；
+   *  - addresses 手动对外地址列表 [{host, port, enabled}]（每条验证通过才宣告，失效自动回退）；
+   *  - anchors 引导节点列表（默认内置 4 个：DHT/DHT2 × 443/62666；可手动追加）；
    *  - routeByDht：投递失败时用 DHT 定位目标所在中继站，优先转发给已配置互信的匹配 peer；
    *  - retryBaseMs 为内部字段（config.json 可写，管理页不暴露）：锚点引导失败后的退避基值。
    */
-  dht: { enabled: true, port: 0, advertiseHost: '', anchors: [], routeByDht: true, retryBaseMs: 1000 },
+  dht: { enabled: true, udpPorts: [443, 62666], addresses: [], anchors: [], routeByDht: true, retryBaseMs: 1000 },
+  ports: DEFAULT_PORTS, // R133 多业务端口：默认监听 59599（中继）+ 58588（扩网）；不再自动顺延
 };
 const CONFIG_RANGES = {
   ratePerMin: [1, 1_000_000],
@@ -874,14 +879,52 @@ function normTlsCfg(raw) {
     hostnames: Array.isArray(t.hostnames) ? t.hostnames.map((x) => String(x).slice(0, 253)).filter(Boolean).slice(0, 16) : d.hostnames,
   };
 }
+/** 端口列表归一化：去重/去非法/上限；空列表回默认。用于业务监听端口与 DHT UDP 端口。 */
+function normPorts(raw, def = DEFAULT_PORTS, max = 16) {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = [];
+  const seen = new Set();
+  for (const p of list) {
+    const n = Math.floor(Number(p));
+    if (!Number.isInteger(n) || n < 1 || n > 65535 || seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+    if (out.length >= max) break;
+  }
+  return out.length ? out : [...def];
+}
+/** 手动对外地址列表归一化：{host, port, enabled}；去重/去非法/上限 16。 */
+function normAddrList(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = [];
+  const seen = new Set();
+  for (const x of list) {
+    const o = x && typeof x === 'object' ? x : {};
+    const host = String(o.host || '').trim().slice(0, 253);
+    const port = Math.floor(Number(o.port));
+    if (!host || /[\s/?#]/.test(host) || !Number.isInteger(port) || port < 1 || port > 65535) continue;
+    const key = `${host}|${port}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ host, port, enabled: o.enabled !== false, manual: true });
+    if (out.length >= 16) break;
+  }
+  return out;
+}
 function normDhtCfg(raw) {
   const d = DEFAULTS.dht;
   const t = raw && typeof raw === 'object' ? raw : {};
-  const port = Number(t.port);
+  let udpPorts = normPorts(t.udpPorts, d.udpPorts, 8);
+  if (!Array.isArray(t.udpPorts) || !t.udpPorts.length) {
+    // config 未显式配置时，允许环境变量覆盖（测试/特殊环境）
+    const envPorts = String(process.env.FWARMY_DHT_PORTS || '').split(/[, ]+/).map(Number)
+      .filter((x) => Number.isInteger(x) && x >= 1 && x <= 65535);
+    if (envPorts.length) udpPorts = envPorts;
+  }
   return {
     enabled: true, // R129 拍板：DHT 强制开启（使用 FWArmy 就必须进网），配置不再接受关闭
-    port: Number.isInteger(port) && port >= 0 && port <= 65535 ? port : d.port,
-    advertiseHost: String(t.advertiseHost || '').trim().slice(0, 253), // 手动对外地址候选（验证通过才用）
+    udpPorts,
+    addresses: normAddrList(t.addresses),
     anchors: guiFanAnChors(t.anchors),
     routeByDht: t.routeByDht !== false,
     retryBaseMs: Math.max(200, Math.min(60_000, Number(t.retryBaseMs) || d.retryBaseMs)),
@@ -1142,6 +1185,7 @@ export async function startServer(options = {}) {
   cfg.accepting = cfg.accepting !== false;
   cfg.tls = normTlsCfg(cfgRaw && cfgRaw.tls);
   cfg.dht = normDhtCfg(cfgRaw && cfgRaw.dht);
+  cfg.ports = normPorts(cfg.ports);
   if (cfg.tls.mode === 'off') log('WARN', 'TLS 已关闭：业务凭据会以明文跨网传输，只建议在回环/VPN 内使用');
   const secret = createSecretBox(DATA);
   /** 旧版 first-credential.txt 是明文秘密：启动时改存 AES-GCM（.enc）并删除明文。 */
@@ -1340,7 +1384,7 @@ export async function startServer(options = {}) {
     const creds = expand.inbound.map((c) => ({
       id: c.id, name: c.name, masked: c.masked, addr: c.addr || '', createdAt: c.createdAt, lastAt: c.lastAt,
       lastResult: c.lastResult, disabled: c.disabled, limits: c.limits || null, expiresAt: c.expiresAt || 0,
-      port: c.port || 0, portOk: (c.port || 0) === (boundPort || opt.port), // R129：凭据端口必须等于本机监听端口
+      port: c.port || 0, portOk: listeningPorts().includes(Number(c.port) || 0), // R133：凭据端口须在监听集合
       effective: eff(c),
       stats: sideView(expand.stats.perInbound[c.id] || emptySide()),
     }));
@@ -1349,8 +1393,9 @@ export async function startServer(options = {}) {
       instanceId: expand.instanceId,
       identityPub: expand.identity.pub,
       port: boundPort || opt.port,
+      listeningPorts: listeningPorts(), // R133 多业务端口
       publicIp: { ...lastPub }, // R130/R131：探测结果缓存（生成凭据默认地址 + 顶部常驻显示）
-      defaultAdvHost: pickAdvertiseHost(),
+      defaultAdvHost: activeExternalAddr().host,
       tls: tlsPublicView(),
       inbound: {
         configured: creds.some((c) => !c.disabled),
@@ -1379,7 +1424,7 @@ export async function startServer(options = {}) {
   }
   function generateInboundToken(name = '', portRaw, hostRaw) {
     // 凭证自带地址 = 生成时填写的域名/IP（R130，默认探测到的公网 IP，可改）+ 端口（默认 8787）。
-    const host = String(hostRaw || '').trim() || pickAdvertiseHost();
+    const host = String(hostRaw || '').trim() || activeExternalAddr().host;
     let port = Math.floor(Number(portRaw));
     if (!Number.isInteger(port) || port < 1 || port > 65535) port = EXPAND_DEFAULT_PORT;
     const payload = Buffer.from(JSON.stringify({ h: host, p: port, r: crypto.randomBytes(16).toString('base64url') }), 'utf8').toString('base64url');
@@ -1408,9 +1453,10 @@ export async function startServer(options = {}) {
     }
     return hit;
   }
-  /** R129：凭据端口必须等于本机实际监听端口——8787 被占顺延时凭据不随动，端口不符 = 强制禁止并提醒。 */
+  /** R133：凭据端口必须在本机监听端口集合中（多端口体系）；否则强制禁止。 */
   function credPortUnavailable(c) {
-    return (Number(c.port) || 0) !== (boundPort || opt.port);
+    const lp = listeningPorts();
+    return lp.length > 0 && !lp.includes(Number(c.port) || 0);
   }
 
   /* ── 重放窗口 / 黑名单 / 来源公钥固定（security.json，同步落盘）── */
@@ -1566,6 +1612,63 @@ export async function startServer(options = {}) {
       originSig: crypto.sign(null, Buffer.from(msg, 'utf8'), identityKey).toString('base64'),
     };
   }
+  /** R133：端口管理视图（状态 + 各端口被哪些凭据使用）。 */
+  function portsView() {
+    const credsUse = (port) => Object.values(creds).filter((c) => (c.port || 0) === port).length
+      + expand.inbound.filter((c) => (c.port || 0) === port).length;
+    return {
+      ok: true,
+      defaultCredPort: CRED_DEFAULT_PORT,
+      defaultExpandPort: EXPAND_DEFAULT_PORT,
+      mainPort: boundPort || opt.port,
+      items: cfg.ports.map((port) => {
+        const st = portStates.get(port) || { status: 'error', error: 'unknown' };
+        return {
+          port,
+          status: st.status, // listening | paused | error
+          error: st.error || '',
+          creds: credsUse(port),
+          main: port === (boundPort || opt.port),
+        };
+      }),
+    };
+  }
+  function findListeningPid(port) {
+    return new Promise((resolve) => {
+      const cp = require('node:child_process');
+      if (process.platform === 'win32') {
+        cp.execFile('netstat', ['-ano', '-p', 'tcp'], { windowsHide: true, timeout: 5000 }, (err, stdout) => {
+          if (err) return resolve(0);
+          for (const line of String(stdout).split(/\r?\n/)) {
+            const m = /TCP\s+[\d.:\[\]]+:(\d+)\s+[\d.:\[\]]+:0\s+LISTENING\s+(\d+)/.exec(line);
+            if (m && Number(m[1]) === port) return resolve(Number(m[2]));
+          }
+          resolve(0);
+        });
+      } else {
+        cp.execFile('lsof', ['-t', '-iTCP:' + port, '-sTCP:LISTEN'], { timeout: 5000 }, (err, stdout) => {
+          const pid = Number(String(stdout || '').trim().split(/\s+/)[0]);
+          resolve(err || !pid ? 0 : pid);
+        });
+      }
+    });
+  }
+  /** 强制结束占用指定 TCP 端口的进程（本机端口管理，用户显式操作才调用）。 */
+  async function forceKillPort(port) {
+    const pid = await findListeningPid(port);
+    if (!pid) return { ok: true, killed: false };
+    if (pid === process.pid) return { ok: false, error: 'cannot-kill-self' };
+    try {
+      const cp = require('node:child_process');
+      if (process.platform === 'win32') cp.spawnSync('taskkill', ['/F', '/PID', String(pid)], { windowsHide: true });
+      else cp.spawnSync('kill', ['-9', String(pid)]);
+    } catch { /* 尽力 */ }
+    for (let i = 0; i < 20; i++) {
+      if (!(await findListeningPid(port))) return { ok: true, killed: true, pid };
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return { ok: false, error: '进程未退出（pid=' + pid + '），端口仍未释放' };
+  }
   function securityView() {
     const bl = Object.entries(security.blacklist)
       .sort((a, b) => (b[1].lastAt || 0) - (a[1].lastAt || 0)).slice(0, 20)
@@ -1631,14 +1734,13 @@ export async function startServer(options = {}) {
   }
 
   /* ── DHT 发现层（默认强制开启；只做设备发现，消息仍走凭据通道）──── */
-  let dhtNode = null;
+  let dhtNodes = [];
   let dhtZhiWen = '';
   let dhtRetryDelayMs = cfg.dht.retryBaseMs;
   let dhtState = { lastPublishAt: 0, lastPublishSeq: 0, lastStoredOn: [], lastError: '', lastYindao: null, selfPublishes: 0 };
   const didLastPub = new Map(); // did → 上次代发布定位记录的时间
-  /** 对外宣告地址：手动地址验证通过优先（R129），否则自动推断 STUN > NAT-PMP > 本机非回环 IPv6 > IPv4 > 回环（R132：DHT 优先 IPv6）。 */
-  function pickAdvertiseHost() {
-    if (manualAddr.valid && manualAddr.host) return manualAddr.host;
+  /** 自动推断 IP：STUN > NAT-PMP > 本机非回环 IPv6 > IPv4 > 回环（R132：优先 IPv6）。 */
+  function autoAdvIp() {
     if (lastStun && lastStun.ok && lastStun.publicAddress) return lastStun.publicAddress.host;
     if (lastNatpmp && lastNatpmp.externalIp) return lastNatpmp.externalIp;
     for (const a of localAddresses()) {
@@ -1647,8 +1749,30 @@ export async function startServer(options = {}) {
     for (const a of localAddresses()) if (!a.internal && a.family === 'IPv4') return a.address;
     return '127.0.0.1';
   }
-  /** 手动对外地址状态：valid 时才停止自动推断；定时复查，失效立即回退自动。 */
-  let manualAddr = { host: '', port: 0, valid: false, lastCheckAt: 0, lastError: '', checking: false };
+  /** 自动兜底对外地址端口（R133：443 与 62666；全挂时生效，不可关闭）。 */
+  const AUTO_ADDR_PORTS = [443, 62666];
+  /** 对外地址状态表：手动条目（cfg.dht.addresses 派生）+ 自动兜底条目。 */
+  let addrStates = [];
+  function syncAddrStates() {
+    const manual = cfg.dht.addresses.map((a) => {
+      const prev = addrStates.find((x) => x.manual && x.host === a.host && x.port === a.port);
+      return { ...a, valid: prev ? prev.valid : false, lastCheckAt: prev ? prev.lastCheckAt : 0, lastError: prev ? prev.lastError : '' };
+    });
+    const autoIp = autoAdvIp();
+    const auto = AUTO_ADDR_PORTS.map((port, i) => ({
+      host: autoIp, port, manual: false, enabled: true, valid: true,
+      lastCheckAt: 0, lastError: '', label: i === 0 ? '自动推断（443）' : '自动推断（62666）',
+    }));
+    addrStates = [...manual, ...auto];
+  }
+  syncAddrStates();
+  /** 生效的对外地址：第一个启用且验证通过的手动条目；否则自动兜底（推断 IP + 443）。 */
+  function activeExternalAddr() {
+    const m = addrStates.find((a) => a.manual && a.enabled && a.valid);
+    if (m) return { host: m.host, port: m.port };
+    const a = addrStates.find((x) => !x.manual);
+    return { host: a ? a.host : autoAdvIp(), port: a ? a.port : AUTO_ADDR_PORTS[0] };
+  }
   async function probeOwnAddress(host, port) {
     const t0 = Date.now();
     const once = (secure) => new Promise((resolve) => {
@@ -1677,45 +1801,29 @@ export async function startServer(options = {}) {
     if (r2.ok) return r2;
     return r1.error && r1.error.includes('identify') ? r1 : r2;
   }
-  /** 验证 cfg.dht.advertiseHost（手动地址候选）：能连上且 identify 确认是本实例才算有效。 */
-  async function checkManualAddr() {
-    const raw = String(cfg.dht.advertiseHost || '').trim();
-    if (!raw) {
-      manualAddr = { host: '', port: 0, valid: false, lastCheckAt: 0, lastError: '', checking: false };
-      return { ok: false, error: 'no-manual-host' };
+  /** 验证所有启用的手动对外地址：通过才用于宣告；失效自动回退自动兜底（R133 定时复查）。 */
+  async function checkExternalAddrs() {
+    for (const a of addrStates) {
+      if (!a.manual || !a.enabled) continue;
+      const r = await probeOwnAddress(a.host, a.port);
+      a.valid = r.ok;
+      a.lastCheckAt = Date.now();
+      a.lastError = r.ok ? '' : r.error;
+      log(r.ok ? 'INFO' : 'WARN', `[dht] 对外地址 ${a.host}:${a.port} ${r.ok ? '验证通过，宣告优先使用' : '验证失败（' + r.error + '）'}`);
     }
-    let host = raw, port = EXPAND_DEFAULT_PORT;
-    if (raw.startsWith('[')) {
-      const m = /^\[([^\]]+)\](?::(\d+))?$/.exec(raw);
-      if (!m) { manualAddr = { host: '', port: 0, valid: false, lastCheckAt: Date.now(), lastError: '地址格式无效（host 或 host:port）', checking: false }; return { ok: false, error: 'bad-manual-host' }; }
-      host = m[1];
-      if (m[2]) port = Number(m[2]);
-    } else {
-      const i = raw.lastIndexOf(':');
-      if (i > 0 && /^\d+$/.test(raw.slice(i + 1))) { host = raw.slice(0, i); port = Number(raw.slice(i + 1)); }
-    }
-    if (!host || /[\s/?#]/.test(host) || !Number.isInteger(port) || port < 1 || port > 65535) {
-      manualAddr = { host: '', port: 0, valid: false, lastCheckAt: Date.now(), lastError: '地址格式无效（host 或 host:port）', checking: false };
-      return { ok: false, error: 'bad-manual-host' };
-    }
-    manualAddr = { host, port, valid: false, lastCheckAt: manualAddr.lastCheckAt, lastError: '', checking: true };
-    const r = await probeOwnAddress(host, port);
-    manualAddr = { host, port, valid: r.ok, lastCheckAt: Date.now(), lastError: r.ok ? '' : r.error, checking: false };
-    log(r.ok ? 'INFO' : 'WARN', `[dht] 手动对外地址 ${host}:${port} ${r.ok ? '验证通过，宣告优先使用' : '验证失败，继续自动推断（' + r.error + '）'}`);
-    return r;
   }
-  const manualAddrTimer = setInterval(() => { if (cfg.dht.advertiseHost) void checkManualAddr(); }, MANUAL_ADDR_CHECK_MS);
-  manualAddrTimer.unref();
+  const addrCheckTimer = setInterval(() => { syncAddrStates(); void checkExternalAddrs(); }, MANUAL_ADDR_CHECK_MS);
+  addrCheckTimer.unref();
   async function dhtStop() {
-    const n = dhtNode;
-    dhtNode = null;
-    if (n) { try { await n.stop(); } catch { /* noop */ } }
+    const list = dhtNodes;
+    dhtNodes = [];
+    for (const n of list) { try { await n.stop(); } catch { /* noop */ } }
     log('INFO', '[dht] 节点已停止');
     return { ok: true };
   }
-  /** 启动/重启 DHT 节点。UDP 端口：显式配置占用即失败；port=0 时从默认端口起递增找可用。 */
+  /** 启动 DHT 节点（R133）：cfg.dht.udpPorts（默认 443、62666）各一个节点，同一身份；端口占用即失败。 */
   async function dhtStart() {
-    if (dhtNode) await dhtStop();
+    if (dhtNodes.length) await dhtStop();
     if (!cfg.dht.enabled) { dhtState.lastError = ''; return { ok: false, error: 'disabled' }; }
     let rawPub = null;
     try { rawPub = Buffer.from(String(expand.identity.pub || ''), 'base64'); } catch { rawPub = null; }
@@ -1725,44 +1833,40 @@ export async function startServer(options = {}) {
       return { ok: false, error: dhtState.lastError };
     }
     dhtZhiWen = warmyZhiWen(rawPub);
-    const node = new DhtJieDian({
-      zhiWen: dhtZhiWen,
-      publicKeyRaw: rawPub,
-      sign: (msg) => crypto.sign(null, msg, identityKey),
-      nodeId: expand.instanceId,
-      host: '::', // udp6 双栈：IPv6 直连支持（客户端路 1）
-      advertiseHost: pickAdvertiseHost(),
-      port: 0,
-      tcpPort: boundPort || opt.port,
-      groupKeys: [PUBLIC_DISCOVERY_KEY()],
-      onEvent: (e) => {
-        if (e.type === 'error') log('WARN', `[dht] ${e.detail || ''}`);
-        else log('INFO', `[dht] ${e.type}${e.detail ? ' ' + e.detail : ''}`);
-      },
-    });
-    const wantPort = cfg.dht.port > 0 ? cfg.dht.port : DEFAULT_DHT_PORT;
-    const maxTries = cfg.dht.port > 0 ? 1 : 20;
-    let bound = null;
-    for (let i = 0; i < maxTries && !bound; i++) {
-      try { bound = await node.start({ port: wantPort + i }); }
+    const adv = activeExternalAddr();
+    const list = [];
+    for (const udpPort of cfg.dht.udpPorts) {
+      const node = new DhtJieDian({
+        zhiWen: dhtZhiWen,
+        publicKeyRaw: rawPub,
+        sign: (msg) => crypto.sign(null, msg, identityKey),
+        nodeId: expand.instanceId,
+        host: '::', // udp6 双栈：IPv6 直连支持
+        advertiseHost: adv.host,
+        port: 0,
+        tcpPort: adv.port, // 宣告的业务端口 = 生效对外地址的端口
+        groupKeys: [PUBLIC_DISCOVERY_KEY()],
+        onEvent: (e) => {
+          if (e.type === 'error') log('WARN', `[dht] ${e.detail || ''}`);
+          else log('INFO', `[dht] ${e.type}${e.detail ? ' ' + e.detail : ''}`);
+        },
+      });
+      let bound = null;
+      try { bound = await node.start({ port: udpPort }); }
       catch (e) {
-        if (e && e.code === 'EADDRINUSE') continue;
-        dhtState.lastError = 'UDP 绑定失败：' + String((e && e.message) || e).slice(0, 200);
+        dhtState.lastError = `UDP 端口 ${udpPort} 绑定失败：` + String((e && e.message) || e).slice(0, 200);
         log('ERROR', '[dht] ' + dhtState.lastError);
-        return { ok: false, error: dhtState.lastError };
+        continue; // 一个失败不拖垮其它
       }
+      list.push(node);
+      log('INFO', `[dht] 节点已启动 udp=${bound.host}:${bound.port} 指纹=${dhtZhiWen.slice(0, 16)}… 锚点=${yindaoSeeds().length}`);
     }
-    if (!bound) {
-      dhtState.lastError = `UDP 端口 ${wantPort} 起 ${maxTries} 个都被占用（显式端口占用即失败，可改配置）`;
-      log('ERROR', '[dht] ' + dhtState.lastError);
-      return { ok: false, error: dhtState.lastError };
-    }
-    dhtNode = node;
+    if (!list.length) return { ok: false, error: dhtState.lastError };
+    dhtNodes = list;
     dhtState.lastError = '';
     dhtRetryDelayMs = cfg.dht.retryBaseMs;
-    log('INFO', `[dht] 节点已启动 udp=${bound.host}:${bound.port} 指纹=${dhtZhiWen.slice(0, 16)}… 锚点=${cfg.dht.anchors.length}`);
-    void dhtYindaoLoop(node);
-    return { ok: true, bound };
+    for (const node of dhtNodes) void dhtYindaoLoop(node);
+    return { ok: true };
   }
   /** 引导种子 = 默认锚点（与 WArmy 对齐，自动生效）+ 手动锚点。 */
   function yindaoSeeds() {
@@ -1772,7 +1876,7 @@ export async function startServer(options = {}) {
   /** 锚点引导：至少一个成功即发布本站记录并收工（之后靠 DHT 迭代查询自持）；全部失败则指数退避重试（可恢复）。 */
   async function dhtYindaoLoop(node) {
     for (;;) {
-      if (!node.listening || !cfg.dht.enabled || dhtNode !== node) return;
+      if (!node.listening || !cfg.dht.enabled || !dhtNodes.includes(node)) return;
       const seeds = yindaoSeeds();
       if (!seeds.length) { dhtState.lastYindao = { ok: 0, failed: 0, at: Date.now(), detail: 'no-anchors' }; return; }
       const r = await node.yindao(seeds);
@@ -1788,9 +1892,10 @@ export async function startServer(options = {}) {
     }
   }
   async function dhtPublishRecord({ zhiWen, record }) {
-    if (!dhtNode || !dhtNode.listening) return { ok: false, error: 'dht-not-running' };
+    const node = dhtNodes[0];
+    if (!node || !node.listening) return { ok: false, error: 'dht-not-running' };
     try {
-      const r = await dhtNode.publish({ zhiWen, record });
+      const r = await node.publish({ zhiWen, record });
       dhtState.lastPublishAt = Date.now();
       dhtState.lastPublishSeq = r.seq;
       dhtState.lastStoredOn = r.storedOn;
@@ -1805,10 +1910,11 @@ export async function startServer(options = {}) {
   }
   /** 本站服务记录：别人据此发现「这台中继站」，含身份公钥与 TLS 指纹用于核对互信。 */
   function dhtSelfRecord() {
+    const adv = activeExternalAddr();
     return {
       fp: dhtZhiWen,
-      host: pickAdvertiseHost(),
-      port: boundPort || opt.port,
+      host: adv.host,
+      port: adv.port,
       scope: 'relay',
       announcedAt: Date.now(),
       bieMing: expand.instanceId,
@@ -1830,8 +1936,8 @@ export async function startServer(options = {}) {
       zhiWen: didWen,
       record: {
         fp: didWen,
-        host: pickAdvertiseHost(),
-        port: boundPort || opt.port,
+        host: activeExternalAddr().host,
+        port: activeExternalAddr().port,
         scope: 'relay',
         announcedAt: Date.now(),
         bieMing: expand.instanceId,
@@ -1856,7 +1962,8 @@ export async function startServer(options = {}) {
   }
   /** 10 分钟保鲜：重发本站记录与「接近过期」的在线客户端定位记录（每轮最多 200 个，最旧优先）。 */
   async function dhtRefreshLoop() {
-    if (!cfg.dht.enabled || !dhtNode || !dhtNode.listening) return;
+    const node = dhtNodes[0];
+    if (!cfg.dht.enabled || !node || !node.listening) return;
     await dhtPublishSelf();
     const nowMs = Date.now();
     const online = [];
@@ -1874,10 +1981,11 @@ export async function startServer(options = {}) {
   dhtRefreshTimer.unref();
   /** 投递失败时定位目标：查 DHT 得到目标所在中继站的地址/身份；查不到返回 null，不阻塞原转发路径。 */
   async function dhtRouteTarget(to) {
-    if (!dhtNode || !dhtNode.listening || !cfg.dht.routeByDht) return null;
+    const node = dhtNodes[0];
+    if (!node || !node.listening || !cfg.dht.routeByDht) return null;
     const loc = dhtLocatorRecord(to);
     if (!loc) return null;
-    const r = await dhtNode.query(loc.zhiWen, { requireDecrypt: true }).catch(() => null);
+    const r = await node.query(loc.zhiWen, { requireDecrypt: true }).catch(() => null);
     if (!r || !r.ok || !r.record) return null;
     const rec = r.record;
     return {
@@ -1888,18 +1996,20 @@ export async function startServer(options = {}) {
     };
   }
   function dhtPublicView() {
-    const node = dhtNode;
+    const node = dhtNodes[0];
+    const adv = activeExternalAddr();
     return {
       ok: true,
       protocol: DHT_PROTOCOL,
       enabled: cfg.dht.enabled,
       running: !!(node && node.listening),
+      udps: dhtNodes.filter((n) => n.listening).map((n) => n.address),
       udp: node ? node.address : null,
-      advertised: { host: pickAdvertiseHost(), port: boundPort || opt.port, source: manualAddr.valid ? 'manual' : 'auto' },
-      manual: {
-        host: manualAddr.host, port: manualAddr.port, valid: manualAddr.valid,
-        lastCheckAt: manualAddr.lastCheckAt, lastError: manualAddr.lastError,
-      },
+      advertised: { host: adv.host, port: adv.port, source: addrStates.some((a) => a.manual && a.enabled && a.valid) ? 'manual' : 'auto' },
+      addresses: addrStates.map((a) => ({
+        host: a.host, port: a.port, manual: a.manual, enabled: a.enabled,
+        valid: a.valid, lastCheckAt: a.lastCheckAt, lastError: a.lastError || '', label: a.label || '',
+      })),
       instanceId: expand.instanceId,
       fingerprint: dhtZhiWen,
       nodeIdHex: node ? node.id.toString('hex') : '',
@@ -1915,8 +2025,8 @@ export async function startServer(options = {}) {
       anchors: cfg.dht.anchors,
       defaultAnchors: process.env.FWARMY_DISABLE_DEFAULT_ANCHOR === '1' ? [] : guiFanAnChors(DEFAULT_ANCHORS),
       config: {
-        enabled: cfg.dht.enabled, port: cfg.dht.port,
-        advertiseHost: cfg.dht.advertiseHost, anchors: cfg.dht.anchors,
+        enabled: cfg.dht.enabled, udpPorts: cfg.dht.udpPorts,
+        addresses: cfg.dht.addresses, anchors: cfg.dht.anchors,
         routeByDht: cfg.dht.routeByDht,
       },
       refreshMs: DHT_REFRESH_MS,
@@ -2512,7 +2622,7 @@ export async function startServer(options = {}) {
       disabled: !!c.disabled,
       limits: c.limits,
       effective: eff(c),
-      endpoint: c.host ? { host: c.host, port: c.port || EXPAND_DEFAULT_PORT } : null,
+      endpoint: c.host ? { host: c.host, port: c.port || CRED_DEFAULT_PORT } : null,
       total: withBytes(total),
       today: withBytes(today),
       month: withBytes(month),
@@ -3282,8 +3392,50 @@ export async function startServer(options = {}) {
         });
       }
     }
-    if (req.method === 'GET' && p === '/api/admin/security') return send(res, 200, securityView());
-    if (req.method === 'GET' && p === '/api/admin/dht') return send(res, 200, dhtPublicView());
+    /* ── R133 端口管理：多业务端口（监听/暂停/异常/占用强制启用/删除/添加）── */
+    if (req.method === 'GET' && p === '/api/admin/ports') return send(res, 200, portsView());
+    if (req.method === 'POST' && p === '/api/admin/ports') {
+      const j = await body(req);
+      const action = String(j.action || '');
+      const port = Math.floor(Number(j.port));
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return send(res, 400, { ok: false, error: 'bad-port' });
+      if (action === 'add') {
+        if (cfg.ports.includes(port)) return send(res, 400, { ok: false, error: 'port-exists' });
+        cfg.ports = normPorts([...cfg.ports, port]);
+        if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
+        const r = await startPort(port);
+        log('INFO', `端口管理：添加 ${port}（${r.ok ? '监听中' : r.error}）`);
+        return send(res, 200, { ok: true, start: r, ports: portsView() });
+      }
+      if (action === 'pause') {
+        if (!cfg.ports.includes(port)) return send(res, 400, { ok: false, error: 'not-managed' });
+        pausePort(port);
+        log('INFO', `端口管理：暂停 ${port}`);
+        return send(res, 200, { ok: true, ports: portsView() });
+      }
+      if (action === 'resume' || action === 'force') {
+        if (!cfg.ports.includes(port)) return send(res, 400, { ok: false, error: 'not-managed' });
+        let killed = false;
+        if (action === 'force') {
+          const k = await forceKillPort(port);
+          if (!k.ok) return send(res, 400, { ok: false, error: k.error });
+          killed = k.killed;
+        }
+        const r = await startPort(port);
+        return send(res, 200, { ok: true, start: r, killed, ports: portsView() });
+      }
+      if (action === 'remove') {
+        if (!cfg.ports.includes(port)) return send(res, 400, { ok: false, error: 'not-managed' });
+        pausePort(port);
+        cfg.ports = cfg.ports.filter((x) => x !== port);
+        if (!cfg.ports.length) cfg.ports = [...DEFAULT_PORTS];
+        if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
+        log('INFO', `端口管理：删除 ${port}`);
+        return send(res, 200, { ok: true, ports: portsView() });
+      }
+      return send(res, 400, { ok: false, error: 'bad-action' });
+    }
+    if (req.method === 'GET' && p === '/api/admin/security') return send(res, 200, securityView());    if (req.method === 'GET' && p === '/api/admin/dht') return send(res, 200, dhtPublicView());
     if (req.method === 'POST' && p === '/api/admin/dht-config') {
       const j = await body(req);
       if (j.enabled === false) return send(res, 400, { ok: false, error: 'dht-always-on', hint: 'DHT 发现层强制开启，不可关闭' });
@@ -3295,9 +3447,10 @@ export async function startServer(options = {}) {
       const prev = cfg.dht;
       cfg.dht = next;
       if (!saveCfg()) { cfg.dht = prev; return send(res, 500, { ok: false, error: 'persist-failed' }); }
-      log('INFO', `DHT 配置已保存 port=${next.port} anchors=${next.anchors.length} routeByDht=${next.routeByDht}`);
+      log('INFO', `DHT 配置已保存 udpPorts=${next.udpPorts.join(',')} addresses=${next.addresses.length} anchors=${next.anchors.length} routeByDht=${next.routeByDht}`);
+      syncAddrStates();
       const r = await dhtStart();
-      if (j.advertiseHost !== undefined) void checkManualAddr();
+      if (j.addresses !== undefined) void checkExternalAddrs();
       return send(res, 200, { ok: true, restart: r.ok ? 'started' : r.error || 'failed', dht: dhtPublicView() });
     }
     if (req.method === 'POST' && p === '/api/admin/dht-publish') {
@@ -3308,10 +3461,11 @@ export async function startServer(options = {}) {
       const j = await body(req);
       const fp = String(j.fingerprint || '').trim();
       if (!fp || !/^[A-Z2-7]{40,60}$/.test(fp)) return send(res, 400, { ok: false, error: 'bad-fingerprint' });
-      if (!dhtNode || !dhtNode.listening) {
+      const node = dhtNodes[0];
+      if (!node || !node.listening) {
         return send(res, 200, { ok: true, found: false, error: 'dht-not-running', dht: dhtPublicView() });
       }
-      const r = await dhtNode.query(fp, { requireDecrypt: true }).catch((e) => ({ ok: false, error: String((e && e.message) || e) }));
+      const r = await node.query(fp, { requireDecrypt: true }).catch((e) => ({ ok: false, error: String((e && e.message) || e) }));
       return send(res, 200, {
         ok: true, found: r.ok === true, record: r.record || null,
         attempts: r.attempts || [], rejected: r.rejected || [], error: r.error || '',
@@ -3405,7 +3559,7 @@ export async function startServer(options = {}) {
       const host = String(j.host || '').trim().slice(0, 253);
       if (host && /[\s/?#]/.test(host)) return send(res, 400, { ok: false, error: 'bad-host' });
       let port = Number(j.port);
-      if (host && (!Number.isInteger(port) || port < 1 || port > 65535)) port = EXPAND_DEFAULT_PORT;
+      if (host && (!Number.isInteger(port) || port < 1 || port > 65535)) port = CRED_DEFAULT_PORT; // R133：中继凭据默认 59599
       const token = b64u(crypto.randomBytes(32));
       const id = crypto.randomUUID();
       creds[id] = {
@@ -3433,7 +3587,7 @@ export async function startServer(options = {}) {
         const h = j.host !== undefined ? String(j.host || '').trim().slice(0, 253) : (c.host || '');
         if (h && /[\s/?#]/.test(h)) return send(res, 400, { ok: false, error: 'bad-host' });
         let port = j.port !== undefined ? Number(j.port) : (c.port || 0);
-        if (h && (!Number.isInteger(port) || port < 1 || port > 65535)) port = EXPAND_DEFAULT_PORT;
+        if (h && (!Number.isInteger(port) || port < 1 || port > 65535)) port = CRED_DEFAULT_PORT;
         if (!h) port = 0;
         c.host = h; c.port = port;
       }
@@ -3629,7 +3783,7 @@ export async function startServer(options = {}) {
         const jiu = ren.get(did);
         ren.set(did, { boxPub, lastSeen: Date.now(), queue: jiu ? jiu.queue : [] });
         // DHT 发现：注册即把「该客户端当前所在中继站 = 本站」签入 DHT（异步，失败只记日志）。
-        if (cfg.dht.enabled && dhtNode) void dhtPublishLocator(did);
+        if (cfg.dht.enabled && dhtNodes[0]) void dhtPublishLocator(did);
         return reply(200, { ok: true, online: true });
       }
       if (req.method === 'POST' && u.pathname === '/api/bye') {
@@ -3717,17 +3871,46 @@ export async function startServer(options = {}) {
    * 而公网来源的明文会在请求层被 426 拒绝。注意 resume 必须放到 nextTick，
    * 否则 TLS server 还没挂好监听就被恢复流动，握手会超时。
    */
-  const srv = net.createServer((socket) => {
-    socket.on('error', () => { /* 连接级错误不影响服务 */ });
-    socket.once('data', (buf) => {
-      if (!buf || !buf.length) { socket.destroy(); return; }
-      socket.pause();
-      socket.unshift(buf);
-      const target = buf[0] === 0x16 && httpsSrv ? httpsSrv : httpSrv;
-      target.emit('connection', socket);
-      process.nextTick(() => { try { socket.resume(); } catch { /* noop */ } });
+  function makeSrv() {
+    return net.createServer((socket) => {
+      socket.on('error', () => { /* 连接级错误不影响服务 */ });
+      socket.once('data', (buf) => {
+        if (!buf || !buf.length) { socket.destroy(); return; }
+        socket.pause();
+        socket.unshift(buf);
+        const target = buf[0] === 0x16 && httpsSrv ? httpsSrv : httpSrv;
+        target.emit('connection', socket);
+        process.nextTick(() => { try { socket.resume(); } catch { /* noop */ } });
+      });
     });
-  });
+  }
+  /** R133 多业务端口：每端口一个分流器；状态 listening/paused/error（occupied）。 */
+  const portStates = new Map(); // port → { srv, status, error }
+  async function startPort(port) {
+    const cur = portStates.get(port);
+    if (cur && cur.srv) { try { cur.srv.close(); } catch { /* noop */ } }
+    const srv = makeSrv();
+    const r = await new Promise((resolve) => {
+      const onErr = (e) => { srv.off('listening', onOk); resolve({ ok: false, code: e && e.code, msg: String((e && e.message) || e) }); };
+      const onOk = () => { srv.off('error', onErr); resolve({ ok: true }); };
+      srv.once('error', onErr);
+      srv.once('listening', onOk);
+      srv.listen(port, opt.host);
+    });
+    if (r.ok) { portStates.set(port, { srv, status: 'listening', error: '' }); return { ok: true }; }
+    try { srv.close(); } catch { /* noop */ }
+    const occupied = r.code === 'EADDRINUSE';
+    portStates.set(port, { srv: null, status: 'error', error: occupied ? 'occupied' : r.msg.slice(0, 120) });
+    return { ok: false, error: occupied ? 'occupied' : r.msg.slice(0, 120) };
+  }
+  function pausePort(port) {
+    const cur = portStates.get(port);
+    if (!cur) return { ok: false, error: 'not-managed' };
+    if (cur.srv) { try { cur.srv.close(); } catch { /* noop */ } }
+    portStates.set(port, { srv: null, status: 'paused', error: '' });
+    return { ok: true };
+  }
+  const listeningPorts = () => [...portStates.keys()].filter((p) => portStates.get(p).status === 'listening');
 
   // ── 单实例：已有同数据目录的服务就只打开管理页 ──
   async function probe(port) {
@@ -3754,47 +3937,43 @@ export async function startServer(options = {}) {
     }
   }
 
+  // ── R133 多业务端口启动：显式 --port 固定单端口；否则监听 cfg.ports（默认 59599+58588），被占标记异常不再顺延 ──
   let port = opt.port;
   let boundPort = 0;
-  /** 显式 --port 是固定端口：占用即失败；只有未指定端口才自动递增（F07）。 */
-  const maxTries = opt.portExplicit ? 1 : 20;
-  let bindErr = null;
-  for (let i = 0; i < maxTries && !boundPort; i++) {
-    const tryPort = port + i;
-    try {
-      await new Promise((resolve, reject) => {
-        const onErr = (e) => { srv.off('listening', onOk); reject(e); };
-        const onOk = () => { srv.off('error', onErr); resolve(); };
-        srv.once('error', onErr);
-        srv.once('listening', onOk);
-        srv.listen(tryPort, opt.host);
-      });
-      boundPort = tryPort;
-    } catch (e) {
-      if (e && e.code === 'EADDRINUSE') {
-        const h = await probe(tryPort);
-        const sameOurs = h && (h.server === 'fwarmy-relay' || h.server === 'warmy-relay') && h.dataDirHash === dataDirHash;
-        if (sameOurs) {
-          // 同一数据目录的实例已在该端口服务（例如旧版无锁实例）：只打开管理页。
-          log('INFO', `端口 ${tryPort} 上已有本数据目录的 FWArmy；本次只打开管理页`);
-          cleanupNewFiles();
-          finishAlreadyRunning(`${tlsInfo ? 'https' : 'http'}://127.0.0.1:${tryPort}/`);
-          return { alreadyRunning: true, port: tryPort, dataDir: DATA };
-        }
-        if (opt.portExplicit) {
-          const who = h && (h.server === 'fwarmy-relay' || h.server === 'warmy-relay')
-            ? `被另一个 FWArmy 实例占用（数据目录标识 ${h.dataDirHash || '未知'}，不是本数据目录）`
-            : '被其它程序占用';
-          cleanupNewFiles();
-          throw new Error(`显式端口 ${tryPort} ${who}；显式 --port 固定端口不会自动换端口`);
-        }
-        log('WARN', `端口 ${tryPort} 被占用，尝试 ${tryPort + 1}`);
-      } else { bindErr = e; break; }
+  const wantPorts = opt.portExplicit ? [opt.port] : cfg.ports;
+  if (opt.portExplicit) cfg.ports = [opt.port]; // 视图/状态与实际监听一致（不落盘，运行参数）
+  const finishIfOurs = async (p) => {
+    const h = await probe(p);
+    const sameOurs = h && (h.server === 'fwarmy-relay' || h.server === 'warmy-relay') && h.dataDirHash === dataDirHash;
+    if (sameOurs) {
+      log('INFO', `端口 ${p} 上已有本数据目录的 FWArmy；本次只打开管理页`);
+      cleanupNewFiles();
+      finishAlreadyRunning(`${tlsInfo ? 'https' : 'http'}://127.0.0.1:${p}/`);
+      return true;
     }
+    return false;
+  };
+  for (const p of wantPorts) {
+    const r = await startPort(p);
+    if (r.ok) {
+      if (!boundPort) boundPort = p;
+      continue;
+    }
+    if (opt.portExplicit && p === opt.port) {
+      if (await finishIfOurs(p)) return { alreadyRunning: true, port: p, dataDir: DATA };
+      const h = await probe(p);
+      const who = h && (h.server === 'fwarmy-relay' || h.server === 'warmy-relay')
+        ? `被另一个 FWArmy 实例占用（数据目录标识 ${h.dataDirHash || '未知'}，不是本数据目录）`
+        : '被其它程序占用';
+      cleanupNewFiles();
+      throw new Error(`显式端口 ${p} ${who}；显式 --port 固定端口不会自动换端口`);
+    }
+    log('WARN', `端口 ${p} 未能监听（${r.error}），已标记异常；可在「端口」页处理占用后启用`);
   }
   if (!boundPort) {
+    if (await finishIfOurs(wantPorts[0])) return { alreadyRunning: true, port: wantPorts[0], dataDir: DATA };
     cleanupNewFiles();
-    throw bindErr || new Error(`找不到可用端口（${port} 起试了 ${maxTries} 个）`);
+    throw new Error(`没有可监听的端口（${wantPorts.join(', ')} 均被占用或失败）；请在管理页「端口」处理占用后重启`);
   }
   port = boundPort;
   actualPort = boundPort;
@@ -3834,7 +4013,8 @@ export async function startServer(options = {}) {
   setInterval(() => void probePublicIp(), 30 * 60_000).unref();
   // 先验证手动对外地址再启动节点：首次发布的记录就用最终宣告地址（避免先用自动地址发布后被手动覆盖）。
   void (async () => {
-    if (cfg.dht.advertiseHost) await checkManualAddr();
+    syncAddrStates();
+    await checkExternalAddrs();
     const r = await dhtStart();
     if (!r.ok) log('WARN', '[dht] 启动失败：' + (r.error || ''));
   })();
@@ -3892,12 +4072,11 @@ export async function startServer(options = {}) {
     try { if (httpsSrv) httpsSrv.close(); } catch { /* noop */ }
     try { httpSrv.closeAllConnections && httpSrv.closeAllConnections(); } catch { /* noop */ }
     try { if (httpsSrv && httpsSrv.closeAllConnections) httpsSrv.closeAllConnections(); } catch { /* noop */ }
-    await new Promise((resolve) => {
-      let done = false;
-      const fin = () => { if (!done) { done = true; resolve(); } };
-      try { srv.close(fin); } catch { fin(); }
+    await Promise.all([...portStates.values()].map((st) => new Promise((resolve) => {
+      const fin = () => resolve();
+      if (st.srv) { try { st.srv.close(fin); } catch { fin(); } } else fin();
       setTimeout(fin, 1500).unref();
-    });
+    })));
     try { if (logStream) { logStream.end(); logStream = null; } } catch { /* noop */ }
   }
   function shutdown(reason) {
@@ -3934,7 +4113,7 @@ export async function startServer(options = {}) {
     try { process.off('unhandledRejection', unhandledHandler); } catch { /* noop */ }
   }
 
-  return { srv, port, dataDir: DATA, stats: () => buildStats(), shutdown, close };
+  return { port, dataDir: DATA, stats: () => buildStats(), shutdown, close };
 }
 
 /** 源运行时：`node server.mjs` 直接启动。单文件由 sea-main.mjs 调用 startServer，不能在这里重复启动。 */

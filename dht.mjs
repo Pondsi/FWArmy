@@ -29,7 +29,7 @@ export const RECORD_VERSION = 1;
 export const DEFAULT_RECORD_TTL_MS = 30 * 60_000;
 /** 公开发现记录的固定群密钥（与 WArmy public-discovery 相同：所有人可解，记录本身仍必须签名） */
 export const PUBLIC_DISCOVERY_KEY = () => sha256(Buffer.from('warmy-public-discovery/1', 'utf8'));
-export const DEFAULT_DHT_PORT = 7800;
+export const DEFAULT_DHT_PORT = 443; // R133 拍板：DHT/锚点默认端口 443（另配 62666）
 /** 记录 TTL 30 分钟 ⇒ 每 10 分钟重发一次保鲜 */
 export const DHT_REFRESH_MS = 10 * 60_000;
 /* ── 防滥用边界（DHT 发现层自身的 DoS 防护；不参与协议语义） ── */
