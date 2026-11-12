@@ -277,7 +277,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
   <div class="panel">
     <h2 title="DHT 发现层：默认强制开启、不可关闭；只做设备发现，消息投递仍走凭据通道（发现 ≠ 授权）">DHT 发现</h2>
     <div class="cards" id="dhtCards"></div>
-    <div class="hint" style="margin:10px 0 6px" title="对外地址 = 本站宣告给别人的地址（验证通过才宣告，每 5 分钟复查；自动兜底 = 公网 IPv4/IPv6 × 443/62666 最多 4 条，不可改删，只能暂停）">对外地址</div>
+    <div class="hint" style="margin:10px 0 6px" title="对外地址 = 本站宣告给别人的「投递地址」（TCP 业务端口，验证通过才宣告，每 5 分钟复查；自动兜底 = 公网 IPv4/IPv6 × 443/62666 最多 4 条，不可改删，只能暂停）。每行下方显示对应的「引导地址」= 同一 host × 本机 UDP 端口（443/62666），别人发现本机后据此引导入网">对外地址（投递 TCP · 引导 UDP 见行内）</div>
     <div style="display:flex;gap:6px;margin-bottom:6px">
       <input id="dhtAdvNew" placeholder="relay.example.com:58588 或 1.2.3.4:59599" title="添加对外地址：域名IP:端口；必须指向本机（本机网卡/探测公网 IP/回环），域名须解析到本机，否则拒绝" style="flex:1">
       <button class="sm" id="dhtAdvAdd" title="添加对外地址（指向本机才生效）">添加</button>
@@ -537,119 +537,58 @@ const fromMb = (v) => {
 // R135l：静态预览模式（file:// 直接打开界面，不运行程序）——界面/气泡/帮助文档可验收，提示静默
 const STATIC_MODE = location.protocol === 'file:';
 
-/* ── R135m：静态预览演示数据（file:// 打开不运行程序时，填充示例数据供界面验收）── */
-function demoStats(n, b) {
-  return { requests: n, bytes: b, bytesIn: Math.round(b * 0.55), bytesOut: Math.round(b * 0.45), relayed: n, delivered: Math.max(0, n - 4), rejected: 2, offline: 2 };
-}
-function demoCred(id, name, limits, today, month, year, total, peak, addition) {
-  return {
-    id, name, masked: '…Zk3x…9fQp4',
-    createdAt: new Date(Date.now() - 86400e3 * 12).toISOString(),
-    disabled: false, limits, effective: limits, total, today, month, year,
-    speed: { reqPerMin: Math.max(0, Math.round(today.requests / 60)), bytesPerMin: Math.round(today.bytes / 60) },
-    peakPerMin: peak, peakAt: Date.now() - 600e3, lastUsed: Date.now() - 900e3,
-    endpoint: { host: '203.0.113.9', port: 59599 }, addition,
-  };
-}
-function demoSide(n, b) {
-  return { today: demoStats(Math.round(n * 0.2), Math.round(b * 0.15)), month: demoStats(Math.round(n * 0.6), Math.round(b * 0.55)), total: demoStats(n, b), lastResult: 'queued' };
+/* ── R135m/n：静态预览空结构（file:// 打开不运行程序时，表格保留表头，数据为空显示 0/无统计）── */
+function emptyStats() {
+  return { requests: 0, bytes: 0, bytesIn: 0, bytesOut: 0, relayed: 0, delivered: 0, rejected: 0, offline: 0 };
 }
 function loadDemoView() {
   const now = Date.now();
-  const limitA = { ratePerMin: 60, bytesPerMin: 5 * 1024 * 1024, dailyRequests: null, dailyBytes: null, monthlyRequests: 5000, monthlyBytes: null, totalRequests: null, totalBytes: null, yearlyBytes: null };
-  const limitB = { ratePerMin: 120, bytesPerMin: 10 * 1024 * 1024, dailyRequests: 2000, dailyBytes: 200 * 1024 * 1024, monthlyRequests: null, monthlyBytes: null, totalRequests: 100000, totalBytes: 20 * 1024 * 1024 * 1024, yearlyBytes: null };
-  const limitC = { ratePerMin: 30, bytesPerMin: 2 * 1024 * 1024, dailyRequests: null, dailyBytes: null, monthlyRequests: null, monthlyBytes: null, totalRequests: null, totalBytes: null, yearlyBytes: null };
   S = {
-    totals: {
-      speed: { reqPerMin: 96, bytesPerMin: 1.8 * 1024 * 1024 }, peakPerMin: 143, peakAt: now - 3600e3,
-      today: demoStats(312, 13.2 * 1024 * 1024), month: demoStats(12380, 398 * 1024 * 1024), year: demoStats(157200, 4.8e9),
-      requests: 262400, bytes: 8.1e9, bytesIn: 4.4e9, bytesOut: 3.7e9,
-      relayed: 258100, delivered: 256700, rejected: 980, offline: 420,
-    },
-    users: 3, queued: 6, uptimeSec: 12.5 * 3600, version: '0.6.0', accepting: true,
-    tls: { mode: 'self-signed', secure: true, fingerprint: '3f2ce1ab90d74a5f8c6b21e3d94a7f10a2b3c4d5e6f70819a0b1c2d3e4f50617' },
-    unauthorized: 47, publicIp: { ipv4: '203.0.113.9', ipv6: '240e:3a2:1:2::9', at: now },
-    entryPort: 8787, dataDir: 'C:\\FWArmy\\data（静态预览示例）',
-    listeningPorts: [8787, 59599, 58588], update: null,
-    security: { blacklist: 3, replay: { count: 12 }, policy: { windowMs: 86400000, replayMaxPasses: 2, blacklistTtlMs: 30 * 86400000 }, violations: { loop: 0, signatureBad: 1, replayRejected: 9, originMismatch: 0, routeTooLong: 0 } },
-    perCredential: [
-      demoCred('c1', '家里的电脑', limitA, demoStats(120, 4.2e6), demoStats(2800, 96e6), demoStats(36000, 1.2e9), demoStats(36000, 1.2e9), 88, { mode: 'sequence', weights: {} }),
-      demoCred('c2', '办公室笔记本', limitB, demoStats(168, 8.1e6), demoStats(8700, 290e6), demoStats(118000, 3.7e9), demoStats(118000, 3.7e9), 143, { mode: 'random', weights: {} }),
-      demoCred('c3', '备用设备', limitC, demoStats(24, 0.9e6), demoStats(880, 12e6), demoStats(8300, 104e6), demoStats(8300, 104e6), 41, null),
-    ],
-    credTotal: 3, credEnabled: 3,
+    totals: { speed: { reqPerMin: 0, bytesPerMin: 0 }, peakPerMin: 0, peakAt: 0,
+      today: emptyStats(), month: emptyStats(), year: emptyStats(), requests: 0, bytes: 0, bytesIn: 0, bytesOut: 0, relayed: 0, delivered: 0, rejected: 0, offline: 0 },
+    users: 0, queued: 0, uptimeSec: 0, version: '0.6.0', accepting: true,
+    tls: { mode: 'self-signed', secure: true, fingerprint: '' },
+    unauthorized: 0, publicIp: { ipv4: '', ipv6: '', at: 0 },
+    entryPort: 8787, dataDir: '—（静态预览：未连接服务器）',
+    listeningPorts: [], update: null,
+    security: { blacklist: 0, replay: { count: 0 }, policy: { windowMs: 86400000, replayMaxPasses: 2, blacklistTtlMs: 30 * 86400000 }, violations: { loop: 0, signatureBad: 0, replayRejected: 0, originMismatch: 0, routeTooLong: 0 } },
+    perCredential: [], credTotal: 0, credEnabled: 0,
   };
-  P = {
-    ok: true, defaultCredPort: 59599, defaultExpandPort: 58588, entryPort: 8787,
-    items: [
-      { port: 8787, protocol: 'tcp', status: 'listening', error: '', creds: 1, main: true },
-      { port: 59599, protocol: 'tcp', status: 'listening', error: '', creds: 2, main: false },
-      { port: 58588, protocol: 'tcp', status: 'listening', error: '', creds: 1, main: false },
-      { port: 443, protocol: 'udp', status: 'listening', error: '', creds: 0, main: false },
-      { port: 62666, protocol: 'udp', status: 'listening', error: '', creds: 0, main: false },
-    ],
-  };
+  P = { ok: true, defaultCredPort: 59599, defaultExpandPort: 58588, entryPort: 8787, items: [] };
   D = {
-    ok: true, enabled: true, running: true, udps: [{ host: '::', port: 443 }, { host: '::', port: 62666 }], udp: { host: '::', port: 443 },
-    advertised: { host: '203.0.113.9', port: 59599, source: 'auto' },
-    fingerprint: 'V3KF2M…(52位示例)', nodeIdHex: '9f3a…', contacts: 5,
-    contactsList: [
-      { id: 'a1b2c3d4e5f607180000000000000000', host: '203.0.113.20', port: 62666, zhiWen: 'W4Q9…', lastSeen: now - 120e3 },
-      { id: 'b2c3d4e5f60718290000000000000000', host: '240e:3a2:1:5::8', port: 443, zhiWen: 'K8L2…', lastSeen: now - 300e3 },
-      { id: 'c3d4e5f6071829a10000000000000000', host: '203.0.113.33', port: 62666, zhiWen: 'P7M1…', lastSeen: now - 900e3 },
-    ],
-    addresses: [
-      { host: 'relay.example.com', port: 59599, manual: true, enabled: true, valid: true, lastCheckAt: now - 120e3, lastError: '', label: '' },
-      { host: '203.0.113.9', port: 443, manual: false, enabled: true, valid: true, lastCheckAt: 0, lastError: '', label: '自动兜底 · 公网 IPv4 · 443', family: 'IPv4', key: 'IPv4|443' },
-      { host: '203.0.113.9', port: 62666, manual: false, enabled: true, valid: true, lastCheckAt: 0, lastError: '', label: '自动兜底 · 公网 IPv4 · 62666', family: 'IPv4', key: 'IPv4|62666' },
-    ],
-    anchors: [{ host: '203.0.113.20', port: 443 }],
+    ok: true, enabled: true, running: false, udps: [], udp: null,
+    advertised: { host: '', port: 0, source: 'auto' },
+    fingerprint: '', nodeIdHex: '', contacts: 0, contactsList: [],
+    addresses: [], anchors: [],
     defaultAnchors: [{ host: 'DHT.pondsi.com', port: 443 }, { host: 'DHT.pondsi.com', port: 62666 }, { host: 'DHT2.pondsi.com', port: 443 }, { host: 'DHT2.pondsi.com', port: 62666 }],
-    config: { enabled: true, udpPorts: [443, 62666], pausedUdpPorts: [], addresses: [{ host: 'relay.example.com', port: 59599, enabled: true }], pausedAuto: [], anchors: [{ host: '203.0.113.20', port: 443 }], routeByDht: true },
-    lastPublishAt: now - 300e3, lastPublishSeq: 42, lastStoredOn: [{ host: '203.0.113.20', port: 443 }], lastError: '', lastYindao: { ok: 2, failed: 0, at: now - 1800e3, detail: '' }, selfPublishes: 16,
+    config: { enabled: true, udpPorts: [443, 62666], pausedUdpPorts: [], addresses: [], pausedAuto: [], anchors: [], routeByDht: true },
+    lastPublishAt: 0, lastPublishSeq: 0, lastStoredOn: [], lastError: '静态预览：未连接服务器（DHT 未运行）', lastYindao: null, selfPublishes: 0,
   };
   E = {
-    ok: true, instanceId: 'demo-instance', identityPub: '', port: 8787,
-    listeningPorts: [8787, 59599, 58588], publicIp: { ipv4: '203.0.113.9', ipv6: '240e:3a2:1:2::9', at: now },
-    tls: { mode: 'self-signed', secure: true, fingerprint: '3f2c…' },
-    stats: { outbound: demoSide(4860, 152e6), inbound: demoSide(7230, 231e6) },
-    outbound: [
-      { id: 'p1', name: '办公室 FWArmy', tls: { mode: 'pin', fingerprint: '9f4e…', trusted: true }, enabled: true, lastTest: now - 600e3, lastTestOk: true,
-        stats: { total: demoStats(4860, 152e6), today: demoStats(970, 30e6), month: demoStats(4200, 130e6), lastResult: 'queued' } },
-      { id: 'p2', name: '备用中继', tls: { mode: 'pin', fingerprint: '7d1a…', trusted: false }, enabled: true, lastTest: null, lastTestOk: null,
-        stats: { total: demoStats(0, 0), today: demoStats(0, 0), month: demoStats(0, 0), lastResult: 'needs-trust' } },
-    ],
-    inbound: {
-      configured: true, count: 2,
-      credentials: [
-        { id: 'i1', name: '朋友的 FWArmy', masked: '…Qp4f…8xZk', port: 58588, portOk: true, disabled: false, expiresAt: 0, lastAt: now - 240e3, lastResult: 'queued', stats: { total: demoStats(7230, 231e6) } },
-        { id: 'i2', name: '测试站', masked: '…L9w…2aVq', port: 58588, portOk: true, disabled: false, expiresAt: now + 30 * 86400e3, lastAt: now - 7200e3, lastResult: 'offline', stats: { total: demoStats(210, 8e6) } },
-      ],
-      sources: { '203.0.113.20': { total: demoStats(7230, 231e6), today: demoStats(1446, 46e6), month: demoStats(6200, 200e6), lastResult: 'queued', lastAt: now - 240e3 } },
-      stats: demoSide(7230, 231e6),
-    },
+    ok: true, instanceId: '', identityPub: '', port: 8787,
+    listeningPorts: [], publicIp: { ipv4: '', ipv6: '', at: 0 },
+    tls: { mode: 'self-signed', secure: true, fingerprint: '' },
+    stats: { outbound: { today: emptyStats(), month: emptyStats(), total: emptyStats(), lastResult: '' }, inbound: { today: emptyStats(), month: emptyStats(), total: emptyStats(), lastResult: '' } },
+    outbound: [],
+    inbound: { configured: false, count: 0, credentials: [], sources: {}, stats: { today: emptyStats(), month: emptyStats(), total: emptyStats(), lastResult: '' } },
   };
-  R = {
-    verdict: 'lan-only', hints: ['静态预览示例数据（未连接服务器）'],
-    listening: { scheme: 'https', host: '127.0.0.1', port: 8787, tls: { fingerprint: '3f2ce1ab…' } },
-    natpmp: null, mapping: null, stun: null, evidence: null,
-  };
+  R = { verdict: 'unknown', hints: ['静态预览：未连接服务器'], listening: null, natpmp: null, mapping: null, stun: null, evidence: null };
   U = {
     current: '0.6.0', platform: 'win-x64', singleFile: true, auto: 'check', intervalHours: 24,
-    latest: { version: '0.6.0', publishedAt: '2026-11-01T00:00:00Z', asset: {} },
-    updateAvailable: false, lastCheck: now - 3600e3, lastError: '', canInstall: false, installing: false, staged: false,
-    queue: 0, history: [{ at: now - 7200e3, from: '0.6.0', to: '0.6.0', ok: true, note: '已是最新' }], notes: '',
+    latest: { version: '', publishedAt: '', asset: {} },
+    updateAvailable: false, lastCheck: 0, lastError: '', canInstall: false, installing: false, staged: false,
+    queue: 0, history: [], notes: '',
   };
-  ADD = { texts: ['欢迎使用 WArmy 专属服务器', '注意：请保管好你的凭据', '新功能：附加内容已上线'], max: 1000, maxBytes: 512 };
+  ADD = { texts: [], max: 1000, maxBytes: 512 };
   for (const [name, fn] of [['render', render], ['renderPorts', renderPorts], ['renderDht', renderDht], ['renderExpand', renderExpand], ['renderReach', renderReach], ['renderUpdate', renderUpdate]]) {
     try { fn(); } catch (e) { console.error('DEMO-RENDER-FAIL:', name, String(e && e.message || e)); }
   }
-  $('#addTexts').value = (ADD.texts || []).join('\n');
-  $('#addCount').textContent = `${(ADD.texts || []).length} / ${ADD.max} 条`;
-  $('#addAudit').innerHTML = `审计链：36 条 · 链头 <code>9f4e2c1a…</code> · 上次签名检查点 ${fmtTime(now - 300e3)} <button class="sm" id="addAuditPub" title="立即把审计链根签名发布到 DHT（防回滚检查点）">立即发布检查点</button> <button class="sm" id="addAuditRefresh" title="刷新审计链状态">刷新</button>`;
-  $('#logBox').textContent = '[10:02:11] [INFO] 服务器启动完成（静态预览示例日志）\n[10:02:12] [INFO] DHT 节点已启动 udp=443 锚点=4\n[10:02:12] [INFO] 锚点引导成功 2/4，路由表 3；发布本站记录\n[10:03:00] [INFO] 中继凭据 家里的电脑 投递 3 条\n[10:03:15] [WARN] 未授权尝试（来源 203.0.113.99）\n[10:05:00] [INFO] 附加内容已添加（凭据 办公室笔记本）';
-  $('#logFile').textContent = 'C:\\FWArmy\\data\\server.log（示例）';
-  $('#dataDir').textContent = 'C:\\FWArmy\\data（静态预览示例）';
+  $('#addTexts').value = '';
+  $('#addCount').textContent = `0 / ${ADD.max} 条`;
+  $('#addAudit').innerHTML = '审计链：0 条（静态预览：未连接服务器）';
+  $('#logBox').textContent = '（静态预览：未连接服务器，无日志）';
+  $('#logFile').textContent = '—';
+  $('#dataDir').textContent = '—（静态预览）';
   $('#ptEntryHint').textContent = '';
   renderPubIp(S.publicIp);
 }
@@ -1178,6 +1117,9 @@ function renderDht() {
       const portBtn = a.manual && ps && ps.status !== 'listening'
         ? `<button class="sm" data-dht-enable-port="${a.port}">启用端口</button>`
         : '';
+      // R135n：引导地址 = 该行 host × 本机 UDP 端口（投递走 TCP 业务端口，引导走 UDP——发现即引导）
+      const udpPorts = (d.config && d.config.udpPorts || []).filter((p) => !((d.config.pausedUdpPorts || []).includes(p)));
+      const guide = udpPorts.length ? `引导：<code>${esc(a.host)}:${udpPorts.join(' / ')}</code>` : '';
       const ops = [];
       if (a.manual) {
         ops.push(`<button class="sm" data-dht-edit-addr="${esc(a.host + ':' + a.port)}">修改</button>`);
@@ -1186,7 +1128,7 @@ function renderDht() {
       } else {
         ops.push(`<button class="sm" data-dht-tgl-auto="${esc(a.key || '')}" ${a.enabled ? '' : 'disabled'}>${a.enabled ? '暂停' : '已暂停'}</button>`);
       }
-      return `<tr><td><code>${esc(a.host)}:${a.port}</code>${isAuto ? `<div class="cell-sub">${esc(a.label || '')}</div>` : ''}</td>` +
+      return `<tr><td><code>${esc(a.host)}:${a.port}</code><div class="cell-sub">${guide}</div>${isAuto ? `<div class="cell-sub">${esc(a.label || '')}</div>` : ''}</td>` +
         `<td>${isAuto ? '<span class="tag">自动兜底</span>' : '手动'}</td><td>${st}</td><td>${portTag}${portBtn}</td>` +
         `<td><div class="toolbar" style="margin:0">${ops.join('')}</div></td></tr>`;
     }).join('') || '<tr><td colspan="5" class="empty">（无手动地址；自动兜底生效）</td></tr>') +

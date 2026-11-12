@@ -2125,7 +2125,7 @@ export async function startServer(options = {}) {
       return { ok: false, error: dhtState.lastError };
     }
   }
-  /** 本站服务记录：别人据此发现「这台中继站」，含身份公钥与 TLS 指纹用于核对互信。 */
+  /** 本站服务记录：别人据此发现「这台中继站」，含身份公钥与 TLS 指纹用于核对互信；R135n 追加 UDP 端口宣告（发现即引导）。 */
   function dhtSelfRecord() {
     const adv = activeExternalAddr();
     return {
@@ -2140,6 +2140,7 @@ export async function startServer(options = {}) {
         identityPub: expand.identity.pub,
         tlsFingerprint: tlsInfo ? tlsInfo.fingerprint : '',
         version: VERSION,
+        udpPorts: cfg.dht.udpPorts.filter((p) => !cfg.dht.pausedUdpPorts.includes(p)), // 引导端口（UDP），发现本机后可据此引导
       },
     };
   }
@@ -2162,6 +2163,7 @@ export async function startServer(options = {}) {
           kind: 'fwarmy-client-locator', relay: expand.instanceId,
           relayFingerprint: dhtZhiWen,
           tlsFingerprint: tlsInfo ? tlsInfo.fingerprint : '',
+          udpPorts: cfg.dht.udpPorts.filter((p) => !cfg.dht.pausedUdpPorts.includes(p)),
         },
       },
     };
