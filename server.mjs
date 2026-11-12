@@ -979,8 +979,8 @@ function normDhtCfg(raw) {
     pausedUdpPorts: normPorts(t.pausedUdpPorts, [], 8), // R135：暂停的 UDP 端口仍保留配置，只停监听
     addresses: normAddrList(t.addresses),
     pausedAuto: Array.isArray(t.pausedAuto)
-      ? [...new Set(t.pausedAuto.map((x) => String(x || '').trim()).filter((s) => /^(IPv4|IPv6)\|(443|62666)$/.test(s)))]
-      : [], // R135：暂停的自动兜底维度（如 'IPv6|443'），全停后定时自检自启
+      ? [...new Set(t.pausedAuto.map((x) => String(x || '').trim()).filter((s) => /^(IPv4|IPv6)\|\d+$/.test(s)))]
+      : [], // R135：暂停的自动兜底维度（如 'IPv6|59599'），全停后定时自检自启
     anchors: guiFanAnChors(t.anchors),
     routeByDht: t.routeByDht !== false,
     retryBaseMs: Math.max(200, Math.min(60_000, Number(t.retryBaseMs) || d.retryBaseMs)),
@@ -1905,9 +1905,22 @@ export async function startServer(options = {}) {
     for (const a of localAddresses()) if (!a.internal && a.family === 'IPv4') return a.address;
     return '127.0.0.1';
   }
-  /** 自动兜底对外地址端口（R133：443 与 62666；无其它生效地址时兜底）。 */
-  const AUTO_ADDR_PORTS = [443, 62666];
-  /** R135：自动兜底地址维度 = 探测到的公网 IP（IPv6 优先，无 IPv6 用 IPv4；ipify 全失败时用推断 IP），最多 2 维 × 2 端口 = 4 条。 */
+  /**
+   * 自动兜底投递端口（R135q）：对外地址宣告 = 投递地址，走 TCP 业务端口——
+   * 取当前监听的业务端口（优先非入口，最多 2 个）；UDP 443/62666 是引导端口，
+   * 不再作为投递宣告（否则别人按记录投递 TCP 到 UDP 端口必然不通）。
+   */
+  function autoAddrPorts() {
+    try {
+      const lp = listeningPorts(); // 端口表初始化后：实际监听集合（仅 TCP 业务端口）
+      const pref = lp.filter((p) => p !== (cfg.ports[0] || 0));
+      const picked = (pref.length ? pref : lp).slice(0, 2);
+      if (picked.length) return picked;
+    } catch { /* 启动早期端口表未初始化（TDZ），回退配置端口 */ }
+    const cp = Array.isArray(cfg.ports) ? [...cfg.ports] : [];
+    return cp.slice(0, 2).length ? cp.slice(0, 2) : [59599];
+  }
+  /** R135：自动兜底地址维度 = 探测到的公网 IP（IPv6 优先，无 IPv6 用 IPv4；ipify 全失败时用推断 IP），最多 2 维 × 业务端口。 */
   function autoAddrHosts() {
     if (lastPub && (lastPub.ipv6 || lastPub.ipv4)) {
       const out = [];
@@ -1919,7 +1932,7 @@ export async function startServer(options = {}) {
     return [{ host: ip, family: ip.includes(':') ? 'IPv6' : 'IPv4' }];
   }
   function autoAddrKey(a) { return `${a.family}|${a.port}`; }
-  /** 对外地址状态表：手动条目（cfg.dht.addresses 派生）+ 自动兜底条目（公网 IPv4/IPv6 × 443/62666）。 */
+  /** 对外地址状态表：手动条目（cfg.dht.addresses 派生）+ 自动兜底条目（公网 IPv4/IPv6 × 业务端口）。 */
   let addrStates = [];
   function syncAddrStates() {
     const manual = cfg.dht.addresses.map((a) => {
@@ -1928,14 +1941,14 @@ export async function startServer(options = {}) {
     });
     const auto = [];
     for (const h of autoAddrHosts()) {
-      for (const port of AUTO_ADDR_PORTS) {
+      for (const port of autoAddrPorts()) {
         const prev = addrStates.find((x) => !x.manual && x.family === h.family && x.port === port);
         const key = `${h.family}|${port}`;
         auto.push({
           host: h.host, port, family: h.family, manual: false,
           enabled: prev ? prev.enabled : !cfg.dht.pausedAuto.includes(key),
           valid: true, lastCheckAt: 0, lastError: '',
-          label: `自动兜底 · 公网 ${h.family} · ${port}`,
+          label: `自动兜底 · 公网 ${h.family} · ${port}（投递 TCP）`,
         });
       }
     }
@@ -1974,7 +1987,7 @@ export async function startServer(options = {}) {
     const m = addrStates.find((a) => a.manual && a.enabled && a.valid);
     if (m) return { host: m.host, port: m.port };
     const a = addrStates.find((x) => !x.manual && x.enabled);
-    return { host: a ? a.host : autoAdvIp(), port: a ? a.port : AUTO_ADDR_PORTS[0] };
+    return { host: a ? a.host : autoAdvIp(), port: a ? a.port : autoAddrPorts()[0] };
   }
   async function probeOwnAddress(host, port) {
     const t0 = Date.now();
@@ -3792,8 +3805,10 @@ export async function startServer(options = {}) {
       // R135：暂停自动兜底——仅当暂停后仍有其它生效的对外地址才允许（否则 400，防止全部兜底被停导致无地址宣告）
       if (j.pausedAuto !== undefined) {
         const list = Array.isArray(j.pausedAuto) ? j.pausedAuto : [];
-        const norm = [...new Set(list.map((x) => String(x || '').trim()).filter((s) => /^(IPv4|IPv6)\|(443|62666)$/.test(s)))];
-        const probeAuto = autoAddrHosts().flatMap((h) => AUTO_ADDR_PORTS.map((port) => ({ family: h.family, port, enabled: !norm.includes(`${h.family}|${port}`) })));
+        // R135q：暂停校验与状态表条目一致（端口 = 当前实际自动兜底条目端口）
+        const autoPorts = [...new Set(addrStates.filter((a) => !a.manual).map((a) => a.port))];
+        const norm = [...new Set(list.map((x) => String(x || '').trim()).filter((s) => /^(IPv4|IPv6)\|(\d+)$/.test(s) && autoPorts.includes(Number(s.split('|')[1]))))];
+        const probeAuto = autoAddrHosts().flatMap((h) => autoPorts.map((port) => ({ family: h.family, port, enabled: !norm.includes(`${h.family}|${port}`) })));
         const stillActive = addrStates.some((a) => a.manual && a.enabled && a.valid) || probeAuto.some((a) => a.enabled);
         if (!stillActive) return send(res, 400, { ok: false, error: 'auto-fallback-required', hint: '至少保留一个生效的对外地址：自动兜底全部暂停需先有其它生效地址（手动地址验证通过或其它兜底未暂停）' });
         j.pausedAuto = norm;
@@ -4358,10 +4373,11 @@ export async function startServer(options = {}) {
       srv.once('listening', onOk);
       srv.listen(port, opt.host);
     });
-    if (r.ok) { portStates.set(port, { srv, status: 'listening', error: '' }); return { ok: true }; }
+    if (r.ok) { portStates.set(port, { srv, status: 'listening', error: '' }); syncAddrStates(); return { ok: true }; }
     try { srv.close(); } catch { /* noop */ }
     const occupied = r.code === 'EADDRINUSE';
     portStates.set(port, { srv: null, status: 'error', error: occupied ? 'occupied' : r.msg.slice(0, 120) });
+    syncAddrStates();
     return { ok: false, error: occupied ? 'occupied' : r.msg.slice(0, 120) };
   }
   function pausePort(port) {
@@ -4369,6 +4385,7 @@ export async function startServer(options = {}) {
     if (!cur) return { ok: false, error: 'not-managed' };
     if (cur.srv) { try { cur.srv.close(); } catch { /* noop */ } }
     portStates.set(port, { srv: null, status: 'paused', error: '' });
+    syncAddrStates(); // R135q：端口变化立即刷新对外地址状态（自动兜底端口随监听集合）
     return { ok: true };
   }
   const listeningPorts = () => [...portStates.keys()].filter((p) => portStates.get(p).status === 'listening');

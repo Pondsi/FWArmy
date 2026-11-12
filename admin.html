@@ -274,7 +274,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
   <div class="panel">
     <h2 title="DHT 发现层：默认强制开启、不可关闭；只做设备发现，消息投递仍走凭据通道（发现 ≠ 授权）">DHT 发现</h2>
     <div class="cards" id="dhtCards"></div>
-    <div class="hint" style="margin:10px 0 6px" title="对外地址 = 本站宣告给别人的「投递地址」（TCP 业务端口，验证通过才宣告，每 5 分钟复查；自动兜底 = 公网 IPv4/IPv6 × 443/62666 最多 4 条，不可改删，只能暂停）。每行下方显示对应的「引导地址」= 同一 host × 本机 UDP 端口（443/62666），别人发现本机后据此引导入网">对外地址（投递 TCP · 引导 UDP 见行内）</div>
+    <div class="hint" style="margin:10px 0 6px" title="对外地址 = 本站 DHT 记录里宣告的「发现后连接地址」（自动 = 探测公网 IP × 业务 TCP 端口，无需手填；手动添加 = 覆盖自动，用域名或指定端口，须指向本机）。每行下方显示「引导地址」= 同一 host × UDP 端口（443/62666），别人据此引导入网">对外地址（发现后连接：自动宣告 · 手动可覆盖；引导地址见行内）</div>
     <div style="display:flex;gap:6px;margin-bottom:6px">
       <input id="dhtAdvNew" placeholder="relay.example.com:58588 或 1.2.3.4:59599" title="添加对外地址：域名IP:端口；必须指向本机（本机网卡/探测公网 IP/回环），域名须解析到本机，否则拒绝" style="flex:1">
       <button class="sm" id="dhtAdvAdd" title="添加对外地址（指向本机才生效）">添加</button>
