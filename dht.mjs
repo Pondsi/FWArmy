@@ -121,18 +121,31 @@ export function gcmOpen(key, iv, ct, aad) {
 
 /** 解析 `host` / `host:port` / `[::1]:port`；不合法返回 null（不猜、不静默兜底） */
 
-/** R132：域名解析优先 IPv6（IPv6 不可达回退 IPv4）；IP 字面量原样返回；解析失败返回 ''（调用方快速失败，绝不对域名发包——dgram 对域名 send 会触发 socket error 置空）。 */
-export function resolve6First(host) {
+/**
+ * R135d：域名解析为有序候选地址（IPv6 全部排在 IPv4 前）；IP 字面量原样返回单个；
+ * 解析失败返回 []（调用方快速失败，绝不对域名发包——dgram 对域名 send 会触发 socket error 置空）。
+ * 调用方逐候选尝试：IPv6 不可达（超时/拒绝）自动回退 IPv4。
+ */
+export function resolveHosts(host) {
   const h = String(host || '');
-  if (net.isIP(h)) return Promise.resolve(h);
+  if (net.isIP(h)) return Promise.resolve([h]);
   return new Promise((resolve) => {
     dns.lookup(h, { all: true }, (err, addrs) => {
-      if (err || !Array.isArray(addrs) || !addrs.length) return resolve('');
-      const v6 = addrs.find((a) => a.family === 6);
-      const v4 = addrs.find((a) => a.family === 4);
-      resolve((v6 || v4 || addrs[0]).address);
+      if (err || !Array.isArray(addrs) || !addrs.length) return resolve([]);
+      const out = [];
+      const seen = new Set();
+      for (const fam of [6, 4]) {
+        for (const a of addrs) {
+          if (a.family === fam && !seen.has(a.address)) { seen.add(a.address); out.push(a.address); }
+        }
+      }
+      resolve(out);
     });
   });
+}
+/** R132 旧语义保留（取第一个候选；无候选返回 ''）：兼容外部引用。 */
+export function resolve6First(host) {
+  return resolveHosts(host).then((list) => (list.length ? list[0] : ''));
 }
 export function jieXiDhtDiZhi(raw, defaultPort = DEFAULT_DHT_PORT) {
   const s = String(raw || '').trim();
@@ -444,11 +457,28 @@ export class DhtJieDian {
     };
   }
 
-  /** 发送一条 RPC 并等待回复（单次，超时即失败；不重试）。R132：域名解析优先 IPv6，解析失败快速失败。 */
+  /**
+   * 发送一条 RPC 并等待回复（单次，超时即失败；不重试）。
+   * R135d：域名解析为有序候选（IPv6 优先），逐候选尝试——IPv6 不可达自动回退 IPv4；全部失败抛最后错误。
+   */
   async call(addr, xiaoXi, replyType, timeoutMs = this.rpcTimeoutMs) {
     if (!this.socket) return Promise.reject(new Error('DhtNode 未启动'));
-    const host = await resolve6First(addr.host);
-    if (!host) return Promise.reject(new Error(`RPC ${replyType} 无法解析 ${addr.host}`));
+    const hosts = await resolveHosts(addr.host);
+    if (!hosts.length) return Promise.reject(new Error(`RPC ${replyType} 无法解析 ${addr.host}`));
+    let lastErr = null;
+    for (const host of hosts) {
+      try {
+        return await this.callOnce(host, addr, xiaoXi, replyType, timeoutMs);
+      } catch (e) {
+        lastErr = e;
+        if (hosts.length > 1) this.emit('rpc-failed', `${replyType} → ${addr.host}:${addr.port} 经 ${host} 失败，回退下一地址`);
+      }
+    }
+    throw lastErr || new Error(`RPC ${replyType} 失败`);
+  }
+
+  /** 单候选 RPC：向具体 IP 发送并等待回复（dgram 只收 IP 字面量，绝不对域名发包）。 */
+  async callOnce(host, addr, xiaoXi, replyType, timeoutMs) {
     const rid = crypto.randomBytes(6).toString('hex');
     const payload = Buffer.from(JSON.stringify({ ...xiaoXi, id: b64u(this.id), rid, reply: replyType }), 'utf8');
     this.stats.rpcSent += 1;
@@ -457,10 +487,10 @@ export class DhtJieDian {
         this.pending.delete(rid);
         this.stats.rpcFailed += 1;
         this.stats.rpcTimeout += 1;
-        this.emit('rpc-failed', `${replyType} → ${addr.host}:${addr.port} 超时`);
+        this.emit('rpc-failed', `${replyType} → ${host}:${addr.port} 超时`);
         reject(new Error(`RPC ${replyType} 超时`));
       }, timeoutMs);
-      this.pending.set(rid, { resolve, reject, timer, replyType, target: { host: addr.host, port: addr.port } });
+      this.pending.set(rid, { resolve, reject, timer, replyType, target: { host, port: addr.port } });
       try {
         this.sendTo(host, addr.port, payload);
       } catch (e) {
@@ -469,7 +499,7 @@ export class DhtJieDian {
         this.stats.rpcFailed += 1;
         reject(e);
       }
-    }).finally(() => this.emit('rpc-sent', `${replyType} → ${addr.host}:${addr.port}`));
+    }).finally(() => this.emit('rpc-sent', `${replyType} → ${host}:${addr.port}`));
   }
 
   async ping(addr) {
