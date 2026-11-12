@@ -394,8 +394,8 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
           <option value="weighted">按频率比例</option>
         </select>
       </label>
-      <label class="f" title="权重表：「序号:权重」逗号分隔（如 1:100,2:0）；权重 0 = 不使用该条；留空 = 全部等权；序号对应内容库第几条">权重（可选，格式「序号:权重」逗号分隔，如 1:100,2:0；留空 = 全部等权；权重 0 = 不使用该条）
-        <input id="fAddWeights" placeholder="1:100,2:0,3:50">
+      <label class="f" title="权重表：「序号:权重」逗号分隔（如 1:100,3:50，支持中文逗号/冒号/全角数字）。只写要使用的条目，未写出的不参与；留空 = 全部参与等权；「按频率比例」模式权重大小 = 出现比例，「随机/按顺序」只看用哪几条">权重（可选：只写要使用的条目，如 1:100,3:50；留空 = 全部参与）
+        <input id="fAddWeights" placeholder="1:100,3:50">
       </label>
     </div>
     <div class="row"><button class="ghost" data-close="credModal" title="取消并关闭">取消</button><button class="primary" id="saveCred" title="保存凭据（新建时保存后显示明文，请立即复制）">保存</button></div>
@@ -1365,17 +1365,18 @@ async function saveCred() {
       port = Number(portRaw);
       if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('端点端口必须是 1–65535 的整数（不填默认 59599）');
     }
-    // R135g：附加内容配置（模式 + 权重表）
+    // R135g/o：附加内容配置（模式 + 权重表）；中文标点/全角数字自动转半角；非法输入明确报错
     const addMode = $('#fAddition').value || 'off';
-    const weightsRaw = $('#fAddWeights').value.trim();
+    const half = (s) => String(s || '').replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/[：]/g, ':').replace(/[，；]/g, ',');
+    const weightsRaw = half($('#fAddWeights').value.trim());
     const weights = {};
     if (weightsRaw !== '') {
       for (const part of weightsRaw.split(/[,，;；\s]+/).filter(Boolean)) {
-        const [k, w] = part.split(':');
-        const idx = Math.floor(Number(k));
-        const wt = Number(w);
-        if (!Number.isInteger(idx) || idx < 1 || !Number.isFinite(wt) || wt < 0) throw new Error('权重格式应为「序号:权重」如 1:100,2:0');
-        weights[String(idx)] = Math.floor(wt);
+        const m = /^(\d+)\s*:\s*(\d+)$/.exec(part);
+        if (!m) throw new Error(`权重「${part}」格式错误：应为「序号:权重」（如 1:100,3:50），序号和权重必须是非负整数`);
+        const idx = Number(m[1]);
+        if (idx < 1) throw new Error(`权重「${part}」：序号从 1 开始（对应内容库第 1 条）`);
+        weights[String(idx)] = Number(m[2]);
       }
     }
     const addition = { mode: addMode, weights };

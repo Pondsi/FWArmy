@@ -941,7 +941,13 @@ function normAdditionTexts(raw) {
   }
   return out;
 }
-/** 凭证级附加内容配置：{mode: off|random|sequence|weighted, weights: {序号: 权重}}；weights 空 = 全部条目等权。 */
+/** 全角数字/标点 → 半角（中文用户输入兼容：１２３ → 123，：，； → :,;） */
+function toHalfWidth(s) {
+  return String(s || '')
+    .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/[：]/g, ':').replace(/[，；]/g, ',');
+}
+/** 凭证级附加内容配置：{mode: off|random|sequence|weighted, weights: {序号: 权重}}；weights 空 = 全部条目等权；有权重表时仅列出的条目参与（未列出 = 不使用）。 */
 function normCredAddition(raw) {
   if (raw === undefined || raw === null) return null;
   const o = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
@@ -949,9 +955,10 @@ function normCredAddition(raw) {
   const weights = {};
   if (o.weights && typeof o.weights === 'object' && !Array.isArray(o.weights)) {
     for (const k of Object.keys(o.weights)) {
-      const idx = Math.floor(Number(k));
-      const w = Number(o.weights[k]);
-      if (Number.isInteger(idx) && idx >= 1 && idx <= ADDITION_MAX_TEXTS && Number.isFinite(w) && w >= 0) weights[String(idx)] = Math.floor(w);
+      const key = toHalfWidth(k);
+      const idx = Math.floor(Number(key));
+      const w = Number(toHalfWidth(o.weights[k]));
+      if (/^\d+$/.test(key.trim()) && Number.isInteger(idx) && idx >= 1 && idx <= ADDITION_MAX_TEXTS && Number.isFinite(w) && w >= 0) weights[String(idx)] = Math.floor(w);
     }
   }
   return { mode, weights };
@@ -1353,7 +1360,9 @@ export async function startServer(options = {}) {
     const texts = cfg.addition && Array.isArray(cfg.addition.texts) ? cfg.addition.texts : [];
     if (!texts.length) return null;
     const w = c.addition.weights || {};
-    const pool = texts.map((t, i) => ({ t, i: i + 1, w: w[String(i + 1)] === undefined ? 1 : w[String(i + 1)] })).filter((x) => x.w > 0);
+    const hasWeights = Object.keys(w).length > 0;
+    // R135o：有权重表时仅列出的条目参与（未列出 = 不使用）；留空 = 全部等权
+    const pool = texts.map((t, i) => ({ t, i: i + 1, w: hasWeights ? (w[String(i + 1)] || 0) : 1 })).filter((x) => x.w > 0);
     if (!pool.length) return null;
     const mode = c.addition.mode;
     if (mode === 'sequence') {
