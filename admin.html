@@ -11,8 +11,9 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:14px/1.
 body{padding:20px 20px 48px}
 .wrap{max-width:1240px;margin:0 auto}
 header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px}
-/* R135l：右侧区（公网 IP / 帮助 / 电源按钮）固定为一组——按钮始终在右侧最后，停止/运行不改变位置 */
-.hright{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+/* R135l/m：右侧区（公网 IP / 电源 / 帮助）——公网 IP 独占一行在按钮上方；电源按钮在帮助左侧，位置固定 */
+.hright{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.hrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
 #powerBtn{min-width:96px}
 .brand{display:flex;align-items:center;gap:10px}
 .brand img{width:40px;height:40px;object-fit:contain}
@@ -98,9 +99,11 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
       <span class="ico" id="pubIpIco">⟳</span>
       <span id="pubIpText">公网 IP：检测中…</span>
     </div>
-    <div class="pills"><div class="pills" id="pills"></div><button id="powerBtn" class="good" disabled>加载状态…</button></div>
-    <div class="pubip" style="gap:6px" id="helpBar">
-      <button class="sm" id="helpBtn" title="打开使用说明帮助文档（本地新窗口，含全部功能与常见问题）">帮助</button>
+    <div class="hrow">
+      <div class="pills"><div class="pills" id="pills"></div><button id="powerBtn" class="good" disabled>加载状态…</button></div>
+      <div class="pubip" style="gap:6px" id="helpBar">
+        <button class="sm" id="helpBtn" title="打开使用说明帮助文档（本地新窗口，含全部功能与常见问题）">帮助</button>
+      </div>
     </div>
   </div>
 </header>
