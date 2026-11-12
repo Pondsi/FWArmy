@@ -90,9 +90,12 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
 <div class="wrap">
 <header>
   <div class="brand"><img src="/assets/logo.svg" alt="FWArmy logo"><b>FWArmy</b><span>WArmy专属服务器</span></div>
-  <div class="pubip" id="pubIpBar" title="点击重新探测公网 IP">
+  <div class="pubip" id="pubIpBar" title="本机探测到的公网 IP（IPv6 优先）。点击重新探测">
     <span class="ico" id="pubIpIco">⟳</span>
     <span id="pubIpText">公网 IP：检测中…</span>
+  </div>
+  <div class="pubip" style="gap:6px" id="helpBar">
+    <button class="sm" id="helpBtn" title="打开使用说明帮助文档（本地新窗口，含全部功能与常见问题）">帮助 / 说明</button>
   </div>
   <div class="pills"><div class="pills" id="pills"></div><button id="powerBtn" class="good" disabled>加载状态…</button></div>
 </header>
@@ -104,96 +107,91 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
 </div>
 
 <div class="tabs" id="tabs">
-  <button class="tab active" data-tab="overview">中继</button>
-  <button class="tab" data-tab="frelay">F中继</button>
-  <button class="tab" data-tab="expand">扩网</button>
-  <button class="tab" data-tab="dht">DHT 组网</button>
-  <button class="tab" data-tab="logs">日志</button>
-  <button class="tab" data-tab="update">更新</button>
-  <button class="tab" data-tab="ports">端口</button>
+  <button class="tab active" data-tab="overview" title="中继：本站接收 WArmy 客户端投递；凭据管理、限额、用量、附加内容、全局默认、TLS、消息安全">中继</button>
+  <button class="tab" data-tab="frelay" title="F中继：生成被扩网凭据，让别的 FWArmy 把送不到的消息转给你；含公网可达性">F中继</button>
+  <button class="tab" data-tab="expand" title="扩网：添加互信的 FWArmy，本站送不到的消息按顺序转发过去">扩网</button>
+  <button class="tab" data-tab="dht" title="DHT 组网：设备发现层（强制开启）；锚点、对外地址、一键变成锚点、对端列表">DHT 组网</button>
+  <button class="tab" data-tab="logs" title="运行日志（最近 200 行，不含消息/凭据明文）">日志</button>
+  <button class="tab" data-tab="update" title="自动更新：检查/下载/重启（单文件运行时才可安装）">更新</button>
+  <button class="tab" data-tab="ports" title="端口管理：多业务监听端口（TCP/UDP）、暂停/删除/强制启用、管理入口更改">端口</button>
 </div>
 
 <section id="tab-overview" class="active">
   <div class="cards" id="cards"></div>
   <div class="panel">
-    <h2>用量汇总 <small>按本机时区累计；字节 = 信封上行 + 下行</small></h2>
+    <h2 title="按本机时区累计；字节 = 信封上行 + 下行">用量汇总</h2>
     <div class="tablewrap"><table id="totalTable"></table></div>
   </div>
   <div class="panel">
-    <h2>凭据与用量 <small>日 / 月 / 总次数与流量，分钟限速及年流量</small></h2>
+    <h2 title="日 / 月 / 总次数与流量，分钟限速及年流量；次数 = 有效凭据的业务请求（含拒绝/失败），流量 = 实际入队与取走的信封字节之和">凭据与用量</h2>
     <div class="toolbar">
-      <button class="primary" id="newCred">生成凭据</button>
-      <button id="refreshCreds">刷新</button>
+      <button class="primary" id="newCred" title="生成新的中继凭据（WArmy 客户端用它连接本站；服务器只存 sha256，明文仅生成时显示一次；名称默认已填可直接保存）">生成凭据</button>
+      <button id="refreshCreds" title="重新加载凭据列表">刷新</button>
       <span class="muted" id="credCount"></span>
     </div>
     <div class="tablewrap"><table id="credTable"></table></div>
     <div class="toolbar" id="credPager"></div>
-    <div class="hint">首次不会自动生成凭据；点击生成，可创建多个。留空 = 继承全局默认；分钟次数和流量必须大于 0，其余额度填 0 = 不限。服务器只存 sha256，明文仅生成时显示。删除需输入名称确认。</div>
-    <div class="hint">次数 = 有效凭据的业务请求（含拒绝/失败）；流量 = 实际入队与取走的 UTF-8 信封字节之和，不含 HTTP 开销。失败只记实际发生的用量；分钟限速与速度统计共用最近 60 秒窗口。重启清空分钟窗口，不清累计额度。</div>
   </div>
   <div class="panel">
-    <h2>附加内容（会话提示消息） <small>R135g：最多 1000 条纯文字；每条中继凭据可配置模式（随机/顺序/按比例/关闭）</small></h2>
-    <textarea id="addTexts" rows="6" placeholder="每行一条附加内容（纯文字：无 HTML 字符/无换行，单条 ≤512 字节）" style="width:100%;box-sizing:border-box"></textarea>
+    <h2 title="会话提示消息：最多 1000 条纯文字；每条中继凭据可配置模式（随机/顺序/按比例/关闭）；添加规则与防篡改审计见帮助文档">附加内容（会话提示消息）</h2>
+    <textarea id="addTexts" rows="6" placeholder="每行一条附加内容（纯文字：无 HTML 字符/无换行，单条 ≤512 字节）" title="附加内容库：每行一条，最多 1000 条；纯文字校验（HTML 特殊字符/换行/超长自动过滤）；保存后每条中继凭据可配置使用模式" style="width:100%;box-sizing:border-box"></textarea>
     <div class="toolbar" style="margin-top:8px">
-      <button class="primary" id="addSave">保存内容库</button>
+      <button class="primary" id="addSave" title="保存内容库（非法条目自动过滤并提示数量）">保存内容库</button>
       <span class="muted" id="addCount"></span>
     </div>
     <div class="hint" id="addAudit">审计链：加载中…</div>
-    <div class="hint">添加规则：只有「中继」（客户端直投本站）或「扩网转出」时按该凭据配置添加一条；F中继（别人转发来的消息）一律不添加，且要求已带附加内容或密封标记否则丢弃。全链每条消息最多一条附加内容；客户端方向携带附加内容一律丢弃。每次添加都写入哈希链审计（不可抵赖），链根每 5 分钟签名发布到 DHT（防回滚），WArmy 客户端 24h 内同一会话同一中继收到 ≥2 次附加内容即丢弃并临时禁用该中继站。</div>
   </div>
   <div class="panel" id="configPanel">
-    <h2>全局默认 <small>只影响“留空继承”的凭据</small></h2>
+    <h2 title="只影响「留空继承」的凭据；保存立即生效，不重置已有用量">全局默认</h2>
     <div class="grid">
-      <label class="f">每分钟次数（不可不限）<input id="cfgRate" type="number" min="1" step="1"></label>
-      <label class="f">每分钟流量（MB，不可不限）<input id="cfgBytesRate" type="number" min="0.00000095367431640625" step="any"></label>
-      <label class="f">每日次数（0=不限）<input id="cfgDailyRequests" type="number" min="0" step="1"></label>
-      <label class="f">每日流量（MB，0=不限）<input id="cfgDaily" type="number" min="0" step="any"></label>
-      <label class="f">每月次数（0=不限）<input id="cfgMonthlyRequests" type="number" min="0" step="1"></label>
-      <label class="f">每月流量（MB，0=不限）<input id="cfgMonthly" type="number" min="0" step="any"></label>
-      <label class="f">总次数（0=不限）<input id="cfgTotalRequests" type="number" min="0" step="1"></label>
-      <label class="f">总流量（MB，0=不限）<input id="cfgTotal" type="number" min="0" step="any"></label>
-      <label class="f">每年流量（MB，0=不限）<input id="cfgYearly" type="number" min="0" step="any"></label>
-      <label class="f">单信封上限（KB）<input id="cfgEnv" type="number" min="1" step="1"></label>
-      <label class="f">每收件人队列上限<input id="cfgQueue" type="number" min="1" step="1"></label>
-      <label class="f">在线 TTL（秒）<input id="cfgTtl" type="number" min="0.1" step="1"></label>
+      <label class="f" title="每凭据每分钟最多请求次数（必须 >0，不可不限）">每分钟次数（不可不限）<input id="cfgRate" type="number" min="1" step="1" title="每凭据每分钟最多请求次数（必须 >0，不可不限）"></label>
+      <label class="f" title="每凭据每分钟最多流量 MB（必须 >0，不可不限）">每分钟流量（MB，不可不限）<input id="cfgBytesRate" type="number" min="0.00000095367431640625" step="any" title="每凭据每分钟最多流量 MB（必须 >0，不可不限）"></label>
+      <label class="f" title="每凭据每日最多请求次数；0 = 不限">每日次数（0=不限）<input id="cfgDailyRequests" type="number" min="0" step="1" title="每凭据每日最多请求次数；0 = 不限"></label>
+      <label class="f" title="每凭据每日最多流量 MB；0 = 不限">每日流量（MB，0=不限）<input id="cfgDaily" type="number" min="0" step="any" title="每凭据每日最多流量 MB；0 = 不限"></label>
+      <label class="f" title="每凭据每月最多请求次数；0 = 不限">每月次数（0=不限）<input id="cfgMonthlyRequests" type="number" min="0" step="1" title="每凭据每月最多请求次数；0 = 不限"></label>
+      <label class="f" title="每凭据每月最多流量 MB；0 = 不限">每月流量（MB，0=不限）<input id="cfgMonthly" type="number" min="0" step="any" title="每凭据每月最多流量 MB；0 = 不限"></label>
+      <label class="f" title="每凭据累计最多请求次数；0 = 不限">总次数（0=不限）<input id="cfgTotalRequests" type="number" min="0" step="1" title="每凭据累计最多请求次数；0 = 不限"></label>
+      <label class="f" title="每凭据累计最多流量 MB；0 = 不限">总流量（MB，0=不限）<input id="cfgTotal" type="number" min="0" step="any" title="每凭据累计最多流量 MB；0 = 不限"></label>
+      <label class="f" title="每凭据每年最多流量 MB；0 = 不限">每年流量（MB，0=不限）<input id="cfgYearly" type="number" min="0" step="any" title="每凭据每年最多流量 MB；0 = 不限"></label>
+      <label class="f" title="单条消息信封大小上限 KB（1–16384）">单信封上限（KB）<input id="cfgEnv" type="number" min="1" step="1" title="单条消息信封大小上限 KB（1–16384）"></label>
+      <label class="f" title="每个收件人在线队列最多保留几条（1–10000）">每收件人队列上限<input id="cfgQueue" type="number" min="1" step="1" title="每个收件人在线队列最多保留几条（1–10000）"></label>
+      <label class="f" title="收件人判定在线的时间窗口秒数（心跳/取信刷新）">在线 TTL（秒）<input id="cfgTtl" type="number" min="0.1" step="1" title="收件人判定在线的时间窗口秒数（心跳/取信刷新）"></label>
     </div>
     <div class="toolbar" style="margin-top:12px">
-      <label class="f" style="flex-direction:row;align-items:center;gap:6px"><input id="cfgAccept" type="checkbox"> 接受新投递（取消勾选 = 暂停；只拦新投递，不拦收信）</label>
-      <button class="primary" id="saveCfg">保存设置</button>
-      <button id="pip">重新探测公网 IP</button>
+      <label class="f" style="flex-direction:row;align-items:center;gap:6px" title="取消勾选 = 暂停；只拦新投递（relay/扩网投递返回 503），poll/lookup 等收信查询不受影响"><input id="cfgAccept" type="checkbox"> 接受新投递</label>
+      <button class="primary" id="saveCfg" title="保存全局默认设置（立即生效，不重置已有用量）">保存设置</button>
+      <button id="pip" title="重新探测公网 IP（不影响监听地址）">重新探测公网 IP</button>
     </div>
-    <div class="hint">保存立即生效，不重置已有用量。暂停只拦新投递（relay 与扩网投递返回 503），poll/lookup 等收信查询不受影响；管理页仍可用。退出进程后需手动重新启动程序，页面不能自启动。公网 IP 探测不会改绑定地址。</div>
   </div>
   <div class="panel">
-    <h2>TLS / 证书 <small>默认自签 + 指纹固定；改动需重启</small></h2>
+    <h2 title="默认自签证书 + 指纹固定（无需购买证书）；改动需重启生效">TLS / 证书</h2>
     <div class="grid">
-      <label class="f">模式
+      <label class="f" title="TLS 模式：自签（默认，客户端固定指纹）/ 用户证书（CA 校验）/ 关闭（危险，明文）">模式
         <select id="tlsMode">
           <option value="self-signed">自签证书 + 指纹固定（默认）</option>
           <option value="user-cert">用户证书（CA 校验证书链）</option>
           <option value="off">关闭 TLS（危险）</option>
         </select>
       </label>
-      <label class="f">用户证书 cert 路径<input id="tlsCert" placeholder="C:\\certs\\fullchain.pem"></label>
-      <label class="f">用户私钥 key 路径<input id="tlsKey" placeholder="C:\\certs\\privkey.pem"></label>
-      <label class="f">自签证书额外主机名（逗号分隔）<input id="tlsHosts" placeholder="relay.example.com"></label>
+      <label class="f" title="用户证书模式：证书文件绝对路径（PEM 全链）">用户证书 cert 路径<input id="tlsCert" placeholder="C:\\certs\\fullchain.pem"></label>
+      <label class="f" title="用户证书模式：私钥文件绝对路径">用户私钥 key 路径<input id="tlsKey" placeholder="C:\\certs\\privkey.pem"></label>
+      <label class="f" title="自签证书额外包含的主机名（逗号分隔），供客户端按域名校验">自签证书额外主机名（逗号分隔）<input id="tlsHosts" placeholder="relay.example.com"></label>
     </div>
     <div class="toolbar" style="margin-top:10px">
-      <label class="f" style="flex-direction:row;align-items:center;gap:6px"><input id="tlsPlain" type="checkbox"> 允许非回环明文（不建议）</label>
-      <button class="primary" id="tlsSave">保存（需重启）</button>
-      <button id="tlsRegen">重新生成自签证书…</button>
+      <label class="f" style="flex-direction:row;align-items:center;gap:6px" title="允许非回环来源的明文业务请求（默认 426 拒绝；不建议开启）"><input id="tlsPlain" type="checkbox"> 允许非回环明文</label>
+      <button class="primary" id="tlsSave" title="保存 TLS 配置（需重启生效）">保存（需重启）</button>
+      <button id="tlsRegen" title="重新生成自签证书（旧指纹作废，客户端需重新固定）">重新生成自签证书…</button>
     </div>
     <div class="hint" id="tlsHint">当前指纹：—</div>
   </div>
   <div class="panel">
-    <h2>消息安全 <small>唯一 ID · 24h 最多 2 次 · 黑名单 30 天</small></h2>
+    <h2 title="每条消息必须有 msgId；同一 msgId 24h 内最多放行 2 次，第 3 次/超 24h 丢弃并拉黑 30 天；中间节点改写 msgId 会验签失败">消息安全</h2>
     <div class="cards" id="secCards"></div>
     <div class="tablewrap"><table id="secTable"></table></div>
-    <div class="hint">同一 messageId 在本实例 24 小时内最多转发 2 次；第 3 次或首次出现已超过 24 小时 ⇒ 丢弃并写入黑名单（重启后仍生效）。黑名单 30 天未再出现自动清理。来源实例用 Ed25519 签名固定，改信封/换公钥会被拒绝。</div>
-    <div class="toolbar"><button id="secGc">清理过期条目</button><button class="danger sm" id="secClear">清空黑名单…</button></div>
+    <div class="toolbar"><button id="secGc" title="清理过期的重放窗口与黑名单条目">清理过期条目</button><button class="danger sm" id="secClear" title="清空全部黑名单（需确认）">清空黑名单…</button></div>
   </div>
   <div class="panel">
-    <h2>安全边界</h2>
+    <h2 title="管理页只接受本机回环直连；业务面需凭据 + Ed25519 签名；消息只留内存 30 秒不落盘；凭据不明文落盘（详情见帮助文档）">安全边界</h2>
     <div class="foot">
       本机管理：管理页只接受本机回环直连（127.0.0.1 / ::1），Host 必须是回环名，拒绝跨站请求；管理写操作必须是 JSON。
       业务面仍需 <code>Authorization: Bearer &lt;凭据&gt;</code>，心跳/取信/下线还需 Ed25519 签名。消息只在内存队列停留 30 秒，不落盘。
@@ -205,7 +203,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
 
 <section id="tab-expand">
   <div class="panel">
-    <h2>扩网 · 我连接别人 <small>本机送不到的消息，按顺序转发给这些 FWArmy</small></h2>
+    <h2 title="本机送不到的消息（收件人离线/不在本站），按顺序转发给这些互信的 FWArmy（凭据 + TLS 指纹固定；最多 3 个、8 秒预算、成功即停）">扩网 · 我连接别人</h2>
     <div class="grid">
       <label class="f">名称（可选）<input id="exName" maxlength="40" placeholder="例如：家里的 FWArmy"></label>
       <label class="f">对方的被扩网凭据<input id="exCred" type="password" autocomplete="off" placeholder="对方「F中继」页生成（自带地址和端口）"></label>
@@ -219,152 +217,142 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
       <label class="f">证书指纹（可留空，添加后点「识别指纹」）<input id="exFp" placeholder="sha256 十六进制，64 位"></label>
     </div>
     <div class="toolbar" style="margin-top:10px">
-      <button class="primary" id="exAdd">添加</button>
+      <button class="primary" id="exAdd" title="添加扩网（对方只需提供「名称 + 被扩网凭据」，地址和端口在凭据里；旧版不含地址的凭据不再支持）">添加</button>
       <span class="muted" id="exMsg"></span>
     </div>
-    <div class="hint">「F中继」凭证<b>已包含地址和端口</b>：对方只需填「名称 + 凭证」即可连接，不用再填域名/端口，也不再支持旧版（不含地址）凭证。
-      TLS 默认「自签 + 指纹固定」：添加后先点「识别指纹」，核对对方屏幕上/管理页里的指纹一致，再点「信任」。**未信任前不会发送凭据**。对方用正式证书时选「用户证书」，按系统 CA 校验域名。</div>
     <div class="cards" id="exOutCards"></div>
     <div class="tablewrap"><table id="exOutTable"></table></div>
     <div class="tablewrap" style="margin-top:10px"><table id="exOutTotals"></table></div>
-    <div class="hint">这里只统计「我转发出去」的次数、字节、成功/失败；对方是否真正投递由对方再尝试并把结果返回。</div>
   </div>
 </section>
 
 <section id="tab-frelay">
   <div class="panel">
-    <h2>F中继 · 别人连接我 <small>生成凭据，让别的 FWArmy 把送不到的消息转给我</small></h2>
+    <h2 title="生成被扩网凭据，让别的 FWArmy 把送不到的消息转给你投递；凭据自带地址和端口，对方只需填名称+凭据">F中继 · 别人连接我</h2>
     <div class="toolbar">
-      <input id="exInHost" maxlength="253" placeholder="对外域名或 IP（默认=探测到的公网 IP，可改）" style="max-width:300px">
-      <input id="exInName" maxlength="40" placeholder="凭据名称（可选）" style="max-width:200px">
+      <input id="exInHost" maxlength="253" placeholder="对外域名或 IP（默认=探测到的公网 IP，可改）" title="写进凭据的地址：对方据此连接本站；默认 = 探测到的公网 IP" style="max-width:300px">
+      <input id="exInName" maxlength="40" placeholder="凭据名称（可选）" title="凭据名称（可选，便于管理多条）" style="max-width:200px">
       <input id="exInPort" type="number" min="1" max="65535" step="1" placeholder="端口（默认 58588）" style="max-width:150px" title="对方连接这个端口；不填默认 58588，且必须在本机监听端口集合内">
-      <button class="primary" id="exGen">生成接入凭据</button>
+      <button class="primary" id="exGen" title="生成被扩网凭据（明文只显示这一次，请立即复制给对方）">生成接入凭据</button>
       <span class="muted" id="exInState">加载中…</span>
     </div>
-    <div id="exInTokenBox" class="tokenbox" hidden>
+    <div id="exInTokenBox" class="tokenbox" hidden title="凭据明文只显示这一次；已包含地址和端口，对方只需填「名称 + 凭证」">
       <code id="exInToken"></code>
-      <button class="sm" id="exInCopy">复制</button>
-      <span class="hint" style="margin:0">只显示这一次；<b>已包含你填写的域名/IP 和端口</b>（不填端口 = 58588），对方只需填「名称 + 凭证」。每个实例可有多条，可单独管理/停用/删除。</span>
+      <button class="sm" id="exInCopy" title="复制凭据">复制</button>
       <div id="exInPortWarn" class="hint" style="margin:0;color:var(--danger,#c0392b)" hidden></div>
     </div>
-    <div class="hint" id="exAddrHint">加载中…</div>
+    <div class="hint" id="exAddrHint" title="凭据里已包含生成的地址与端口；凭据端口必须在本机监听集合内，否则强制禁止"></div>
     <div class="tablewrap" style="margin-bottom:10px"><table id="exInCredTable"></table></div>
     <div class="cards" id="exInCards"></div>
     <div class="tablewrap"><table id="exInTable"></table></div>
     <div class="tablewrap" style="margin-top:10px"><table id="exInTotals"></table></div>
-    <div class="hint">这里只统计「别人交给我」的次数、字节、成功/失败；我会尝试投递，并把结果（无论是否成功）返回给对方。</div>
   </div>
 
   <div class="panel">
-    <h2>公网可达性 <small>NAT-PMP 只读探针 / 显式映射 / STUN；只报证据</small></h2>
+    <h2 title="NAT-PMP 只读探针 / 显式端口映射 / STUN；只报证据不谎称已打通">公网可达性</h2>
     <div class="cards" id="reachCards"></div>
     <div class="grid">
-      <label class="f">STUN 服务器（逗号分隔，留空=不探测）<input id="reachStun" placeholder="stun.example.com:3478"></label>
-      <label class="f">映射租期（秒）<input id="reachLease" type="number" min="60" max="86400" value="7200"></label>
+      <label class="f" title="STUN 服务器列表（逗号分隔）；程序不内置公网 STUN 服务器，留空不探测">STUN 服务器（逗号分隔，留空=不探测）<input id="reachStun" placeholder="stun.example.com:3478"></label>
+      <label class="f" title="端口映射租期（秒，60–86400；到期需重新申请）">映射租期（秒）<input id="reachLease" type="number" min="60" max="86400" value="7200"></label>
     </div>
     <div class="toolbar" style="margin-top:10px">
-      <button id="reachProbe">检测 NAT-PMP（只读）</button>
-      <button id="reachStunBtn">STUN 探测</button>
-      <button class="primary" id="reachMap">申请端口映射…</button>
-      <button id="reachUnmap">取消映射</button>
+      <button id="reachProbe" title="只读探测路由器 NAT-PMP 支持（不建映射）">检测 NAT-PMP（只读）</button>
+      <button id="reachStunBtn" title="向配置的 STUN 服务器查询公网映射地址">STUN 探测</button>
+      <button class="primary" id="reachMap" title="申请端口映射（修改路由器状态，需确认；外部端口由路由器分配）">申请端口映射…</button>
+      <button id="reachUnmap" title="取消已申请的端口映射">取消映射</button>
     </div>
-    <div class="hint" id="reachHint">申请映射会改路由器状态，必须你显式点击；不内置任何公网 STUN 服务器。verdict=confirmed-inbound 只来自真实外部实例连进来过。</div>
+    <div class="hint" id="reachHint"></div>
   </div>
 </section>
 
 <section id="tab-dht">
   <div class="panel">
-    <h2>DHT 发现 <small>默认强制开启 · 只做设备发现，消息仍走凭据通道</small></h2>
+    <h2 title="DHT 发现层：默认强制开启、不可关闭；只做设备发现，消息投递仍走凭据通道（发现 ≠ 授权）">DHT 发现</h2>
     <div class="cards" id="dhtCards"></div>
-    <div class="hint" style="margin:10px 0 6px">对外地址（域名IP:端口，验证通过才宣告；自动兜底 = 公网 IPv4/IPv6 × 443/62666，最多 4 条，不可修改/删除，只能暂停）</div>
+    <div class="hint" style="margin:10px 0 6px" title="对外地址 = 本站宣告给别人的地址（验证通过才宣告，每 5 分钟复查；自动兜底 = 公网 IPv4/IPv6 × 443/62666 最多 4 条，不可改删，只能暂停）">对外地址</div>
     <div style="display:flex;gap:6px;margin-bottom:6px">
-      <input id="dhtAdvNew" placeholder="relay.example.com:58588 或 1.2.3.4:59599" style="flex:1">
-      <button class="sm" id="dhtAdvAdd">添加</button>
+      <input id="dhtAdvNew" placeholder="relay.example.com:58588 或 1.2.3.4:59599" title="添加对外地址：域名IP:端口；必须指向本机（本机网卡/探测公网 IP/回环），域名须解析到本机，否则拒绝" style="flex:1">
+      <button class="sm" id="dhtAdvAdd" title="添加对外地址（指向本机才生效）">添加</button>
     </div>
     <div id="dhtAdvList"></div>
     <div class="grid" style="margin-top:12px">
-      <label class="f">默认锚点（自动生效，与 WArmy 对齐）<span id="dhtAnchorDef" class="hint" style="display:block;margin-top:4px"></span></label>
-      <label class="f">手动锚点（或入网端点）
+      <label class="f" title="默认锚点：DHT.pondsi.com / DHT2.pondsi.com × UDP 443/62666，自动生效，与 WArmy 对齐；第一台设备无需别人引导即可入网"><span id="dhtAnchorDef" class="hint" style="display:block;margin-top:4px"></span>默认锚点</label>
+      <label class="f" title="手动锚点 = 引导入网的地址（host 或 host:port）：填对方公网 IP:UDP 端口；第二台设备以第一台为锚点后自动入网、双向可发现">手动锚点（或入网端点）
         <span style="display:flex;gap:6px;width:100%">
-          <input id="dhtAnchorNew" placeholder="host 或 host:port，如 1.2.3.4:443" style="flex:1">
-          <button class="sm" id="dhtAnchorAdd">添加</button>
+          <input id="dhtAnchorNew" placeholder="host 或 host:port，如 1.2.3.4:443" title="锚点格式：host 或 host:port（UDP 端口）；对方必须是可达的 FWArmy 节点" style="flex:1">
+          <button class="sm" id="dhtAnchorAdd" title="添加手动锚点并立即引导">添加</button>
         </span>
         <span id="dhtAnchorList" class="hint" style="margin-top:4px;display:block"></span>
       </label>
     </div>
     <div class="toolbar" style="margin-top:12px">
-      <button class="primary" id="dhtAnchorSelf">一键变成锚点</button>
+      <button class="primary" id="dhtAnchorSelf" title="生成可分享的锚点地址（本机 UDP 监听端口 × 公网 IP/域名）：把任一地址告诉其他 FWArmy，对方添加到手动锚点即可引导到本机；本机仍是完整服务器">一键变成锚点</button>
       <input id="dhtAnchorDomain" placeholder="可选：填你的域名（如 dht.pondsi.com）" style="max-width:300px" title="填域名则校验其解析是否指向本机公网 IP，并生成以域名为锚点的地址">
-      <span class="muted">本机仍是完整服务器（中继/F中继照常）</span>
     </div>
     <div id="dhtAnchorSelfBox" class="hint" style="margin-top:8px" hidden></div>
     <div class="toolbar" style="margin-top:12px">
       <button id="dhtPublish">立即发布本站记录</button>
       <input id="dhtQueryFp" placeholder="按指纹查询（base32，52 位）" style="max-width:260px">
-      <button id="dhtQueryBtn">查询</button>
+      <button id="dhtQueryBtn" title="按指纹查询 DHT 中的服务/定位记录（base32，52 位）">查询</button>
       <span class="muted" id="dhtMsg"></span>
     </div>
     <div class="hint" id="dhtHint"></div>
   </div>
   <div class="panel">
-    <h2>DHT 对端（contacts） <small>路由表里最近的节点</small></h2>
+    <h2 title="路由表里最近的节点；客户端注册到本机时会把「该客户端所在中继站 = 本站」签名发布到 DHT（10 分钟保鲜，离线约 30 分钟过期），其它站投递失败时据此定位">DHT 对端（contacts）</h2>
     <div class="tablewrap"><table id="dhtTable"></table></div>
-    <div class="hint">客户端注册到本机时，本机会把「该客户端当前所在中继站 = 本站」签名发布到 DHT；其它中继站投递失败时据此定位目标所在站，且只转发给已配置互信（凭据 + 指纹固定）的对端。定位记录随客户端在线每 10 分钟保鲜，离线约 30 分钟后自然过期。DHT 强制开启：默认空锚点列表时本机仍监听 UDP 并保存记录，配置锚点后即可引导入网。</div>
   </div>
 </section>
 
 <section id="tab-logs">
   <div class="panel">
-    <h2>运行日志 <small>最近 200 行 · 不含消息明文/凭据明文</small></h2>
-    <div class="toolbar"><button id="refreshLog">刷新</button><span class="muted" id="logFile"></span></div>
+    <h2 title="最近 200 行运行日志；不含消息明文/凭据明文；日志文件在数据目录 server.log，超过 5 MB 下次启动轮转">运行日志</h2>
+    <div class="toolbar"><button id="refreshLog" title="重新加载日志">刷新</button><span class="muted" id="logFile"></span></div>
     <pre class="log" id="logBox">加载中…</pre>
-    <div class="hint">日志文件在数据目录的 server.log；超过 5 MB 会在下次启动时轮转为 server.log.1。</div>
   </div>
 </section>
 
 <section id="tab-update">  <div class="panel">
-    <h2>自动更新 <small>只替换程序，不动 data/；单文件运行时才可安装</small></h2>
+    <h2 title="自动更新：只替换程序不动 data/；单文件运行时才可安装；重启会清空内存队列（消息 TTL 30 秒）">自动更新</h2>
     <div class="cards" id="updCards"></div>
     <div class="grid">
-      <label class="f">策略
+      <label class="f" title="更新策略：关闭（不检查）/ 检查并提示（默认）/ 自动下载并重启">策略
         <select id="updAuto">
           <option value="off">关闭（不检查）</option>
           <option value="check">检查并提示（默认）</option>
           <option value="install">自动下载并重启</option>
         </select>
       </label>
-      <label class="f">检查间隔（小时）<input id="updInterval" type="number" min="1" max="168" step="1"></label>
+      <label class="f" title="检查更新的间隔（小时，1–168）">检查间隔（小时）<input id="updInterval" type="number" min="1" max="168" step="1"></label>
     </div>
     <div class="toolbar" style="margin-top:10px">
-      <button class="primary" id="updCheck">检查更新</button>
-      <button id="updInstall">下载并重启</button>
+      <button class="primary" id="updCheck" title="立即检查 GitHub Releases 是否有新版本">检查更新</button>
+      <button id="updInstall" title="下载新版本并替换重启（校验 SHA-256，失败自动回滚；队列非空时可能被拒绝）">下载并重启</button>
       <span class="muted" id="updMsg"></span>
     </div>
-    <div class="hint" id="updHint">默认只检查并提示；自动安装需要你显式切换。重启会清空内存队列（消息 TTL 30 秒），队列非空时默认不带 force 的安装会被拒绝。</div>
+    <div class="hint" id="updHint"></div>
     <pre class="log" id="updNotes" style="max-height:260px">尚未检查更新。</pre>
     <div class="hint"><a id="updLink" target="_blank" rel="noopener" hidden>打开发布页</a></div>
   </div>
   <div class="panel">
-    <h2>更新记录 <small>最近一次检查 / 安装</small></h2>
+    <h2 title="最近一次检查 / 安装记录">更新记录</h2>
     <div class="tablewrap"><table id="updTable"></table></div>
   </div>
 </section>
 
 <section id="tab-ports">
   <div class="panel">
-    <h2>端口管理 <small>R133：多业务端口——本机监听 + 凭据引用；被占端口可强制启用</small></h2>
+    <h2 title="多业务端口：本机监听 + 凭据引用；被占标异常不自动顺延（可强制启用）；默认 8787（入口）/59599（中继）/58588（扩网），DHT UDP 443/62666">端口管理</h2>
     <div class="toolbar">
-      <input id="ptNewPort" type="number" min="1" max="65535" step="1" placeholder="新端口（1–65535）" style="max-width:170px">
+      <input id="ptNewPort" type="number" min="1" max="65535" step="1" placeholder="新端口（1–65535）" title="新端口号（1–65535）" style="max-width:170px">
       <select id="ptNewProto" title="TCP=业务监听（中继/扩网凭据用）；UDP=DHT 组网监听">
         <option value="tcp">TCP（业务）</option>
         <option value="udp">UDP（DHT 组网）</option>
       </select>
-      <button class="primary" id="ptAdd">添加新的端口</button>
-      <span class="muted">中继凭据默认 59599 · 扩网凭据默认 58588 · DHT UDP 默认 443/62666</span>
+      <button class="primary" id="ptAdd" title="按所选协议添加新端口（TCP 立即监听；UDP 由 DHT 使用）">添加新的端口</button>
     </div>
     <div class="tablewrap"><table id="ptTable"></table></div>
     <div class="hint" id="ptEntryHint"></div>
-    <div class="hint">状态：监听中 / 暂停 / 异常（被占用等）。「暂停」停止监听但保留配置（UDP 端口也一样，可随时「启用」恢复，不会消失）；「强制启用」会<b>结束占用该端口的进程</b>后开始监听——本机操作，慎用。「删除」立即停听并移除，引用该端口的凭据自动失效。管理入口端口<b>不可暂停/删除</b>，只能更改端口号（改后下次访问用新端口，旧端口继续作为普通业务端口监听）。</div>
   </div>
 </section>
 
@@ -377,21 +365,20 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
 <div class="modal" id="credModal">
   <div class="box">
     <h3 id="credModalTitle">新建凭据</h3>
-    <p>留空 = 继承全局默认；填 0 = 不限制。名称最多 40 字。</p>
     <div class="grid">
-      <label class="f">名称<input id="fName" maxlength="40" placeholder="例如：家里的电脑"></label>
-      <label class="f">端点域名或 IP（可选，默认公网 IP）<input id="fHost" maxlength="253" placeholder="自动探测的公网 IP"></label>
-      <label class="f">端点端口（可选，默认 59599）<input id="fPort" type="number" min="1" max="65535" step="1" placeholder="59599"></label>
-      <label class="f">请求速度（次/分钟）<input id="fRate" type="number" min="0" step="1" placeholder="继承全局"></label>
-      <label class="f">流量速度（MB/分钟）<input id="fByteRate" type="number" min="0" step="0.1" placeholder="继承全局"></label>
-      <label class="f">每日次数上限（次）<input id="fDailyReq" type="number" min="0" step="1" placeholder="继承全局"></label>
-      <label class="f">每日流量上限（MB）<input id="fDaily" type="number" min="0" step="1" placeholder="继承全局"></label>
-      <label class="f">每月次数上限（次）<input id="fMonthlyReq" type="number" min="0" step="1" placeholder="继承全局"></label>
-      <label class="f">每月流量上限（MB）<input id="fMonthly" type="number" min="0" step="1" placeholder="继承全局"></label>
-      <label class="f">总次数上限（次）<input id="fTotalReq" type="number" min="0" step="1" placeholder="继承全局"></label>
-      <label class="f">总流量上限（MB）<input id="fTotal" type="number" min="0" step="1" placeholder="继承全局"></label>
-      <label class="f">每年流量上限（MB）<input id="fYearly" type="number" min="0" step="1" placeholder="继承全局"></label>
-      <label class="f">附加内容（会话提示消息）模式
+      <label class="f" title="凭据名称（最多 40 字；默认已填可直接保存）">名称<input id="fName" maxlength="40" placeholder="例如：家里的电脑"></label>
+      <label class="f" title="端点域名或 IP（可选，默认探测公网 IP）：写进凭据提示，供客户端参考">端点域名或 IP（可选，默认公网 IP）<input id="fHost" maxlength="253" placeholder="自动探测的公网 IP"></label>
+      <label class="f" title="端点端口（可选，默认 59599）：客户端连接本站的端口">端点端口（可选，默认 59599）<input id="fPort" type="number" min="1" max="65535" step="1" placeholder="59599"></label>
+      <label class="f" title="每分钟最多请求次数；留空 = 继承全局，填 0 = 不限制">请求速度（次/分钟）<input id="fRate" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="每分钟最多流量 MB；留空 = 继承全局，填 0 = 不限制">流量速度（MB/分钟）<input id="fByteRate" type="number" min="0" step="0.1" placeholder="继承全局"></label>
+      <label class="f" title="每日最多请求次数；留空 = 继承全局，填 0 = 不限制">每日次数上限（次）<input id="fDailyReq" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="每日最多流量 MB；留空 = 继承全局，填 0 = 不限制">每日流量上限（MB）<input id="fDaily" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="每月最多请求次数；留空 = 继承全局，填 0 = 不限制">每月次数上限（次）<input id="fMonthlyReq" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="每月最多流量 MB；留空 = 继承全局，填 0 = 不限制">每月流量上限（MB）<input id="fMonthly" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="累计最多请求次数；留空 = 继承全局，填 0 = 不限制">总次数上限（次）<input id="fTotalReq" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="累计最多流量 MB；留空 = 继承全局，填 0 = 不限制">总流量上限（MB）<input id="fTotal" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="每年最多流量 MB；留空 = 继承全局，填 0 = 不限制">每年流量上限（MB）<input id="fYearly" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="附加内容模式：关闭（默认，不加）/ 随机 / 按顺序循环 / 按频率比例（需先在中继页保存内容库）">附加内容（会话提示消息）模式
         <select id="fAddition">
           <option value="off">关闭（不加附加内容）</option>
           <option value="random">随机</option>
@@ -399,11 +386,11 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
           <option value="weighted">按频率比例</option>
         </select>
       </label>
-      <label class="f">权重（可选，格式「序号:权重」逗号分隔，如 1:100,2:0；留空 = 全部等权；权重 0 = 不使用该条）
+      <label class="f" title="权重表：「序号:权重」逗号分隔（如 1:100,2:0）；权重 0 = 不使用该条；留空 = 全部等权；序号对应内容库第几条">权重（可选，格式「序号:权重」逗号分隔，如 1:100,2:0；留空 = 全部等权；权重 0 = 不使用该条）
         <input id="fAddWeights" placeholder="1:100,2:0,3:50">
       </label>
     </div>
-    <div class="row"><button class="ghost" data-close="credModal">取消</button><button class="primary" id="saveCred">保存</button></div>
+    <div class="row"><button class="ghost" data-close="credModal" title="取消并关闭">取消</button><button class="primary" id="saveCred" title="保存凭据（新建时保存后显示明文，请立即复制）">保存</button></div>
   </div>
 </div>
 
@@ -421,8 +408,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
 <div class="modal" id="tokenModal">
   <div class="box">
     <h3>凭据已生成</h3>
-    <p>明文只显示这一次，请立即保存到 WArmy 的服务器设置里。</p>
-    <p id="newTokenEp" class="hint" style="margin:0 0 8px"></p>
+    <p id="newTokenEp" class="hint" style="margin:0 0 8px" title="明文只显示这一次；请立即保存到 WArmy 的服务器设置里"></p>
     <div class="tokenbox"><code id="newToken" style="flex:1"></code><button class="sm" id="copyToken">复制</button></div>
     <div class="row"><button class="primary" data-close="tokenModal">我已保存</button></div>
   </div>
@@ -432,19 +418,18 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
 <div class="modal" id="inCredModal">
   <div class="box">
     <h3 id="inCredModalTitle">管理接入凭据</h3>
-    <p>留空 = 继承全局默认；填 0 = 不限制。名称最多 40 字；有效期 0 天 = 永久。</p>
     <div class="grid">
-      <label class="f">名称<input id="inFName" maxlength="40" placeholder="例如：客厅的电脑"></label>
-      <label class="f">请求速度（次/分钟）<input id="inFRate" type="number" min="0" step="1" placeholder="继承全局"></label>
-      <label class="f">流量速度（MB/分钟）<input id="inFByteRate" type="number" min="0" step="0.1" placeholder="继承全局"></label>
-      <label class="f">每日次数上限（次）<input id="inFDailyReq" type="number" min="0" step="1" placeholder="继承全局"></label>
-      <label class="f">每日流量上限（MB）<input id="inFDaily" type="number" min="0" step="1" placeholder="继承全局"></label>
-      <label class="f">每月次数上限（次）<input id="inFMonthlyReq" type="number" min="0" step="1" placeholder="继承全局"></label>
-      <label class="f">每月流量上限（MB）<input id="inFMonthly" type="number" min="0" step="1" placeholder="继承全局"></label>
-      <label class="f">总次数上限（次）<input id="inFTotalReq" type="number" min="0" step="1" placeholder="继承全局"></label>
-      <label class="f">总流量上限（MB）<input id="inFTotal" type="number" min="0" step="1" placeholder="继承全局"></label>
-      <label class="f">每年流量上限（MB）<input id="inFYearly" type="number" min="0" step="1" placeholder="继承全局"></label>
-      <label class="f">有效期（天，0 = 永久）<input id="inFDays" type="number" min="0" max="36500" step="1" placeholder="0"></label>
+      <label class="f" title="凭据名称（最多 40 字）">名称<input id="inFName" maxlength="40" placeholder="例如：客厅的电脑"></label>
+      <label class="f" title="每分钟最多请求次数；留空 = 继承全局，填 0 = 不限制">请求速度（次/分钟）<input id="inFRate" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="每分钟最多流量 MB；留空 = 继承全局，填 0 = 不限制">流量速度（MB/分钟）<input id="inFByteRate" type="number" min="0" step="0.1" placeholder="继承全局"></label>
+      <label class="f" title="每日最多请求次数；留空 = 继承全局，填 0 = 不限制">每日次数上限（次）<input id="inFDailyReq" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="每日最多流量 MB；留空 = 继承全局，填 0 = 不限制">每日流量上限（MB）<input id="inFDaily" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="每月最多请求次数；留空 = 继承全局，填 0 = 不限制">每月次数上限（次）<input id="inFMonthlyReq" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="每月最多流量 MB；留空 = 继承全局，填 0 = 不限制">每月流量上限（MB）<input id="inFMonthly" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="累计最多请求次数；留空 = 继承全局，填 0 = 不限制">总次数上限（次）<input id="inFTotalReq" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="累计最多流量 MB；留空 = 继承全局，填 0 = 不限制">总流量上限（MB）<input id="inFTotal" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="每年最多流量 MB；留空 = 继承全局，填 0 = 不限制">每年流量上限（MB）<input id="inFYearly" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="有效期（天）；0 = 永久；过期后对方凭据 401 credential-expired">有效期（天，0 = 永久）<input id="inFDays" type="number" min="0" max="36500" step="1" placeholder="0"></label>
     </div>
     <div class="row"><button class="ghost" data-close="inCredModal">取消</button><button class="primary" id="saveInCred">保存</button></div>
   </div>
@@ -459,6 +444,57 @@ const $$ = (s) => Array.from(document.querySelectorAll(s));
 let S = null, E = null, SEC = null, R = null, U = null, D = null, firstRun = null, editing = null, deleting = null, cfgDirty = false, activeTab = 'overview';
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/* R135k：表头气泡提示——所有动态渲染的表格统一注入（MutationObserver 覆盖重绘） */
+const TH_TITLES = {
+  '范围': '统计范围（今日 / 本月 / 累计）',
+  '请求': '业务请求次数（含拒绝/失败）',
+  '上行': '入站字节（信封上行）',
+  '下行': '出站字节（信封下行）',
+  '合计': '上行 + 下行字节',
+  '转发': '转给上游 FWArmy 的次数',
+  '投递': '成功投递（收件人取走）次数',
+  '拒绝': '被拒绝次数（限额/端口/签名等）',
+  '离线': '收件人不在线次数',
+  '名称': '名称（可编辑）',
+  '标识（中间+末尾）': '凭据哈希中间 5 位 + 末尾 5 位，用于人工核对',
+  '端口': '凭据或监听的端口',
+  '状态': '有效/停用，或 监听中/暂停/异常',
+  '最近使用': '最近一次使用时间',
+  '操作': '编辑 / 停用 / 删除等操作',
+  '消息 ID': '黑名单消息的 msgId 哈希（前 12 位）',
+  '原因': '拉黑原因（超窗重放 / 第 3 次重放）',
+  '次数': '命中次数',
+  '首次': '首次拉黑时间',
+  '最近': '最近一次命中时间',
+  '来源': '投递来源实例 / 来源地址',
+  '类型': 'TCP（业务）或 UDP（DHT 组网）',
+  '凭据引用': '引用该端口的凭据数量（删除端口会使它们失效）',
+  '说明': '端口状态补充说明',
+  '流量': '传输字节（上行 + 下行）',
+  '成功': '成功次数',
+  '失败': '失败次数',
+  '最近结果': '最近一次投递/转发的返回结果',
+  '最近时间': '最近一次发生时间',
+  '传输': '该对端的 TLS 模式（明文 / 指纹固定 / CA 验证）',
+  '今日': '今日统计',
+  '本月': '本月统计',
+  '累计': '累计统计',
+  '成功/失败': '成功投递 / 失败次数',
+  '最近测试': '最近一次连通性测试结果',
+  '有效期': '凭据到期剩余时间（0 = 永久）',
+  '节点 ID': 'DHT 节点 ID（由指纹派生）',
+  '地址': '节点或记录的地址（host:port）',
+  '指纹': '身份指纹（base32，52 位）',
+  '最近见到': '最近一次与该节点通信时间',
+};
+function applyThTitles() {
+  document.querySelectorAll('th').forEach((th) => {
+    const t = (th.textContent || '').trim();
+    if (TH_TITLES[t] && !th.title) th.title = TH_TITLES[t];
+  });
+}
+new MutationObserver(applyThTitles).observe(document.documentElement, { childList: true, subtree: true });
+applyThTitles();
 const num = (n) => Number(n || 0).toLocaleString('zh-CN');
 const fmtBytes = (n) => {
   n = Number(n) || 0;
@@ -568,6 +604,7 @@ function render() {
   tg.disabled = false;
   tg.textContent = '正在运行';
   tg.className = 'good';
+  tg.title = 'FWArmy 正在运行；点击停止服务器（停止后需双击 FWArmy.exe 重新启动）';
   powerBtnState = 'running';
   $('#cards').innerHTML = [
     ['当前速度', `${num(t.speed.reqPerMin)} 次/分`, `${fmtBytes(t.speed.bytesPerMin)}/分`],
@@ -699,6 +736,14 @@ async function refreshPublicIp(animate) {
   }
 }
 $('#pubIpBar').addEventListener('click', () => refreshPublicIp(true));
+// R135k：帮助文档——服务器导出到数据目录并用系统命令打开（file:// 本地路径，程序自行识别，浏览器跨协议弹窗会被拦截）
+$('#helpBtn').addEventListener('click', async () => {
+  try {
+    const j = await api('/api/admin/help-open', {});
+    if (j.opened) toast('帮助文档已在浏览器新窗口打开');
+    else toast('帮助文档已导出：' + j.file + '（系统打开失败，请手动用浏览器打开该路径）', true);
+  } catch (e) { toast('帮助文档打开失败：' + e.message, true); }
+});
 async function refresh() {
   if (refreshInFlight) return;
   refreshInFlight = true;
@@ -942,8 +987,7 @@ function renderExpand() {
   $('#exInState').textContent = inb.configured
     ? `已配置 ${num(inb.count || creds.length)} 条 · 有效 ${num(creds.filter((c) => !c.disabled).length)} 条`
     : '尚未生成（别人无法连接）';
-  $('#exAddrHint').innerHTML =
-    `凭据里的地址 = 生成时填写的域名/IP（默认 = 探测到的公网 IP——顶部常驻自动探测；留空则用当前生效的对外地址，见 DHT 页）＋ 端口（不填默认 58588）。凭据端口必须在本机监听端口集合（${(E && E.listeningPorts || []).join('、') || '无'}）内才可用——不在则显示「端口不可用」并被强制禁止；请在<a href="#" data-goto="ports">端口</a>页启用/添加该端口后重新生成。`;
+  $('#exAddrHint').innerHTML = ''; // R135k：说明文字移入帮助文档与气泡（生成区按钮 title 已含要点）
   renderReach();
 }
 function renderReach() {
@@ -1024,7 +1068,7 @@ function renderDht() {
       || `<tr><td colspan="4" class="empty">还没有对端。配置锚点后本机会引导入网；无锚点时只监听、等待被引导。</td></tr>`);
   $('#dhtHint').textContent = d.lastError
     ? '最近错误：' + d.lastError
-    : 'DHT 强制开启：使用 FWArmy 就必须进网。默认锚点 DHT.pondsi.com / DHT2.pondsi.com × 443/62666 自动引导；对外地址每条验证通过才用于宣告（每 5 分钟复查）。自动兜底 = 公网 IPv4/IPv6 × 443/62666（最多 4 条，IPv6 优先），不可修改/删除，只能暂停（须先有其它生效地址）；定时自检发现没有任何生效地址时自动恢复全部兜底。';
+    : ''; // R135k：静态说明移入帮助文档与气泡（DHT 标题/按钮 title 已含要点）
   $('#dhtMsg').textContent = '';
 }
 async function loadDht() {
@@ -1287,7 +1331,7 @@ async function loadAddition() {
 async function refreshAdditionAudit() {
   try {
     const a = await api('/api/admin/addition-audit');
-    $('#addAudit').innerHTML = `审计链：${a.count} 条 · 链头 <code>${esc((a.head || '').slice(0, 16))}…</code> · 上次签名检查点 ${a.lastSignedAt ? fmtTime(a.lastSignedAt) : '—'}（每 5 分钟自动发布到 DHT；改造站删除/替换附加内容会留下可对照证据） <button class="sm" id="addAuditPub">立即发布检查点</button> <button class="sm" id="addAuditRefresh">刷新</button>`;
+    $('#addAudit').innerHTML = `审计链：${a.count} 条 · 链头 <code>${esc((a.head || '').slice(0, 16))}…</code> · 上次签名检查点 ${a.lastSignedAt ? fmtTime(a.lastSignedAt) : '—'} <button class="sm" id="addAuditPub" title="立即把审计链根签名发布到 DHT（防回滚检查点，每 5 分钟自动执行一次）">立即发布检查点</button> <button class="sm" id="addAuditRefresh" title="刷新审计链状态">刷新</button>`;
     const pb = $('#addAuditPub');
     if (pb) pb.addEventListener('click', async () => {
       try {
@@ -1660,6 +1704,7 @@ function setPowerStopped() {
   pb.className = 'danger';
   pb.textContent = '已停止';
   pb.disabled = false;
+  pb.title = 'FWArmy 已停止；双击 FWArmy.exe（或 node server.mjs）重新启动后刷新本页';
   powerBtnState = 'stopped';
 }
 $('#powerBtn').addEventListener('click', async () => {

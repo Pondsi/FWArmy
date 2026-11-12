@@ -2814,6 +2814,14 @@ export async function startServer(options = {}) {
     res.end(svg);
   }
 
+  /* ── R135k 帮助文档：内嵌（SEA asset 或源码文件）→ 导出到数据目录 → 返回本地绝对路径（file:// 打开，不写死路径） ── */
+  function helpHtml() {
+    if (IS_SEA && SEA) {
+      try { return SEA.getAsset('help.html', 'utf8'); } catch { /* fallback */ }
+    }
+    try { return fs.readFileSync(path.join(HERE, 'help.html'), 'utf8'); } catch { return null; }
+  }
+
   function findCred(idOrHash) {
     const k = String(idOrHash || '');
     if (creds[k]) return creds[k];
@@ -3721,6 +3729,38 @@ export async function startServer(options = {}) {
         return send(res, 200, { ok: true, ports: portsView() });
       }
       return send(res, 400, { ok: false, error: 'bad-action' });
+    }
+    if (req.method === 'GET' && p === '/api/admin/help') {
+      const html = helpHtml();
+      if (!html) return send(res, 404, { ok: false, error: 'help-missing' });
+      const out = path.join(DATA, 'help.html');
+      try { fs.writeFileSync(out, html, 'utf8'); }
+      catch (e) { return send(res, 500, { ok: false, error: 'help-export-failed', hint: String((e && e.message) || e) }); }
+      // 本地绝对路径（file:// 打开用）：统一正斜杠（file:///C:/Users/...）
+      const fileUrl = 'file:///' + out.split(/[\\/]+/).join('/');
+      return send(res, 200, { ok: true, file: fileUrl });
+    }
+    if (req.method === 'POST' && p === '/api/admin/help-open') {
+      // R135k：浏览器跨协议拦截 http→file:// 弹窗；改为本机服务器用系统命令打开帮助文档（file 路径由程序生成，不写死）
+      const html = helpHtml();
+      if (!html) return send(res, 404, { ok: false, error: 'help-missing' });
+      const out = path.join(DATA, 'help.html');
+      try { fs.writeFileSync(out, html, 'utf8'); } catch { /* 已存在也可打开 */ }
+      const fileUrl = 'file:///' + out.split(/[\\/]+/).join('/');
+      const cp = require('node:child_process');
+      let opened = false;
+      try {
+        if (process.platform === 'win32') {
+          cp.spawn('cmd', ['/c', 'start', '', fileUrl], { windowsHide: true, detached: true }).unref();
+        } else if (process.platform === 'darwin') {
+          cp.spawn('open', [fileUrl], { detached: true }).unref();
+        } else {
+          cp.spawn('xdg-open', [fileUrl], { detached: true }).unref();
+        }
+        opened = true;
+      } catch { /* 打开失败如实返回 */ }
+      log('INFO', `帮助文档已导出 ${out}（${opened ? '已在浏览器打开' : '打开失败'}）`);
+      return send(res, 200, { ok: true, opened, file: fileUrl });
     }
     if (req.method === 'GET' && p === '/api/admin/security') return send(res, 200, securityView());    if (req.method === 'GET' && p === '/api/admin/dht') return send(res, 200, dhtPublicView());
     if (req.method === 'POST' && p === '/api/admin/dht-config') {

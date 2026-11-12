@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>FWArmy 使用说明</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b2430; --sub:#5a6472; --line:#d5dae1; --accent:#4a7dff; --warn:#b7791f; --danger:#c0392b; --ok:#1e8e3e; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif; background:var(--bg); color:var(--ink); font-size:14px; line-height:1.7; }
+  header { background:#1b2430; color:#fff; padding:22px 28px; }
+  header h1 { margin:0 0 4px; font-size:20px; }
+  header p { margin:0; color:#aab4c2; font-size:13px; }
+  .wrap { max-width:860px; margin:0 auto; padding:24px 20px 80px; }
+  nav { position:sticky; top:0; background:var(--bg); padding:10px 0; border-bottom:1px solid var(--line); margin-bottom:18px; z-index:5; }
+  nav a { color:var(--accent); text-decoration:none; margin:0 10px 4px 0; font-size:13px; display:inline-block; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:18px 22px; margin-bottom:18px; }
+  h2 { font-size:17px; margin:0 0 10px; padding-bottom:8px; border-bottom:1px solid var(--line); }
+  h3 { font-size:15px; margin:16px 0 6px; }
+  p { margin:6px 0; }
+  code { background:#eef1f5; border:1px solid var(--line); border-radius:4px; padding:1px 6px; font-family:Consolas,Menlo,monospace; font-size:12.5px; }
+  pre { background:#1b2430; color:#d7dee8; border-radius:8px; padding:12px 14px; overflow-x:auto; font-size:12.5px; line-height:1.5; }
+  table { border-collapse:collapse; width:100%; margin:10px 0; font-size:13px; }
+  th,td { border:1px solid var(--line); padding:6px 10px; text-align:left; }
+  th { background:#f0f2f6; }
+  .tag { display:inline-block; border-radius:20px; padding:0 8px; font-size:12px; line-height:20px; }
+  .tag.on { background:#e4f3e9; color:var(--ok); border:1px solid #bfe3c8; }
+  .tag.off { background:#fdeceb; color:var(--danger); border:1px solid #f3c1bd; }
+  .tag.warn { background:#fdf3e0; color:var(--warn); border:1px solid #ecd9ae; }
+  .warn-box { background:#fdf3e0; border:1px solid #ecd9ae; border-radius:8px; padding:10px 14px; margin:10px 0; color:#7a5410; }
+  .ok-box { background:#e4f3e9; border:1px solid #bfe3c8; border-radius:8px; padding:10px 14px; margin:10px 0; color:#14572b; }
+  ul,ol { margin:6px 0; padding-left:22px; }
+  li { margin:3px 0; }
+  .toc { column-count:2; column-gap:24px; }
+  .toc a { display:block; }
+  @media (max-width:700px) { .toc { column-count:1; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>FWArmy 使用说明</h1>
+  <p>WArmy 专属中继服务器 · 版本 0.6.0 · 本文档随程序内嵌，内容与当前版本一致</p>
+</header>
+<div class="wrap">
+<nav>
+  <a href="#start">快速开始</a>
+  <a href="#relay">中继</a>
+  <a href="#frelay">F中继</a>
+  <a href="#expand">扩网</a>
+  <a href="#dht">DHT 组网</a>
+  <a href="#ports">端口管理</a>
+  <a href="#addition">附加内容</a>
+  <a href="#reach">公网可达性</a>
+  <a href="#security">消息安全</a>
+  <a href="#tls">TLS 证书</a>
+  <a href="#update">自动更新</a>
+  <a href="#faq">常见问题</a>
+</nav>
+
+<section id="start">
+  <h2>快速开始</h2>
+  <p>FWArmy 是 WArmy 的专属中继服务器：WArmy 客户端把消息投递到 FWArmy，FWArmy 负责入队、按凭据与限额放行、跨站转发（扩网/F中继）、以及 DHT 设备发现。启动后浏览器打开管理页（默认 <code>http://127.0.0.1:8787</code>）。</p>
+  <ul>
+    <li><b>启动</b>：双击 <code>FWArmy.exe</code>（单文件）或 <code>node server.mjs --port=8787 --data=&lt;数据目录&gt;</code>（源码）。</li>
+    <li><b>停止</b>：管理页右上角「正在运行」按钮，或命令行 <code>node ctl.mjs stop</code>（挂死加 <code>--force</code>）。</li>
+    <li><b>数据目录</b>：config.json（配置）、credentials.json（中继凭据 sha256）、expand.json（被扩网凭据）、addition-audit.log（附加内容审计链）、tls/（自签证书）、server.log（日志）。</li>
+    <li><b>管理页安全</b>：只接受本机回环访问（127.0.0.1 / ::1），拒绝跨站请求。远程管理请用 SSH 隧道（见 FAQ）。</li>
+  </ul>
+  <div class="warn-box">管理入口端口（默认 8787）不可暂停/删除，只能在「端口」页更改；改后下次访问用新端口，旧端口继续作为普通业务端口监听。</div>
+</section>
+
+<section id="relay">
+  <h2>中继（WArmy 客户端接入本站）</h2>
+  <p>中继凭据 = WArmy 客户端连接本站的通行证。服务器只存凭据的 sha256 哈希，明文只在生成时显示一次。</p>
+  <h3>生成凭据</h3>
+  <ul>
+    <li>「中继」页点「生成凭据」，名称默认已填（可直接保存）。留空限额 = 继承全局默认；填 0 = 不限制。</li>
+    <li>可选的「端点域名/IP + 端口」会写进凭据提示（默认 = 探测到的公网 IP；端口不填默认 59599）。</li>
+    <li>分钟次数与流量必须大于 0；其余额度填 0 = 不限。</li>
+  </ul>
+  <h3>凭据管理</h3>
+  <ul>
+    <li>每行凭据显示：名称 / 标识（中间 5 + 末尾 5）/ 限额 / 今日/本月/累计用量 / 峰值 / 最近使用。可编辑、停用、删除（删除需输入名称确认）。</li>
+    <li>限额语义：次数 = 有效凭据的业务请求（含拒绝/失败）；流量 = 实际入队与取走的信封字节之和。重启清空分钟窗口，不清累计额度。</li>
+  </ul>
+  <h3>附加内容（会话提示消息）</h3>
+  <p>详见 <a href="#addition">附加内容</a> 一节。</p>
+</section>
+
+<section id="frelay">
+  <h2>F中继（别人连接本站）</h2>
+  <p>别的 FWArmy 投递失败时，用你生成的「被扩网凭据」把消息转给你，由你尝试投递。每个实例可生成多条，可单独管理/停用/删除。</p>
+  <ul>
+    <li>生成时填写的域名/IP（默认 = 探测到的公网 IP）和端口会<b>写进凭据本身</b>（不填端口默认 58588）；对方只需填「名称 + 凭证」，不用再填地址。</li>
+    <li><b>凭据端口必须在本机监听集合内</b>，否则此凭据被强制禁止（对方连不到本机）。若端口不在集合：去「端口」页启用/添加该端口（被占可强制启用）后重新生成。</li>
+    <li>F中继收到的消息<b>不允许添加附加内容</b>；且必须已带附加内容或密封标记，否则丢弃（防旧版本/被改造的上游站）。</li>
+    <li>「F中继」页表格 = 别人交给我投递的统计（次数/字节/成功/失败/最近结果）。</li>
+  </ul>
+  <div class="warn-box">「⚠ 端口 58588 不在本机监听端口集合」= 生成凭据时 58588 未在监听（被占用没起来 / 被暂停 / 被删除）。处理：端口页启用 58588，或改用已监听的端口生成。</div>
+</section>
+
+<section id="expand">
+  <h2>扩网（本站连接别人）</h2>
+  <p>本站无法投递的消息（收件人离线/不在本站），按顺序转发给已配置的互信 FWArmy（凭据 + TLS 指纹固定）。</p>
+  <ul>
+    <li>添加扩网：只需填「名称 + 对方的被扩网凭据」（凭据自带地址和端口），凭据不兼容旧版（不含地址）。</li>
+    <li>证书指纹：默认需要固定对方的 TLS 指纹——添加后点「识别指纹」→「信任」。</li>
+    <li><b>转发规则</b>：按序逐个尝试最多 3 个上游、整次 8 秒预算、成功即停；DHT 定位命中的站排最前；对端 409/426 不再换下一个。</li>
+    <li>「扩网」页表格 = 我转发出去的统计（请求/流量/成功/失败/最近结果/最近测试）。</li>
+    <li>转出消息<b>必带附加内容或密封标记</b>（接收站不会再添加）。</li>
+  </ul>
+</section>
+
+<section id="dht">
+  <h2>DHT 组网（设备发现层）</h2>
+  <p>DHT 是设备发现网络：所有 FWArmy 通过它互相「找到」，但<b>发现 ≠ 授权</b>——消息投递永远走配置的凭据 + TLS 指纹固定。DHT 强制开启，不可关闭。</p>
+  <h3>入网与锚点</h3>
+  <ul>
+    <li><b>默认锚点</b>（自动生效，与 WArmy 对齐）：<code>DHT.pondsi.com / DHT2.pondsi.com × UDP 443/62666</code>。第一台设备不需要别人引导——启动即向公网锚点引导并发布本站记录。</li>
+    <li><b>手动锚点</b>：填 <code>host 或 host:port</code> 添加（如对方的公网 IP:UDP 端口）。第二台设备以第一台为锚点后自动入网、双向可发现。</li>
+    <li>锚点全部不可达时指数退避重试（200ms→60s）；无锚点时本机仍监听 UDP 并自发布（以本机为锚点的设备可反向发现本站）。</li>
+  </ul>
+  <h3>一键变成锚点</h3>
+  <p>点击后生成<b>可分享的锚点地址</b>（本机实际监听的 UDP 端口 × 公网 IPv6/IPv4 或你填的域名）：把任一地址告诉其他 FWArmy，对方在「手动锚点」添加即可引导到本机。填域名时校验解析是否指向本机公网 IP。本机仍是完整服务器（中继/F中继照常）。</p>
+  <h3>对外地址</h3>
+  <ul>
+    <li>对外地址（域名IP:端口）= 本站宣告给别人的地址，<b>验证通过才宣告</b>（每 5 分钟复查，失效自动回退）。</li>
+    <li><b>添加时必须指向本机</b>：IP 须为本机网卡/探测公网 IP/回环；域名须解析到本机，否则拒绝（400）。</li>
+    <li><b>自动兜底</b>（最多 4 条，IPv6 优先）：公网 IPv4/IPv6 × 443/62666；不可修改/删除，只能暂停（须先有其它生效地址）；定时自检发现没有任何生效地址时自动恢复全部兜底。</li>
+    <li>状态含义：生效中 = 启用且验证通过；异常 = 启用但未通过（悬停看原因）；暂停 = 手动暂停。</li>
+  </ul>
+  <h3>地址解析与 IPv6</h3>
+  <ul>
+    <li>域名解析<b>优先 IPv6</b>（AAAA 记录），IPv6 不可达时<b>自动回退 IPv4</b>（R135d 起）。</li>
+    <li>配置域名时注意：配了 AAAA 就必须保证服务器有公网 IPv6 且防火墙放行 IPv6 UDP，否则引导走 IPv6 不通（现在会自动回退 IPv4，仅增加一次超时）。</li>
+    <li>对外地址与兜底同样 IPv6 优先；无 IPv6 时用 IPv4。</li>
+  </ul>
+  <h3>对端表</h3>
+  <p>路由表里最近的节点。客户端注册到本机时，本机会把「该客户端当前所在中继站 = 本站」签名发布到 DHT（每 10 分钟保鲜，离线约 30 分钟过期）；其它中继站投递失败时据此定位目标所在站。</p>
+</section>
+
+<section id="ports">
+  <h2>端口管理</h2>
+  <p>FWArmy 默认监听：<code>8787</code>（管理入口）· <code>59599</code>（中继凭据默认）· <code>58588</code>（扩网凭据默认）· DHT UDP <code>443/62666</code>。被占用的端口<b>不会自动顺延</b>，而是标为「异常（被占用）」。</p>
+  <ul>
+    <li><b>添加端口</b>：先选协议——TCP（业务：中继/扩网凭据用）或 UDP（DHT 组网监听）。</li>
+    <li><b>暂停</b>：停止监听但<b>保留配置</b>（UDP 端口也一样，随时可「启用」恢复，不会消失）。DHT 至少保留一个未暂停的 UDP 端口。</li>
+    <li><b>强制启用</b>：结束占用该端口的进程后开始监听——本机操作，慎用。</li>
+    <li><b>删除</b>：立即停听并移除，引用该端口的凭据自动失效。</li>
+    <li><b>管理入口端口</b>（标「入口」）：不可暂停/删除，只能改端口号。</li>
+    <li>凭据端口必须在本机监听集合内，否则凭据被强制禁止（401）。</li>
+  </ul>
+</section>
+
+<section id="addition">
+  <h2>附加内容（会话提示消息）</h2>
+  <p>中继站可以在转发的消息上附加一条<b>纯文字</b>提示（如公告/欢迎语）。WArmy 客户端每个会话 25 小时内最多展示一条（客户端去重）；附加内容开头有 ⓘ 图标位，纯文本单行显示。</p>
+  <h3>内容库</h3>
+  <p>「中继」页的附加内容面板：每行一条，最多 1000 条；纯文字校验（无 HTML 特殊字符、无换行、单条 ≤512 字节），非法条目自动过滤。</p>
+  <h3>凭证级模式</h3>
+  <p>生成/编辑中继凭据时配置：<b>关闭</b>（默认，不加）/ <b>随机</b> / <b>按顺序循环</b> / <b>按频率比例</b>；权重格式「序号:权重」逗号分隔（如 1:100,2:0），权重 0 = 不使用该条，留空 = 全部等权。</p>
+  <h3>添加规则</h3>
+  <ul>
+    <li>只有<b>中继</b>（客户端直投本站）或<b>扩网转出</b>（本站转给上游）时按该凭据配置添加；<b>F中继</b>（别人转给本站）一律不添加。</li>
+    <li>客户端方向携带附加内容字段 = 异常，直接丢弃（400）。</li>
+    <li>全链每条消息<b>最多一条</b>：本机转出时若未添加则补密封标记，接收站见附加内容或密封标记一律不再添加。</li>
+  </ul>
+  <h3>防篡改与审计</h3>
+  <ul>
+    <li>每次添加都写入<b>哈希链审计</b>（addition-audit.log，只存哈希）；链根每 5 分钟<b>签名发布到 DHT</b>（防回滚检查点），改造站删除/替换附加内容会留下可对照证据。</li>
+    <li>WArmy 客户端：同一 msgId 多份副本对比附加内容与路由，不一致 = 篡改 → 不展示并标记可疑站；24h 内同一会话同一中继 ≥2 次附加 → 丢弃并临时禁用该中继（24h→48h→7d 退避）。</li>
+  </ul>
+</section>
+
+<section id="reach">
+  <h2>公网可达性（NAT-PMP / STUN / 映射）</h2>
+  <ul>
+    <li><b>NAT-PMP 探针</b>（只读）：检测路由器是否支持 NAT-PMP，不建映射。</li>
+    <li><b>STUN 探测</b>：获取公网映射地址（需配置 STUN 服务器；程序不内置公网服务器）。</li>
+    <li><b>申请端口映射</b>：显式修改路由器状态（写操作，必须你确认）；「取消映射」可撤销。</li>
+    <li>判决只报证据：已映射 ≠ 已打通；verdict=confirmed-inbound 只来自真实外部实例连入过。</li>
+  </ul>
+</section>
+
+<section id="security">
+  <h2>消息安全（唯一 ID · 重放闸 · 黑名单）</h2>
+  <ul>
+    <li>每条消息必须有 <code>msgId</code>（客户端显式给出）；缺失/空串直接丢弃（400）。</li>
+    <li>同一 msgId 在本实例 24 小时内最多放行 2 次；第 3 次或首次出现已超 24 小时 → 丢弃并写入黑名单（30 天未再出现自动清理，重启保留）。</li>
+    <li>msgId 被来源 Ed25519 签名覆盖：中间节点改写 → 验签失败（403），无法伪装新消息绕闸。</li>
+    <li>防环：转发时每站把自己的实例 ID 追加进 route；route 含本站 → 409 拒绝（环形网第一轮即截断）。</li>
+  </ul>
+</section>
+
+<section id="tls">
+  <h2>TLS / 证书</h2>
+  <ul>
+    <li>默认<b>自签证书 + 指纹固定</b>（开箱即用，无需购买证书）；也可配置用户证书（CA 校验）或显式关闭 TLS（危险，不推荐）。</li>
+    <li>非回环来源的明文业务请求默认 426 拒绝。</li>
+    <li>改动 TLS 配置需要重启生效。自签私钥加密落盘。</li>
+  </ul>
+</section>
+
+<section id="update">
+  <h2>自动更新</h2>
+  <ul>
+    <li>单文件（SEA）运行时可自动更新：从 GitHub Releases 下载 → 校验 SHA-256 → 替换 → 重启自检（产品/版本/数据目录身份），失败回滚。源码运行只检查不安装。</li>
+    <li>策略：关闭 / 检查并提示（默认）/ 自动下载并重启。重启会清空内存队列（消息 TTL 30 秒）；队列非空时自动安装会被拒绝。</li>
+  </ul>
+</section>
+
+<section id="faq">
+  <h2>常见问题</h2>
+  <h3>「⚠ 端口 58588 不在本机监听端口集合」？</h3>
+  <p>58588 是 F中继凭据默认端口；凭据端口必须等于本机监听端口，否则对方连不到本机、此凭据被强制禁止。出现警告 = 生成时 58588 不在监听（被占用/被暂停/被删除）。处理：端口页启用 58588（被占可强制启用），或改用已监听端口生成。</p>
+  <h3>「端口不可用，请在端口中设置」？</h3>
+  <p>该凭据的端口不在本机监听集合。点提示里的「端口」链接跳到端口页，启用/添加该端口后重新生成凭据。</p>
+  <h3>管理页一直弹「端口读取失败: Failed to fetch」？</h3>
+  <p>旧版服务器 keep-alive 超时（5 秒）与管理页 5 秒轮询撞车导致连接被重置；R135f 起服务器超时已调到 30 秒且请求自动重试一次，此问题已修复。仍出现时检查网络/防火墙。</p>
+  <h3>如何远程管理服务器上的 FWArmy？</h3>
+  <p>管理页只接受本机回环访问（安全边界）。远程管理请用 SSH 隧道：<code>ssh -N -L 8787:127.0.0.1:8787 用户@服务器</code>，然后本地浏览器打开 <code>http://127.0.0.1:8787</code>。</p>
+  <h3>DHT 域名配了 AAAA 但服务器没有 IPv6？</h3>
+  <p>解析优先 IPv6；R135d 起 IPv6 不可达会自动回退 IPv4（增加一次超时）。长期建议：无 IPv6 时只配 A 记录。</p>
+  <h3>第一台设备如何入网？</h3>
+  <p>不需要别人引导：默认锚点 DHT.pondsi.com / DHT2.pondsi.com × UDP 443/62666 自动生效，启动即引导并发布记录。第二台以第一台为锚点后自动入网、双向可发现。</p>
+  <h3>消息发送后收件人没收到？</h3>
+  <p>先确认收件人在线（register 后心跳）；本站投递失败会按序转给上游（扩网），8 秒预算内最多试 3 个；都不行返回 offline（不排队重试，客户端稍后换新 msgId 补发）。</p>
+  <h3>DHT 对端数为 0？</h3>
+  <p>确认锚点可达（UDP 443/62666 出站放行）；本机监听 UDP 端口正常（端口页）；锚点全部不可达时会退避重试并显示「引导失败」。局域网联调请互填 127.0.0.1:UDP 端口互为锚点。</p>
+  <h3>附加内容没有生效？</h3>
+  <p>检查：内容库已保存（非空）；该凭据的附加内容模式不是「关闭」；消息走的是中继（客户端直投）或扩网转出（F中继不加）；WArmy 客户端 25h 窗口与多份对比规则（同 msgId 多副本不一致时不展示）。</p>
+</section>
+
+</div>
+</body>
+</html>
