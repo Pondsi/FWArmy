@@ -84,7 +84,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.6.2';
+export const VERSION = '0.6.3';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -934,13 +934,20 @@ function validAdditionText(s) {
   if (/[<>&"']/.test(s)) return false; // HTML 特殊字符（渲染层无法被利用）
   return s.trim().length > 0;
 }
-/** 附加内容库归一化：每条过纯文字校验，去重，上限 1000。 */
+/** UTF-8 字节安全截断（不切半个多字节字符；尾部替换符清掉）。 */
+function truncateUtf8Bytes(s, maxBytes) {
+  const buf = Buffer.from(String(s), 'utf8');
+  if (buf.length <= maxBytes) return String(s);
+  return buf.subarray(0, maxBytes).toString('utf8').replace(/[\uFFFD]+$/, '') || '';
+}
+/** 附加内容库归一化：超长强制截断到 120 字节（R135v，不再丢弃），HTML/控制字符仍过滤，去重，上限 1000。 */
 function normAdditionTexts(raw) {
   const list = Array.isArray(raw) ? raw : [];
   const out = [];
   const seen = new Set();
   for (const x of list) {
-    const s = String(x || '').trim().slice(0, ADDITION_MAX_BYTES + 16);
+    let s = String(x || '').trim().slice(0, ADDITION_MAX_BYTES + 16);
+    if (Buffer.byteLength(s, 'utf8') > ADDITION_MAX_BYTES) s = truncateUtf8Bytes(s, ADDITION_MAX_BYTES).trim();
     if (!validAdditionText(s) || seen.has(s)) continue;
     seen.add(s);
     out.push(s);

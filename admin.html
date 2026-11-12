@@ -84,6 +84,9 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
 .toast.show{opacity:1}
 .toast.err{border-color:#5c2626;color:#ffb4b4}
 .pubip{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);cursor:pointer;user-select:none;padding:4px 10px;border:1px solid var(--line);border-radius:20px;margin:0 8px 0 0;white-space:nowrap}
+.clippy{display:inline-block;max-width:100%;cursor:pointer;border-bottom:1px dashed var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
+.anchor-list{display:flex;flex-direction:column;gap:5px;margin-top:4px}
+.anchor-item{display:flex;align-items:center;gap:8px;padding:5px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}
 .pubip:hover{border-color:var(--accent);color:var(--text)}
 .pubip .ico{display:inline-block;font-size:13px;line-height:1}
 .pubip .ico.spin{animation:spin 1.1s linear infinite}
@@ -142,7 +145,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
   </div>
   <div class="panel">
     <h2 title="会话提示消息：最多 1000 条纯文字（单条 ≤120 字节，约一行）；每条中继凭据可配置模式（随机/顺序/按比例/关闭）；添加规则与防篡改审计见帮助文档">附加内容（会话提示消息）</h2>
-    <textarea id="addTexts" rows="6" placeholder="每行一条附加内容（纯文字：无 HTML 字符/无换行，单条 ≤120 字节（约 30 个中文字或 60 个英文字符，一行））" title="附加内容库：每行一条，最多 1000 条；纯文字校验（HTML 特殊字符/换行/超长自动过滤）；保存后每条中继凭据可配置使用模式" style="width:100%;box-sizing:border-box"></textarea>
+    <textarea id="addTexts" rows="6" placeholder="每行一条附加内容（纯文字：无 HTML 字符/无换行，单条 ≤120 字节（约 30 个中文字或 60 个英文字符，一行）；超长输入会被立即截断）" title="附加内容库：每行一条，最多 1000 条；纯文字校验（HTML 特殊字符/换行自动过滤；单条超 120 字节输入时立即截断，保存时再强制截断兜底）；保存后每条中继凭据可配置使用模式" style="width:100%;box-sizing:border-box"></textarea>
     <div class="toolbar" style="margin-top:8px">
       <button class="primary" id="addSave" title="保存内容库（非法条目自动过滤并提示数量）">保存内容库</button>
       <span class="muted" id="addCount"></span>
@@ -280,8 +283,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
       <button class="sm" id="dhtAdvAdd" title="添加对外地址（指向本机才生效）">添加</button>
     </div>
     <div id="dhtAdvList"></div>
-    <div class="grid" style="margin-top:12px">
-      <label class="f" title="默认锚点：DHT.pondsi.com / DHT2.pondsi.com × UDP 443/62666，自动生效，与 WArmy 对齐；第一台设备无需别人引导即可入网"><span id="dhtAnchorDef" class="hint" style="display:block;margin-top:4px"></span>默认锚点</label>
+    <div style="margin-top:12px;display:flex;flex-direction:column;gap:10px">
       <label class="f" title="手动锚点 = 引导入网的地址（host 或 host:port）：填对方公网 IP:UDP 端口（对方引导地址见其对外地址行内）；第二台设备以第一台为锚点后自动入网、双向可发现">手动锚点（或入网端点）
         <span style="display:flex;gap:6px;width:100%">
           <input id="dhtAnchorNew" placeholder="host 或 host:port，如 1.2.3.4:443" title="锚点格式：host 或 host:port（UDP 端口）；对方必须是可达的 FWArmy 节点" style="flex:1">
@@ -289,6 +291,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
         </span>
         <span id="dhtAnchorList" class="hint" style="margin-top:4px;display:block"></span>
       </label>
+      <label class="f" title="默认锚点：DHT.pondsi.com / DHT2.pondsi.com × UDP 443/62666，自动生效、不可删除，与 WArmy 对齐；第一台设备无需别人引导即可入网"><span id="dhtAnchorDef" class="hint" style="display:block;margin-top:4px"></span>默认锚点（自动生效，不可删除）</label>
     </div>
     <div class="toolbar" style="margin-top:12px">
       <button id="dhtPublish">立即发布本站记录</button>
@@ -458,6 +461,16 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
   </div>
 </div>
 
+<!-- 完整值查看（截断显示的指纹/节点 ID/哈希等，点击展开 + 复制） -->
+<div class="modal" id="fullModal">
+  <div class="box">
+    <h3 id="fullModalTitle">完整内容</h3>
+    <p id="fullModalDesc" class="hint" style="margin:0 0 8px"></p>
+    <div class="tokenbox"><code id="fullModalVal" style="flex:1;word-break:break-all;white-space:pre-wrap"></code><button class="sm" id="fullModalCopy">复制</button></div>
+    <div class="row"><button class="primary" data-close="fullModal">关闭</button></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -599,7 +612,7 @@ function loadDemoView() {
     try { fn(); } catch (e) { console.error('DEMO-RENDER-FAIL:', name, String(e && e.message || e)); }
   }
   $('#addTexts').value = '';
-  $('#addCount').textContent = `0 / ${ADD.max} 条`;
+  $('#addCount').textContent = `0 / ${ADD.max} 条 · 单条 ≤ ${ADD.maxBytes} 字节`;
   $('#addAudit').innerHTML = '审计链：0 条（静态预览：未连接服务器）';
   $('#logBox').textContent = '（静态预览：未连接服务器，无日志）';
   $('#logFile').textContent = '—';
@@ -740,12 +753,12 @@ function render() {
     ['黑名单', num(sec.blacklist || 0), '消息 ID 哈希'],
     ['24h 窗口', num(sec.replay || 0), '已见过的 messageId'],
     ['固定来源', num(sec.origins || 0), 'Ed25519 公钥'],
-    ['TLS 指纹', S.tls && S.tls.secure ? '已启用' : '未启用', S.tls && S.tls.fingerprint ? S.tls.fingerprint.slice(0, 24) + '…' : '—'],
-  ].map(([k, v, s]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join('');
+    ['TLS 指纹', S.tls && S.tls.secure ? '已启用' : '未启用', S.tls && S.tls.fingerprint ? clipFull(S.tls.fingerprint, 24) : '—', 1],
+  ].map(([k, v, s, h]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(v)}</div><div class="s">${h ? s : esc(s)}</div></div>`).join('');
   const recent = (SEC && SEC.blacklist && SEC.blacklist.recent) || [];
   $('#secTable').innerHTML =
     `<tr><th>消息 ID</th><th>原因</th><th class="num">次数</th><th>首次</th><th>最近</th><th>来源</th></tr>` +
-    (recent.map((b) => `<tr><td><code>${esc(b.key)}…</code></td><td>${esc(b.reason)}</td><td class="num">${num(b.hits)}</td><td class="muted">${fmtTime(b.firstAt)}</td><td class="muted">${fmtTime(b.lastAt)}</td><td class="muted">${esc(b.origin || '—')}</td></tr>`).join('')
+    (recent.map((b) => `<tr><td><code>${clipFull(b.key, 16)}</code></td><td>${esc(b.reason)}</td><td class="num">${num(b.hits)}</td><td class="muted">${fmtTime(b.firstAt)}</td><td class="muted">${fmtTime(b.lastAt)}</td><td class="muted">${esc(b.origin || '—')}</td></tr>`).join('')
       || `<tr><td colspan="6" class="empty">黑名单为空。</td></tr>`);
   if (!cfgDirty) fillCfg();
   if (focusId) { const el = document.getElementById(focusId); if (el && el !== document.activeElement) el.focus(); }
@@ -1035,7 +1048,7 @@ function renderExpand() {
       const ok = st.total.delivered || 0;
       const fail = (st.total.rejected || 0) + (st.total.offline || 0);
       return `<tr><td>${esc(p.name)}<div class="cell-sub"><span class="tag on">地址来自凭证</span></div></td>` +
-        `<td>${tlsTag(p)}<div class="cell-sub">${p.tls && p.tls.fingerprint ? esc(p.tls.fingerprint.slice(0, 16)) + '…' : '—'}</div></td>` +
+        `<td>${tlsTag(p)}<div class="cell-sub">${p.tls && p.tls.fingerprint ? clipFull(p.tls.fingerprint, 16) : '—'}</div></td>` +
         `<td>${p.enabled ? '<span class="tag on">启用</span>' : '<span class="tag off">停用</span>'}</td>` +
         `<td>${exPeerUsage(st)}</td><td>${num(st.month.requests)} 次<div class="cell-sub">${fmtBytes(st.month.bytes)}</div></td><td>${num(st.total.requests)} 次<div class="cell-sub">${fmtBytes(st.total.bytes)}</div></td>` +
         `<td class="num">${num(ok)} / ${num(fail)}</td><td class="muted">${esc(st.lastResult || '—')}</td>` +
@@ -1101,12 +1114,12 @@ function renderReach() {
   }[v] || v;
   $('#reachCards').innerHTML = [
     ['判决', text, `verdict=${v}`],
-    ['监听', `${R.listening.scheme}://${R.listening.host}:${R.listening.port}`, R.listening.tls && R.listening.tls.fingerprint ? R.listening.tls.fingerprint.slice(0, 20) + '…' : ''],
+    ['监听', `${R.listening.scheme}://${R.listening.host}:${R.listening.port}`, R.listening.tls && R.listening.tls.fingerprint ? clipFull(R.listening.tls.fingerprint, 20) : '', 1],
     ['NAT-PMP', R.natpmp ? (R.natpmp.alive ? '支持' : '无应答') : '未检测', R.natpmp ? (R.natpmp.detail || '') : '只读探针不会建映射'],
     ['映射', R.mapping ? `外部 ${R.mapping.externalPort}` : '无', R.mapping ? (R.mapping.valid ? '有效' : '已过期') : '—'],
     ['STUN', R.stun ? (R.stun.ok ? `${R.stun.publicAddress.host}:${R.stun.publicAddress.port}` : R.stun.reason) : '未探测', R.stun && R.stun.via ? R.stun.via : '不内置公网服务器'],
     ['最近外部来源', R.evidence && R.evidence.at ? fmtTime(R.evidence.at) : '—', R.evidence ? (R.evidence.from || '') : ''],
-  ].map(([k, val, s]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(val)}</div><div class="s">${esc(s)}</div></div>`).join('');
+  ].map(([k, val, s, h]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(val)}</div><div class="s">${h ? s : esc(s)}</div></div>`).join('');
   $('#reachHint').textContent = (R.hints || []).join(' ');
 }
 /* ── DHT 组网 ─────────────────────────────────────────────────────── */
@@ -1117,12 +1130,12 @@ function renderDht() {
   const lastPub = d.lastPublishAt ? fmtTime(d.lastPublishAt) : '—';
   $('#dhtCards').innerHTML = [
     ['节点', st, 'DHT 发现层强制开启，不可关闭'],
-    ['指纹', d.fingerprint ? d.fingerprint.slice(0, 20) + '…' : '—', 'base32(sha256(公钥))，52 位'],
-    ['节点 ID', d.nodeIdHex ? d.nodeIdHex.slice(0, 20) + '…' : '—', '由指纹派生（sha256）'],
+    ['指纹', d.fingerprint ? clipFull(d.fingerprint, 20) : '—', 'base32(sha256(公钥))，52 位；悬停看完整，点击复制', 1],
+    ['节点 ID', d.nodeIdHex ? clipFull(d.nodeIdHex, 20) : '—', '由指纹派生（sha256）；悬停看完整，点击复制', 1],
     ['对端数', String(d.contacts || 0), '路由表 contacts'],
     ['上次发布', lastPub, d.lastPublishSeq ? 'seq ' + d.lastPublishSeq + ' · 命中 ' + (d.lastStoredOn || []).length + ' 个节点' : '尚未发布'],
     ['引导', d.lastYindao ? (d.lastYindao.detail || `成功 ${d.lastYindao.ok} / 失败 ${d.lastYindao.failed}`) : '尚未引导', d.lastYindao ? fmtTime(d.lastYindao.at) : ''],
-  ].map(([k, v, s]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join('');
+  ].map(([k, v, s, h]) => `<div class="card"><div class="k">${k}</div><div class="v">${h ? v : esc(v)}</div><div class="s">${esc(s)}</div></div>`).join('');
   const addrs = d.addresses || [];
   const portStates = new Map((P && P.items || []).map((it) => [it.port, it]));
   // R135h：不再在渲染时清空输入框（5 秒轮询会把用户正在输入的内容清掉）；添加成功后由 dhtAdvNow/dhtAnchorAdd 清空
@@ -1161,14 +1174,14 @@ function renderDht() {
     }).join('') || '<tr><td colspan="5" class="empty">（无手动地址；自动兜底生效）</td></tr>') +
     '</table></div>';
   $('#dhtAnchorDef').innerHTML = (d.defaultAnchors || []).length
-    ? (d.defaultAnchors || []).map((a) => `<span style="display:inline-block;margin:2px 8px 2px 0"><code>${esc(a.host)}:${a.port}</code></span>`).join('')
+    ? '<div class="anchor-list">' + (d.defaultAnchors || []).map((a) => `<div class="anchor-item"><code>${esc(a.host)}:${a.port}</code><span class="muted">内置，不可删除</span></div>`).join('') + '</div>'
     : '<span class="muted">（无）</span>';
   $('#dhtAnchorList').innerHTML = (d.anchors || []).length
-    ? (d.anchors || []).map((a) => `<span style="display:inline-flex;align-items:center;gap:6px;margin:2px 8px 2px 0"><code>${esc(a.host)}:${a.port}</code><button class="sm danger" data-dht-del-anchor="${esc(a.host + ':' + a.port)}">×</button></span>`).join('')
+    ? '<div class="anchor-list">' + (d.anchors || []).map((a) => `<div class="anchor-item"><code>${esc(a.host)}:${a.port}</code><button class="sm danger" data-dht-del-anchor="${esc(a.host + ':' + a.port)}">删除</button></div>`).join('') + '</div>'
     : '<span class="muted">（无手动锚点）</span>';
   $('#dhtTable').innerHTML =
     `<tr><th>节点 ID</th><th>地址</th><th>指纹</th><th>最近见到</th></tr>` +
-    ((d.contactsList || []).map((c) => `<tr><td><code>${esc(c.id.slice(0, 16))}…</code></td><td><code>${esc(c.host)}:${c.port}</code></td><td class="muted">${c.zhiWen ? esc(c.zhiWen.slice(0, 16)) + '…' : '—'}</td><td class="muted">${fmtTime(c.lastSeen)}</td></tr>`).join('')
+    ((d.contactsList || []).map((c) => `<tr><td><code>${clipFull(c.id, 16)}</code></td><td><code>${esc(c.host)}:${c.port}</code></td><td class="muted">${c.zhiWen ? clipFull(c.zhiWen, 16) : '—'}</td><td class="muted">${fmtTime(c.lastSeen)}</td></tr>`).join('')
       || `<tr><td colspan="4" class="empty">还没有对端。配置锚点后本机会引导入网；无锚点时只监听、等待被引导。</td></tr>`);
   $('#dhtHint').textContent = d.lastError
     ? '最近错误：' + d.lastError
@@ -1211,7 +1224,7 @@ async function dhtQueryNow() {
     D = r.dht; renderDht();
     if (r.found && r.record) {
       const rec = r.record;
-      toast(`查到了 ${rec.fp.slice(0, 12)}… → ${rec.host}:${rec.port}（${rec.scope}${rec.bieMing ? ' · ' + rec.bieMing : ''}）`);
+      toast(`查到了 ${rec.fp} → ${rec.host}:${rec.port}（${rec.scope}${rec.bieMing ? ' · ' + rec.bieMing : ''}）`);
     } else toast('未查到：' + (r.error || 'not-found'), true);
   } catch (e) { toast(e.message, true); }
 }
@@ -1453,18 +1466,53 @@ async function saveCred() {
 }
 /* ── R135g 附加内容（会话提示消息）：内容库 + 审计检查点 ── */
 let ADD = null;
+/** UTF-8 字节安全截断（不切半个多字节字符），与后端 truncateUtf8Bytes 一致。 */
+function truncateBytes(s, max) {
+  const u8 = new TextEncoder().encode(s);
+  if (u8.length <= max) return s;
+  return new TextDecoder('utf-8').decode(u8.subarray(0, max)).replace(/[\uFFFD]+$/, '');
+}
+/** 附加内容输入实时强制：每行字节数 > 上限立即截断（光标跟随行尾），计数同步显示。 */
+function clampAdditionLines() {
+  const ta = $('#addTexts');
+  const v = ta.value;
+  const lines = v.split('\n');
+  const max = (ADD && ADD.maxBytes) || 120;
+  const sel = ta.selectionStart;
+  let lineStart = 0, curLine = -1, newSel = sel;
+  for (let i = 0; i < lines.length; i++) {
+    if (sel >= lineStart && sel <= lineStart + lines[i].length) { curLine = i; break; }
+    lineStart += lines[i].length + 1;
+  }
+  let cutAny = false;
+  const out = lines.map((ln, i) => {
+    if (new TextEncoder().encode(ln).length <= max) return ln;
+    cutAny = true;
+    const cut = truncateBytes(ln, max);
+    if (i === curLine && sel > lineStart + cut.length) newSel = lineStart + cut.length;
+    return cut;
+  });
+  if (cutAny) {
+    ta.value = out.join('\n');
+    ta.setSelectionRange(Math.min(newSel, ta.value.length), Math.min(newSel, ta.value.length));
+  }
+  const texts = out.map((x) => x.trim()).filter(Boolean);
+  $('#addCount').textContent = `${texts.length} / ${(ADD && ADD.max) || 1000} 条 · 单条 ≤ ${max} 字节` + (cutAny ? ' · 超长行已截断' : '');
+  $('#addCount').style.color = cutAny ? 'var(--warn)' : '';
+}
+$('#addTexts').addEventListener('input', clampAdditionLines); // R135v：输入即截断，超长无法继续输入
 async function loadAddition() {
   try {
     ADD = await api('/api/admin/addition-config');
     $('#addTexts').value = (ADD.texts || []).join('\n');
-    $('#addCount').textContent = `${(ADD.texts || []).length} / ${ADD.max} 条`;
+    $('#addCount').textContent = `${(ADD.texts || []).length} / ${ADD.max} 条 · 单条 ≤ ${ADD.maxBytes} 字节`;
     await refreshAdditionAudit();
   } catch (e) { toast('附加内容读取失败：' + e.message, true); }
 }
 async function refreshAdditionAudit() {
   try {
     const a = await api('/api/admin/addition-audit');
-    $('#addAudit').innerHTML = `审计链：${a.count} 条 · 链头 <code>${esc((a.head || '').slice(0, 16))}…</code> · 上次签名检查点 ${a.lastSignedAt ? fmtTime(a.lastSignedAt) : '—'} <button class="sm" id="addAuditPub" title="立即把审计链根签名发布到 DHT（防回滚检查点，每 5 分钟自动执行一次）">立即发布检查点</button> <button class="sm" id="addAuditRefresh" title="刷新审计链状态">刷新</button>`;
+    $('#addAudit').innerHTML = `审计链：${a.count} 条 · 链头 <code>${clipFull(a.head, 16)}</code> · 上次签名检查点 ${a.lastSignedAt ? fmtTime(a.lastSignedAt) : '—'} <button class="sm" id="addAuditPub" title="立即把审计链根签名发布到 DHT（防回滚检查点，每 5 分钟自动执行一次）">立即发布检查点</button> <button class="sm" id="addAuditRefresh" title="刷新审计链状态">刷新</button>`;
     const pb = $('#addAuditPub');
     if (pb) pb.addEventListener('click', async () => {
       try {
@@ -1478,11 +1526,13 @@ async function refreshAdditionAudit() {
   } catch (e) { /* 审计状态读取失败不打扰 */ }
 }
 $('#addSave').addEventListener('click', async () => {
+  clampAdditionLines(); // R135v：保存前再截断兜底（粘贴/程序输入也强制 ≤120 字节）
   const lines = $('#addTexts').value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
   try {
     const j = await api('/api/admin/addition-config', { texts: lines });
-    $('#addCount').textContent = `${j.texts.length} / ${j.max} 条`;
-    toast(`内容库已保存：${j.texts.length} 条（非法条目已过滤：HTML 字符/换行/超长/重复）`);
+    $('#addCount').textContent = `${j.texts.length} / ${j.max} 条 · 单条 ≤ ${ADD.maxBytes} 字节`;
+    $('#addCount').style.color = '';
+    toast(`内容库已保存：${j.texts.length} 条（HTML 字符/换行已过滤；超长已强制截断到 ${ADD.maxBytes} 字节）`);
     await refreshAdditionAudit();
   } catch (e) { toast(e.message, true); }
 });
@@ -1536,6 +1586,26 @@ async function saveCfg() {
     await refresh();
   } catch (e) { toast(e.message, true); }
 }
+let fullModalVal = '';
+function showFull(title, val, desc) {
+  fullModalVal = String(val == null ? '' : val);
+  $('#fullModalTitle').textContent = title || '完整内容';
+  $('#fullModalDesc').textContent = desc || '';
+  $('#fullModalVal').textContent = fullModalVal;
+  $('#fullModal').classList.add('open');
+}
+/** 截断显示：悬停 title 看完整；点击弹窗查看并复制。返回 HTML 片段（内部已转义）。 */
+function clipFull(val, n) {
+  if (!val) return '—';
+  const s = String(val);
+  const short = s.length > n ? s.slice(0, n) + '…' : s;
+  return `<span class="clippy" title="${esc(s)}" data-full="${esc(s)}">${esc(short)}</span>`;
+}
+document.addEventListener('click', (ev) => {
+  const f = ev.target.closest('[data-full]');
+  if (!f) return;
+  showFull(f.dataset.fullTitle || '完整值', f.dataset.full, f.dataset.fullDesc || '');
+});
 async function copyText(s) {
   try { await navigator.clipboard.writeText(s); toast('已复制'); }
   catch { toast('复制失败，请手动选中', true); }
@@ -1543,6 +1613,7 @@ async function copyText(s) {
 
 $$('.tab').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
 $$('[data-close]').forEach((b) => b.addEventListener('click', () => { $('#' + b.dataset.close).classList.remove('open'); }));
+$('#fullModalCopy').addEventListener('click', () => copyText(fullModalVal));
 $('#newCred').addEventListener('click', () => openCredModal(null));
 $('#refreshCreds').addEventListener('click', refresh);
 $('#exAdd').addEventListener('click', addExpandPeer);
