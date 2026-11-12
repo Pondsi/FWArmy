@@ -238,10 +238,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
   <div class="panel">
     <h2 title="生成被扩网凭据，让别的 FWArmy 把送不到的消息转给你投递；凭据自带地址和端口，对方只需填名称+凭据">F中继 · 别人连接我</h2>
     <div class="toolbar">
-      <input id="exInHost" maxlength="253" placeholder="对外域名或 IP（默认=探测到的公网 IP，可改）" title="写进凭据的地址：对方据此连接本站；默认 = 探测到的公网 IP" style="max-width:300px">
-      <input id="exInName" maxlength="40" placeholder="凭据名称（可选）" title="凭据名称（可选，便于管理多条）" style="max-width:200px">
-      <input id="exInPort" type="number" min="1" max="65535" step="1" placeholder="端口（默认 58588）" style="max-width:150px" title="对方连接这个端口；不填默认 58588，且必须在本机监听端口集合内">
-      <button class="primary" id="exGen" title="生成被扩网凭据（明文只显示这一次，请立即复制给对方）">生成接入凭据</button>
+      <button class="primary" id="exGen" title="生成被扩网凭据：弹窗填写名称/域名IP/端口/限额/有效期；凭据自带地址和端口，对方只需填「名称 + 凭证」；明文只显示这一次">生成接入凭据</button>
       <span class="muted" id="exInState">加载中…</span>
     </div>
     <div id="exInTokenBox" class="tokenbox" hidden title="凭据明文只显示这一次；已包含地址和端口，对方只需填「名称 + 凭证」">
@@ -440,6 +437,29 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
       <label class="f" title="有效期（天）；0 = 永久；过期后对方凭据 401 credential-expired">有效期（天，0 = 永久）<input id="inFDays" type="number" min="0" max="36500" step="1" placeholder="0"></label>
     </div>
     <div class="row"><button class="ghost" data-close="inCredModal">取消</button><button class="primary" id="saveInCred">保存</button></div>
+  </div>
+</div>
+
+<!-- R135p：F中继生成接入凭据（弹窗填写：名称/域名IP/端口/限额/有效期；无附加内容设置） -->
+<div class="modal" id="inGenModal">
+  <div class="box">
+    <h3>生成接入凭据</h3>
+    <div class="grid">
+      <label class="f" title="凭据名称（最多 40 字；不填自动生成）">名称<input id="inGName" maxlength="40" placeholder="例如：朋友的 FWArmy"></label>
+      <label class="f" title="写进凭据的地址：对方据此连接本站；默认 = 探测到的公网 IP">域名/IP（默认 = 探测公网 IP）<input id="inGHost" maxlength="253" placeholder="自动探测的公网 IP"></label>
+      <label class="f" title="对方连接本站的端口；不填默认 58588，且必须在本机监听端口集合内">端口（默认 58588）<input id="inGPort" type="number" min="1" max="65535" step="1" placeholder="58588"></label>
+      <label class="f" title="每分钟最多请求次数；留空 = 继承全局，填 0 = 不限制">请求速度（次/分钟）<input id="inGRate" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="每分钟最多流量 MB；留空 = 继承全局，填 0 = 不限制">流量速度（MB/分钟）<input id="inGByteRate" type="number" min="0" step="0.1" placeholder="继承全局"></label>
+      <label class="f" title="每日最多请求次数；留空 = 继承全局，填 0 = 不限制">每日次数上限（次）<input id="inGDailyReq" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="每日最多流量 MB；留空 = 继承全局，填 0 = 不限制">每日流量上限（MB）<input id="inGDaily" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="每月最多请求次数；留空 = 继承全局，填 0 = 不限制">每月次数上限（次）<input id="inGMonthlyReq" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="每月最多流量 MB；留空 = 继承全局，填 0 = 不限制">每月流量上限（MB）<input id="inGMonthly" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="累计最多请求次数；留空 = 继承全局，填 0 = 不限制">总次数上限（次）<input id="inGTotalReq" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="累计最多流量 MB；留空 = 继承全局，填 0 = 不限制">总流量上限（MB）<input id="inGTotal" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="每年最多流量 MB；留空 = 继承全局，填 0 = 不限制">每年流量上限（MB）<input id="inGYearly" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f" title="有效期（天）；0 = 永久；过期后对方凭据 401 credential-expired">有效期（天，0 = 永久）<input id="inGDays" type="number" min="0" max="36500" step="1" placeholder="0"></label>
+    </div>
+    <div class="row"><button class="ghost" data-close="inGenModal">取消</button><button class="primary" id="saveInGen" title="生成接入凭据（明文只显示这一次）">生成</button></div>
   </div>
 </div>
 
@@ -801,7 +821,16 @@ async function refreshPublicIp(animate) {
     if (S) S.publicIp = np;
     if (E) E.publicIp = np;
     renderPubIp(np);
-    fillExInHostDefault();
+    if (E) fillInGenHost(); // R135p：公网 IP 刷新后同步 F中继生成弹窗的默认地址
+  }
+}
+function fillInGenHost() {
+  const el = $('#inGHost');
+  const open = $('#inGenModal').classList.contains('open');
+  if (el && open && !el.value.trim()) {
+    const p = E && E.publicIp;
+    const d = (p && (p.ipv4 || p.ipv6)) || (E && E.defaultAdvHost) || '';
+    if (d) el.value = d;
   }
 }
 $('#pubIpBar').addEventListener('click', () => refreshPublicIp(true));
@@ -1191,7 +1220,7 @@ async function dhtQueryNow() {
 }
 
 async function loadExpand() {
-  try { E = await api('/api/admin/expand'); R = await api('/api/admin/reach').catch(() => null); fillExInHostDefault(); renderExpand(); }
+  try { E = await api('/api/admin/expand'); R = await api('/api/admin/reach').catch(() => null); renderExpand(); }
   catch (e) { toast('扩网页读取失败：' + e.message, true); }
 }
 async function addExpandPeer() {
@@ -1214,20 +1243,54 @@ async function addExpandPeer() {
     await loadExpand();
   } catch (e) { msg.textContent = ''; toast(e.message, true); }
 }
-async function genInbound() {
+// R135p：F中继生成接入凭据——弹窗填写（名称/域名IP/端口/限额/有效期），与中继凭据一致（无附加内容设置）
+function openInGenModal() {
+  $('#inGName').value = '';
+  $('#inGPort').value = '';
+  const p = E && E.publicIp;
+  $('#inGHost').value = (p && (p.ipv4 || p.ipv6)) || (E && E.defaultAdvHost) || '';
+  $('#inGRate').value = ''; $('#inGByteRate').value = ''; $('#inGDailyReq').value = ''; $('#inGDaily').value = '';
+  $('#inGMonthlyReq').value = ''; $('#inGMonthly').value = ''; $('#inGTotalReq').value = ''; $('#inGTotal').value = '';
+  $('#inGYearly').value = ''; $('#inGDays').value = '';
+  $('#inGenModal').classList.add('open');
+  setTimeout(() => $('#inGName').focus(), 30);
+}
+function readInGenLimits() {
+  const rate = $('#inGRate').value.trim();
+  const lim = { ratePerMin: null, bytesPerMin: null, dailyRequests: null, dailyBytes: null, monthlyRequests: null, monthlyBytes: null, totalRequests: null, totalBytes: null, yearlyBytes: null };
+  if (rate !== '') { const n = Number(rate); if (!Number.isFinite(n) || n < 0) throw new Error('请求速度必须是 ≥0 的数字'); lim.ratePerMin = Math.round(n); }
+  lim.bytesPerMin = fromMb($('#inGByteRate').value.trim());
+  const ci = (id) => { const s = $(id).value.trim(); if (!s) return null; const n = Number(s); if (!Number.isFinite(n) || n < 0) throw new Error('次数必须是 ≥0 的数字'); return Math.round(n); };
+  lim.dailyRequests = ci('#inGDailyReq');
+  lim.dailyBytes = fromMb($('#inGDaily').value.trim());
+  lim.monthlyRequests = ci('#inGMonthlyReq');
+  lim.monthlyBytes = fromMb($('#inGMonthly').value.trim());
+  lim.totalRequests = ci('#inGTotalReq');
+  lim.totalBytes = fromMb($('#inGTotal').value.trim());
+  lim.yearlyBytes = fromMb($('#inGYearly').value.trim());
+  return lim;
+}
+async function saveInGen() {
   try {
-    const host = $('#exInHost').value.trim();
+    const host = $('#inGHost').value.trim();
     if (/[\s/?#]/.test(host)) throw new Error('域名或 IP 不能含空格/斜杠/问号/井号');
-    const portRaw = $('#exInPort').value.trim();
+    const portRaw = $('#inGPort').value.trim();
     let port = null;
     if (portRaw !== '') {
       port = Number(portRaw);
       if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('端口必须是 1–65535 的整数（不填默认 58588）');
     }
+    const daysRaw = $('#inGDays').value.trim();
+    let expiresDays = 0;
+    if (daysRaw !== '') {
+      const d = Number(daysRaw);
+      if (!Number.isInteger(d) || d < 0 || d > 36500) throw new Error('有效期必须是 0–36500 的整数（0 = 永久）');
+      expiresDays = d;
+    }
+    const limits = readInGenLimits();
     const chosen = port || 58588;
-    const r = await api('/api/admin/expand-inbound', { name: $('#exInName').value.trim(), ...(port ? { port } : {}), ...(host ? { host } : {}) });
-    $('#exInName').value = ''; $('#exInPort').value = '';
-    $('#exInHost').value = ''; exInHostTouched = false; fillExInHostDefault();
+    const r = await api('/api/admin/expand-inbound', { name: $('#inGName').value.trim(), ...(port ? { port } : {}), ...(host ? { host } : {}), limits, expiresDays });
+    $('#inGenModal').classList.remove('open');
     $('#exInToken').textContent = r.token || '';
     $('#exInTokenBox').hidden = false;
     const warn = $('#exInPortWarn');
@@ -1244,15 +1307,6 @@ async function genInbound() {
 }
 
 let editingIn = null;
-let exInHostTouched = false; // 用户手动改过地址框后不再自动覆盖默认值
-function fillExInHostDefault() {
-  const el = $('#exInHost');
-  if (el && !exInHostTouched && !el.value.trim()) {
-    const p = E && E.publicIp;
-    const d = (p && (p.ipv4 || p.ipv6)) || (E && E.defaultAdvHost) || '';
-    if (d) el.value = d;
-  }
-}
 function openInCred(c) {
   editingIn = c;
   $('#inCredModalTitle').textContent = '管理接入凭据';
@@ -1492,7 +1546,9 @@ $$('[data-close]').forEach((b) => b.addEventListener('click', () => { $('#' + b.
 $('#newCred').addEventListener('click', () => openCredModal(null));
 $('#refreshCreds').addEventListener('click', refresh);
 $('#exAdd').addEventListener('click', addExpandPeer);
-$('#exGen').addEventListener('click', genInbound);
+$('#exGen').addEventListener('click', openInGenModal);
+$('#saveInGen').addEventListener('click', saveInGen);
+$('#inGenModal').addEventListener('click', (ev) => { if (ev.target === $('#inGenModal')) $('#inGenModal').classList.remove('open'); });
 $('#exInCopy').addEventListener('click', () => copyText($('#exInToken').textContent));
 $('#exOutTable').addEventListener('click', async (ev) => {
   const b = ev.target.closest('button[data-ex-act]');
@@ -1774,7 +1830,7 @@ $('#firstRunAck').addEventListener('click', async () => {
 });
 $('#copyToken').addEventListener('click', () => copyText($('#newToken').textContent));
 $('#pip').addEventListener('click', () => refreshPublicIp(true));
-$('#exInHost').addEventListener('input', () => { exInHostTouched = true; });
+// R135p：生成入口已改为弹窗（无页面输入框）
 /* ── 电源按钮（R132：单按钮 正在运行/已停止；停止=关进程+关控制台窗口；启动=重开带控制台窗口的进程）── */
 let powerBtnState = 'unknown'; // 'running' | 'stopped'
 function setPowerStopped() {

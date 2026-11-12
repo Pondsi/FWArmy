@@ -1568,7 +1568,7 @@ export async function startServer(options = {}) {
       stats: { inbound: inboundStats, outbound: sideView(expand.stats.outbound), perOutbound, perSource },
     };
   }
-  function generateInboundToken(name = '', portRaw, hostRaw) {
+  function generateInboundToken(name = '', portRaw, hostRaw, limits = null, expiresAt = 0) {
     // 凭证自带地址 = 生成时填写的域名/IP（R130，默认探测到的公网 IP，可改）+ 端口（默认 8787）。
     const host = String(hostRaw || '').trim() || activeExternalAddr().host;
     let port = Math.floor(Number(portRaw));
@@ -1580,7 +1580,7 @@ export async function startServer(options = {}) {
       id: crypto.randomUUID(), name: String(name || '').trim().slice(0, 40) || ('接入凭据 ' + (expand.inbound.length + 1)),
       hash, masked: '…' + hash.slice(30, 35) + '…' + hash.slice(-5), // 前缀无意义：只显示最中间 5 个 + 末尾 5 个（R132）
       port, addr: host + ':' + port, createdAt: now(), lastAt: 0, lastResult: '', disabled: false,
-      limits: null, expiresAt: 0, // R129：可管理（改名/流量/速度/有效期）
+      limits: limits || null, expiresAt: Number(expiresAt) || 0, // R129：可管理（改名/流量/速度/有效期）；R135p：生成时即可设置
     };
     expand.inbound.push(item);
     saveExpand();
@@ -3469,7 +3469,19 @@ export async function startServer(options = {}) {
         const h = String(j.host || '').trim();
         if (!h || /[\s/?#]/.test(h) || h.length > 253) return send(res, 400, { ok: false, error: 'bad-host', hint: '域名或 IP 不能为空，且不能含空格/斜杠/问号/井号' });
       }
-      const { token, item } = generateInboundToken(j.name, j.port, j.host);
+      // R135p：生成时即可设置限额与有效期（弹窗填写，与中继凭据一致）
+      let limits = null;
+      if (j.limits !== undefined) {
+        try { limits = parseLimits(j.limits, {}); }
+        catch (e) { return send(res, 400, { ok: false, error: String(e.message || 'bad-limits') }); }
+      }
+      let expiresAt = 0;
+      if (j.expiresDays !== undefined) {
+        const d = Math.floor(Number(j.expiresDays));
+        if (!Number.isFinite(d) || d < 0 || d > 36500) return send(res, 400, { ok: false, error: 'bad-expires-days' });
+        if (d > 0) expiresAt = now() + d * 86400000;
+      }
+      const { token, item } = generateInboundToken(j.name, j.port, j.host, limits, expiresAt);
       log('INFO', `被扩网：已生成新的接入凭据 #${expand.inbound.length}（地址 ${item.addr}，只显示一次）`);
       return send(res, 200, { ok: true, token, item: { id: item.id, name: item.name, masked: item.masked }, inbound: expandView().inbound });
     }
