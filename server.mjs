@@ -924,7 +924,11 @@ function normDhtCfg(raw) {
   return {
     enabled: true, // R129 拍板：DHT 强制开启（使用 FWArmy 就必须进网），配置不再接受关闭
     udpPorts,
+    pausedUdpPorts: normPorts(t.pausedUdpPorts, [], 8), // R135：暂停的 UDP 端口仍保留配置，只停监听
     addresses: normAddrList(t.addresses),
+    pausedAuto: Array.isArray(t.pausedAuto)
+      ? [...new Set(t.pausedAuto.map((x) => String(x || '').trim()).filter((s) => /^(IPv4|IPv6)\|(443|62666)$/.test(s)))]
+      : [], // R135：暂停的自动兜底维度（如 'IPv6|443'），全停后定时自检自启
     anchors: guiFanAnChors(t.anchors),
     routeByDht: t.routeByDht !== false,
     retryBaseMs: Math.max(200, Math.min(60_000, Number(t.retryBaseMs) || d.retryBaseMs)),
@@ -1624,6 +1628,9 @@ export async function startServer(options = {}) {
       };
     });
     const udpItems = cfg.dht.udpPorts.map((port) => {
+      if (cfg.dht.pausedUdpPorts.includes(port)) {
+        return { port, protocol: 'udp', status: 'paused', error: '', creds: 0, main: false }; // R135：暂停保留配置
+      }
       const up = dhtNodes.some((n) => n.listening && n.address.port === port);
       return {
         port, protocol: 'udp', status: up ? 'listening' : 'error',
@@ -1745,9 +1752,9 @@ export async function startServer(options = {}) {
   let dhtRetryDelayMs = cfg.dht.retryBaseMs;
   let dhtState = { lastPublishAt: 0, lastPublishSeq: 0, lastStoredOn: [], lastError: '', lastYindao: null, selfPublishes: 0 };
   const didLastPub = new Map(); // did → 上次代发布定位记录的时间
-  /** 自动推断 IP：探测到的公网 IP（ipify）优先（R134），其次 STUN > NAT-PMP > 本机非回环 IPv6 > IPv4 > 回环。 */
+  /** 自动推断 IP：探测到的公网 IP（ipify）优先（R135：IPv6 优先，无 IPv6 才用 IPv4），其次 STUN > NAT-PMP > 本机非回环 IPv6 > IPv4 > 回环。 */
   function autoAdvIp() {
-    if (lastPub && (lastPub.ipv4 || lastPub.ipv6)) return lastPub.ipv4 || lastPub.ipv6;
+    if (lastPub && (lastPub.ipv6 || lastPub.ipv4)) return lastPub.ipv6 || lastPub.ipv4;
     if (lastStun && lastStun.ok && lastStun.publicAddress) return lastStun.publicAddress.host;
     if (lastNatpmp && lastNatpmp.externalIp) return lastNatpmp.externalIp;
     for (const a of localAddresses()) {
@@ -1756,28 +1763,52 @@ export async function startServer(options = {}) {
     for (const a of localAddresses()) if (!a.internal && a.family === 'IPv4') return a.address;
     return '127.0.0.1';
   }
-  /** 自动兜底对外地址端口（R133：443 与 62666；全挂时生效，不可关闭）。 */
+  /** 自动兜底对外地址端口（R133：443 与 62666；无其它生效地址时兜底）。 */
   const AUTO_ADDR_PORTS = [443, 62666];
-  /** 对外地址状态表：手动条目（cfg.dht.addresses 派生）+ 自动兜底条目。 */
+  /** R135：自动兜底地址维度 = 探测到的公网 IP（IPv6 优先，无 IPv6 用 IPv4；ipify 全失败时用推断 IP），最多 2 维 × 2 端口 = 4 条。 */
+  function autoAddrHosts() {
+    if (lastPub && (lastPub.ipv6 || lastPub.ipv4)) {
+      const out = [];
+      if (lastPub.ipv6) out.push({ host: lastPub.ipv6, family: 'IPv6' });
+      if (lastPub.ipv4) out.push({ host: lastPub.ipv4, family: 'IPv4' });
+      return out;
+    }
+    const ip = autoAdvIp();
+    return [{ host: ip, family: ip.includes(':') ? 'IPv6' : 'IPv4' }];
+  }
+  function autoAddrKey(a) { return `${a.family}|${a.port}`; }
+  /** 对外地址状态表：手动条目（cfg.dht.addresses 派生）+ 自动兜底条目（公网 IPv4/IPv6 × 443/62666）。 */
   let addrStates = [];
   function syncAddrStates() {
     const manual = cfg.dht.addresses.map((a) => {
       const prev = addrStates.find((x) => x.manual && x.host === a.host && x.port === a.port);
       return { ...a, valid: prev ? prev.valid : false, lastCheckAt: prev ? prev.lastCheckAt : 0, lastError: prev ? prev.lastError : '' };
     });
-    const autoIp = autoAdvIp();
-    const auto = AUTO_ADDR_PORTS.map((port, i) => ({
-      host: autoIp, port, manual: false, enabled: true, valid: true,
-      lastCheckAt: 0, lastError: '', label: i === 0 ? '自动推断（443）' : '自动推断（62666）',
-    }));
+    const auto = [];
+    for (const h of autoAddrHosts()) {
+      for (const port of AUTO_ADDR_PORTS) {
+        const prev = addrStates.find((x) => !x.manual && x.family === h.family && x.port === port);
+        const key = `${h.family}|${port}`;
+        auto.push({
+          host: h.host, port, family: h.family, manual: false,
+          enabled: prev ? prev.enabled : !cfg.dht.pausedAuto.includes(key),
+          valid: true, lastCheckAt: 0, lastError: '',
+          label: `自动兜底 · 公网 ${h.family} · ${port}`,
+        });
+      }
+    }
     addrStates = [...manual, ...auto];
   }
+  /** 是否有任何生效的对外地址（手动 = 启用且验证通过；兜底 = 启用）。 */
+  function anyActiveExternalAddr() {
+    return addrStates.some((a) => (a.manual ? a.enabled && a.valid : a.enabled));
+  }
   syncAddrStates();
-  /** 生效的对外地址：第一个启用且验证通过的手动条目；否则自动兜底（推断 IP + 443）。 */
+  /** 生效的对外地址：第一个启用且验证通过的手动条目；否则第一个启用的自动兜底。 */
   function activeExternalAddr() {
     const m = addrStates.find((a) => a.manual && a.enabled && a.valid);
     if (m) return { host: m.host, port: m.port };
-    const a = addrStates.find((x) => !x.manual);
+    const a = addrStates.find((x) => !x.manual && x.enabled);
     return { host: a ? a.host : autoAdvIp(), port: a ? a.port : AUTO_ADDR_PORTS[0] };
   }
   async function probeOwnAddress(host, port) {
@@ -1819,7 +1850,18 @@ export async function startServer(options = {}) {
       log(r.ok ? 'INFO' : 'WARN', `[dht] 对外地址 ${a.host}:${a.port} ${r.ok ? '验证通过，宣告优先使用' : '验证失败（' + r.error + '）'}`);
     }
   }
-  const addrCheckTimer = setInterval(() => { syncAddrStates(); void checkExternalAddrs(); }, MANUAL_ADDR_CHECK_MS);
+  /** R135 定时自检：没有任何生效的对外地址（手动全失效/暂停 + 自动兜底全暂停）时，自动恢复启用全部兜底；随后复查手动地址。 */
+  async function addrSelfHeal() {
+    syncAddrStates();
+    if (!anyActiveExternalAddr() && cfg.dht.pausedAuto.length) {
+      cfg.dht = { ...cfg.dht, pausedAuto: [] };
+      if (!saveCfg()) log('WARN', '[dht] 自动恢复兜底时保存配置失败');
+      log('WARN', '[dht] 对外地址全部失效，已自动启用全部自动兜底');
+      syncAddrStates();
+    }
+    await checkExternalAddrs();
+  }
+  const addrCheckTimer = setInterval(() => { void addrSelfHeal(); }, MANUAL_ADDR_CHECK_MS);
   addrCheckTimer.unref();
   async function dhtStop() {
     const list = dhtNodes;
@@ -1843,6 +1885,7 @@ export async function startServer(options = {}) {
     const adv = activeExternalAddr();
     const list = [];
     for (const udpPort of cfg.dht.udpPorts) {
+      if (cfg.dht.pausedUdpPorts.includes(udpPort)) continue; // R135：暂停的 UDP 端口不启动监听（配置保留）
       const node = new DhtJieDian({
         zhiWen: dhtZhiWen,
         publicKeyRaw: rawPub,
@@ -1885,7 +1928,13 @@ export async function startServer(options = {}) {
     for (;;) {
       if (!node.listening || !cfg.dht.enabled || !dhtNodes.includes(node)) return;
       const seeds = yindaoSeeds();
-      if (!seeds.length) { dhtState.lastYindao = { ok: 0, failed: 0, at: Date.now(), detail: 'no-anchors' }; return; }
+      if (!seeds.length) {
+        dhtState.lastYindao = { ok: 0, failed: 0, at: Date.now(), detail: 'no-anchors' };
+        // R135：无锚点也自发布（记录存本机 store + 发给路由表已学节点），
+        // 使「以本机为锚点引导入网」的设备能立即反向发现本机的服务记录（双向可发现）。
+        void dhtPublishSelf();
+        return;
+      }
       const r = await node.yindao(seeds);
       dhtState.lastYindao = { ok: r.ok, failed: r.failed, at: Date.now() };
       if (r.ok > 0) {
@@ -2016,6 +2065,7 @@ export async function startServer(options = {}) {
       addresses: addrStates.map((a) => ({
         host: a.host, port: a.port, manual: a.manual, enabled: a.enabled,
         valid: a.valid, lastCheckAt: a.lastCheckAt, lastError: a.lastError || '', label: a.label || '',
+        ...(a.family ? { family: a.family, key: `${a.family}|${a.port}` } : {}),
       })),
       instanceId: expand.instanceId,
       fingerprint: dhtZhiWen,
@@ -2032,8 +2082,8 @@ export async function startServer(options = {}) {
       anchors: cfg.dht.anchors,
       defaultAnchors: process.env.FWARMY_DISABLE_DEFAULT_ANCHOR === '1' ? [] : guiFanAnChors(DEFAULT_ANCHORS),
       config: {
-        enabled: cfg.dht.enabled, udpPorts: cfg.dht.udpPorts,
-        addresses: cfg.dht.addresses, anchors: cfg.dht.anchors,
+        enabled: cfg.dht.enabled, udpPorts: cfg.dht.udpPorts, pausedUdpPorts: cfg.dht.pausedUdpPorts,
+        addresses: cfg.dht.addresses, pausedAuto: cfg.dht.pausedAuto, anchors: cfg.dht.anchors,
         routeByDht: cfg.dht.routeByDht,
       },
       refreshMs: DHT_REFRESH_MS,
@@ -3411,23 +3461,49 @@ export async function startServer(options = {}) {
       if (!Number.isInteger(port) || port < 1 || port > 65535) return send(res, 400, { ok: false, error: 'bad-port' });
       // R134：UDP（DHT 监听端口）走 dht.udpPorts；TCP 走业务端口
       if (j.protocol === 'udp') {
-        if (action === 'pause' || action === 'remove') {
-          const next = cfg.dht.udpPorts.filter((x) => x !== port);
-          if (!next.length) return send(res, 400, { ok: false, error: 'udp-port-required', hint: 'DHT 至少保留一个 UDP 端口' });
-          cfg.dht = { ...cfg.dht, udpPorts: next };
+        if (action === 'pause') {
+          if (!cfg.dht.udpPorts.includes(port)) return send(res, 400, { ok: false, error: 'not-managed' });
+          if (cfg.dht.pausedUdpPorts.includes(port)) return send(res, 200, { ok: true, ports: portsView() }); // 幂等
+          const remaining = cfg.dht.udpPorts.filter((x) => x !== port && !cfg.dht.pausedUdpPorts.includes(x));
+          if (!remaining.length) return send(res, 400, { ok: false, error: 'udp-port-required', hint: 'DHT 至少保留一个未暂停的 UDP 端口' });
+          cfg.dht = { ...cfg.dht, pausedUdpPorts: normPorts([...cfg.dht.pausedUdpPorts, port], [], 8) };
           if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
           await dhtStart();
           return send(res, 200, { ok: true, ports: portsView() });
         }
-        if (action === 'resume' || action === 'add') {
+        if (action === 'remove') {
+          if (!cfg.dht.udpPorts.includes(port)) return send(res, 400, { ok: false, error: 'not-managed' });
+          const remaining = cfg.dht.udpPorts.filter((x) => x !== port && !cfg.dht.pausedUdpPorts.includes(x));
+          if (!remaining.length) return send(res, 400, { ok: false, error: 'udp-port-required', hint: 'DHT 至少保留一个 UDP 端口' });
+          cfg.dht = { ...cfg.dht, udpPorts: cfg.dht.udpPorts.filter((x) => x !== port), pausedUdpPorts: cfg.dht.pausedUdpPorts.filter((x) => x !== port) };
+          if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
+          await dhtStart();
+          return send(res, 200, { ok: true, ports: portsView() });
+        }
+        if (action === 'resume') {
+          if (!cfg.dht.udpPorts.includes(port)) return send(res, 400, { ok: false, error: 'not-managed' });
+          if (!cfg.dht.pausedUdpPorts.includes(port)) return send(res, 200, { ok: true, ports: portsView() }); // 幂等
+          cfg.dht = { ...cfg.dht, pausedUdpPorts: cfg.dht.pausedUdpPorts.filter((x) => x !== port) };
+          if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
+          const r = await dhtStart();
+          return send(res, 200, { ok: true, start: r, ports: portsView() });
+        }
+        if (action === 'add') {
           if (!cfg.dht.udpPorts.includes(port)) {
-            cfg.dht = { ...cfg.dht, udpPorts: normPorts([...cfg.dht.udpPorts, port], cfg.dht.udpPorts, 8) };
+            cfg.dht = { ...cfg.dht, udpPorts: normPorts([...cfg.dht.udpPorts, port], cfg.dht.udpPorts, 8), pausedUdpPorts: cfg.dht.pausedUdpPorts.filter((x) => x !== port) };
+            if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
+          } else if (cfg.dht.pausedUdpPorts.includes(port)) {
+            cfg.dht = { ...cfg.dht, pausedUdpPorts: cfg.dht.pausedUdpPorts.filter((x) => x !== port) };
             if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
           }
           const r = await dhtStart();
           return send(res, 200, { ok: true, start: r, ports: portsView() });
         }
         return send(res, 400, { ok: false, error: 'bad-action' });
+      }
+      // R135：管理入口端口（cfg.ports[0]）不可暂停/删除/强制启用，只能更改为其它端口（action=entry）
+      if (cfg.ports[0] === port && action !== 'entry') {
+        return send(res, 400, { ok: false, error: 'entry-port-fixed', hint: '管理入口端口不可暂停/删除，只能在「端口」页更改端口号' });
       }
       // R134：管理入口端口修改（移到列表首位并启用）
       if (action === 'entry') {
@@ -3482,6 +3558,15 @@ export async function startServer(options = {}) {
     if (req.method === 'POST' && p === '/api/admin/dht-config') {
       const j = await body(req);
       if (j.enabled === false) return send(res, 400, { ok: false, error: 'dht-always-on', hint: 'DHT 发现层强制开启，不可关闭' });
+      // R135：暂停自动兜底——仅当暂停后仍有其它生效的对外地址才允许（否则 400，防止全部兜底被停导致无地址宣告）
+      if (j.pausedAuto !== undefined) {
+        const list = Array.isArray(j.pausedAuto) ? j.pausedAuto : [];
+        const norm = [...new Set(list.map((x) => String(x || '').trim()).filter((s) => /^(IPv4|IPv6)\|(443|62666)$/.test(s)))];
+        const probeAuto = autoAddrHosts().flatMap((h) => AUTO_ADDR_PORTS.map((port) => ({ family: h.family, port, enabled: !norm.includes(`${h.family}|${port}`) })));
+        const stillActive = addrStates.some((a) => a.manual && a.enabled && a.valid) || probeAuto.some((a) => a.enabled);
+        if (!stillActive) return send(res, 400, { ok: false, error: 'auto-fallback-required', hint: '至少保留一个生效的对外地址：自动兜底全部暂停需先有其它生效地址（手动地址验证通过或其它兜底未暂停）' });
+        j.pausedAuto = norm;
+      }
       const next = normDhtCfg({ ...cfg.dht, ...j });
       if (j.anchors !== undefined) {
         const list = Array.isArray(j.anchors) ? j.anchors : String(j.anchors || '').split(/[\r\n,]+/);

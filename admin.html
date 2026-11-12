@@ -94,12 +94,6 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <span class="ico" id="pubIpIco">⟳</span>
     <span id="pubIpText">公网 IP：检测中…</span>
   </div>
-  <div class="pubip" id="entryPortBar" title="后台管理页面端口（默认 8787，可修改）">
-    <span>管理端口</span>
-    <input id="entryPort" type="number" min="1" max="65535" step="1" style="width:72px" value="8787">
-    <button class="sm" id="entryPortSave">修改</button>
-    <span class="muted" id="entryPortHint"></span>
-  </div>
   <div class="pills"><div class="pills" id="pills"></div><button id="powerBtn" class="good" disabled>加载状态…</button></div>
 </header>
 
@@ -273,12 +267,12 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <h2>DHT 发现 <small>默认强制开启 · 只做设备发现，消息仍走凭据通道</small></h2>
     <div class="cards" id="dhtCards"></div>
     <div class="grid">
-      <label class="f">对外地址（域名IP:端口，验证通过才宣告；自动兜底 = 推断 IP:443 / 62666，不可关闭）
+      <label class="f">对外地址（域名IP:端口，验证通过才宣告；自动兜底 = 公网 IPv4/IPv6 × 443/62666，最多 4 条，不可修改/删除，只能暂停）
         <span style="display:flex;gap:6px;width:100%">
           <input id="dhtAdvNew" placeholder="relay.example.com:58588 或 1.2.3.4:59599" style="flex:1">
           <button class="sm" id="dhtAdvAdd">添加</button>
         </span>
-        <span id="dhtAdvList" class="hint" style="margin-top:4px;display:block"></span>
+        <span id="dhtAdvList" style="margin-top:6px;display:block"></span>
       </label>
       <label class="f">默认锚点（自动生效，与 WArmy 对齐）<span id="dhtAnchorDef" class="hint" style="display:block;margin-top:4px"></span></label>
       <label class="f">手动锚点（或入网端点）
@@ -346,11 +340,16 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <h2>端口管理 <small>R133：多业务端口——本机监听 + 凭据引用；被占端口可强制启用</small></h2>
     <div class="toolbar">
       <input id="ptNewPort" type="number" min="1" max="65535" step="1" placeholder="新端口（1–65535）" style="max-width:170px">
+      <select id="ptNewProto" title="TCP=业务监听（中继/扩网凭据用）；UDP=DHT 组网监听">
+        <option value="tcp">TCP（业务）</option>
+        <option value="udp">UDP（DHT 组网）</option>
+      </select>
       <button class="primary" id="ptAdd">添加新的端口</button>
-      <span class="muted">中继凭据默认端口 59599 · 扩网凭据默认端口 58588</span>
+      <span class="muted">中继凭据默认 59599 · 扩网凭据默认 58588 · DHT UDP 默认 443/62666</span>
     </div>
     <div class="tablewrap"><table id="ptTable"></table></div>
-    <div class="hint">状态：监听中 / 暂停 / 异常（被占用等）。「强制启用」会<b>结束占用该端口的进程</b>后开始监听——本机操作，慎用。「删除」立即停听并移除，引用该端口的凭据自动失效。</div>
+    <div class="hint" id="ptEntryHint"></div>
+    <div class="hint">状态：监听中 / 暂停 / 异常（被占用等）。「暂停」停止监听但保留配置（UDP 端口也一样，可随时「启用」恢复，不会消失）；「强制启用」会<b>结束占用该端口的进程</b>后开始监听——本机操作，慎用。「删除」立即停听并移除，引用该端口的凭据自动失效。管理入口端口<b>不可暂停/删除</b>，只能更改端口号（改后下次访问用新端口，旧端口继续作为普通业务端口监听）。</div>
   </div>
 </section>
 
@@ -493,6 +492,13 @@ function switchTab(name) {
   if (name === 'update') loadUpdate();
   if (name === 'ports') loadPorts();
 }
+// R135：文案里的「端口」超链接 → 跳转端口设置页
+document.addEventListener('click', (ev) => {
+  const g = ev.target.closest('[data-goto]');
+  if (!g) return;
+  ev.preventDefault();
+  switchTab(g.dataset.goto);
+});
 function usageCell(b) {
   return `<div class="cell-main">${num(b.requests)} 次</div><div class="cell-sub">${fmtBytes(b.bytes)}</div>`;
 }
@@ -668,7 +674,6 @@ async function refresh() {
       S = await api(`/api/admin/stats?limit=${CRED_PAGE_SIZE}&offset=${credPage * CRED_PAGE_SIZE}`);
     }
     renderPubIp(S.publicIp);
-    if (S.entryPort) $('#entryPort').value = S.entryPort;
     // R131：公网 IP 自动探测（页面加载且缓存为空时静默触发一次，无需用户点击）
     if ((!S.publicIp || !S.publicIp.at) && !pubIpLoading) void refreshPublicIp(false);
     SEC = await api('/api/admin/security').catch(() => null);
@@ -742,7 +747,7 @@ async function loadUpdate() {
     $('#updMsg').textContent = '读取更新状态失败：' + e.message;
   }
 }
-/* ── 端口管理（R133：多业务端口）── */
+/* ── 端口管理（R133：多业务端口；R135：TCP/UDP 区分、入口端口仅可更改、UDP 暂停保留配置）── */
 let P = null;
 async function loadPorts() {
   try { P = await api('/api/admin/ports'); renderPorts(); }
@@ -757,25 +762,33 @@ function renderPorts() {
         : it.status === 'paused' ? '<span class="tag off">暂停</span>'
           : `<span class="tag off">异常${it.error === 'occupied' ? '（被占用）' : '：' + esc(it.error)}</span>`;
       const btns = [];
-      if (it.status === 'listening') btns.push(`<button class="sm" data-pt-act="pause" data-port="${it.port}" data-pt-proto="${it.protocol}">暂停</button>`);
-      else btns.push(`<button class="sm good" data-pt-act="resume" data-port="${it.port}" data-pt-proto="${it.protocol}">启用</button>`);
-      if (it.status === 'error' && it.error === 'occupied' && it.protocol === 'tcp') btns.push(`<button class="sm danger" data-pt-act="force" data-port="${it.port}" data-pt-proto="tcp">强制启用</button>`);
-      btns.push(`<button class="sm danger" data-pt-act="remove" data-port="${it.port}" data-pt-proto="${it.protocol}">删除</button>`);
-      return `<tr><td><code>${it.port}</code>${it.main ? ' <span class="tag on">入口</span>' : ''}</td><td>${it.protocol === 'udp' ? '<span class="tag">UDP·DHT</span>' : 'TCP'}</td><td>${stTag}</td><td class="num">${it.creds}</td><td class="muted">${it.status === 'error' && it.error ? esc(it.error) : (it.main ? '管理入口端口' : '')}</td><td><div class="toolbar" style="margin:0">${btns.join('')}</div></td></tr>`;
+      if (it.main) {
+        // R135：管理入口端口不可暂停/删除/强制启用，只能更改端口号
+        btns.push(`<input id="ptEntryNew" type="number" min="1" max="65535" step="1" value="${it.port}" style="width:76px" title="新的管理入口端口">`);
+        btns.push(`<button class="sm good" id="ptEntrySave">更改</button>`);
+      } else {
+        if (it.status === 'listening') btns.push(`<button class="sm" data-pt-act="pause" data-port="${it.port}" data-pt-proto="${it.protocol}">暂停</button>`);
+        else btns.push(`<button class="sm good" data-pt-act="resume" data-port="${it.port}" data-pt-proto="${it.protocol}">启用</button>`);
+        if (it.status === 'error' && it.error === 'occupied' && it.protocol === 'tcp') btns.push(`<button class="sm danger" data-pt-act="force" data-port="${it.port}" data-pt-proto="tcp">强制启用</button>`);
+        btns.push(`<button class="sm danger" data-pt-act="remove" data-port="${it.port}" data-pt-proto="${it.protocol}">删除</button>`);
+      }
+      return `<tr><td><code>${it.port}</code>${it.main ? ' <span class="tag on">入口</span>' : ''}</td><td>${it.protocol === 'udp' ? '<span class="tag">UDP·DHT</span>' : 'TCP'}</td><td>${stTag}</td><td class="num">${it.creds}</td><td class="muted">${it.status === 'error' && it.error ? esc(it.error) : (it.main ? '管理入口端口（不可暂停/删除，仅可更改）' : '')}</td><td><div class="toolbar" style="margin:0">${btns.join('')}</div></td></tr>`;
     }).join('') || '<tr><td colspan="6" class="empty">没有端口。点「添加新的端口」。</td></tr>');
+  $('#ptEntryHint').textContent = P.entryPort
+    ? `当前管理入口：${location.protocol}//127.0.0.1:${P.entryPort}/——更改后下次访问用新端口；旧端口继续作为普通业务端口监听。`
+    : '';
 }
-$('#entryPortSave').addEventListener('click', async () => {
-  const v = Number($('#entryPort').value);
+async function ptEntryChange() {
+  const v = Number($('#ptEntryNew').value);
   if (!Number.isInteger(v) || v < 1 || v > 65535) { toast('请输入 1–65535 的端口号', true); return; }
+  if (v === (P && P.entryPort)) { toast('端口未变化', true); return; }
   try {
     const j = await api('/api/admin/ports', { action: 'entry', port: v });
     P = j.ports; renderPorts();
-    $('#entryPort').value = j.entryPort || v;
-    $('#entryPortHint').textContent = '管理页已切换：' + (location.protocol === 'https:' ? 'https' : 'http') + '://127.0.0.1:' + (j.entryPort || v) + '/';
-    toast('管理端口已改为 ' + (j.entryPort || v));
+    toast('管理入口已改为 ' + (j.entryPort || v) + '，下次访问 ' + location.protocol + '//127.0.0.1:' + (j.entryPort || v) + '/');
     await refresh();
   } catch (e) { toast(e.message, true); }
-});
+}
 async function ptAction(action, port, protocol) {
   try {
     if (action === 'force' && !confirm(`强制启用端口 ${port}？会结束占用该端口的进程！`)) return;
@@ -790,12 +803,12 @@ async function ptAction(action, port, protocol) {
 $('#ptAdd').addEventListener('click', () => {
   const v = Number($('#ptNewPort').value);
   if (!Number.isInteger(v) || v < 1 || v > 65535) { toast('请输入 1–65535 的端口号', true); return; }
-  ptAction('add', v);
+  ptAction('add', v, $('#ptNewProto').value);
 });
 $('#ptTable').addEventListener('click', (ev) => {
   const b = ev.target.closest('button[data-pt-act]');
-  if (!b) return;
-  ptAction(b.dataset.ptAct, Number(b.dataset.port), b.dataset.ptProto);
+  if (b) { ptAction(b.dataset.ptAct, Number(b.dataset.port), b.dataset.ptProto); return; }
+  if (ev.target.closest('#ptEntrySave')) void ptEntryChange();
 });
 async function saveUpdPrefs() {
   try {
@@ -869,7 +882,7 @@ function renderExpand() {
     const lp = (E && E.listeningPorts || []).join('、');
     return c.portOk
       ? `<code>${p}</code> <span class="tag on">端口可用</span>`
-      : `<code>${p}</code> <span class="tag off" title="本机监听端口：${esc(lp || '无')}；该端口未在本机监听，此凭据被强制禁止，对方无法连接">端口不可用（监听 ${esc(lp || '无')}）</span>`;
+      : `<code>${p}</code> <span class="tag off" title="本机监听端口：${esc(lp || '无')}；该端口未在本机监听，此凭据被强制禁止，对方无法连接">端口不可用，请在<a href="#" data-goto="ports">端口</a>中设置</span>`;
   };
   $('#exInCredTable').innerHTML =
     `<tr><th>名称</th><th>标识（中间+末尾）</th><th>端口</th><th>状态</th><th>有效期</th><th class="num">请求</th><th>最近使用</th><th>最近结果</th><th>操作</th></tr>` +
@@ -893,8 +906,8 @@ function renderExpand() {
   $('#exInState').textContent = inb.configured
     ? `已配置 ${num(inb.count || creds.length)} 条 · 有效 ${num(creds.filter((c) => !c.disabled).length)} 条`
     : '尚未生成（别人无法连接）';
-  $('#exAddrHint').textContent =
-    `凭据里的地址 = 生成时填写的域名/IP（默认 = 探测到的公网 IP——顶部常驻自动探测；留空则用当前生效的对外地址，见 DHT 页）＋ 端口（不填默认 58588）。凭据端口必须在本机监听端口集合（${(E && E.listeningPorts || []).join('、') || '无'}）内才可用——不在则显示「端口不可用」并被强制禁止；请在「端口」页启用/添加该端口后重新生成。`;
+  $('#exAddrHint').innerHTML =
+    `凭据里的地址 = 生成时填写的域名/IP（默认 = 探测到的公网 IP——顶部常驻自动探测；留空则用当前生效的对外地址，见 DHT 页）＋ 端口（不填默认 58588）。凭据端口必须在本机监听端口集合（${(E && E.listeningPorts || []).join('、') || '无'}）内才可用——不在则显示「端口不可用」并被强制禁止；请在<a href="#" data-goto="ports">端口</a>页启用/添加该端口后重新生成。`;
   renderReach();
 }
 function renderReach() {
@@ -930,7 +943,7 @@ function renderDht() {
     ['生效对外地址', `${esc(adv.host)}:${adv.port}`, adv.source === 'manual' ? '手动地址（验证有效）' : '自动兜底（手动全部失效/暂停时启用）'],
     ['指纹', d.fingerprint ? d.fingerprint.slice(0, 20) + '…' : '—', 'base32(sha256(公钥))，52 位'],
     ['节点 ID', d.nodeIdHex ? d.nodeIdHex.slice(0, 20) + '…' : '—', '由指纹派生（sha256）'],
-    ['UDP 监听', udpText, '固定端口（默认 443、62666），不可修改'],
+    ['UDP 监听', udpText, '默认 443、62666，可在「端口」页暂停/添加（暂停保留配置）'],
     ['对端数', String(d.contacts || 0), '路由表 contacts'],
     ['上次发布', lastPub, d.lastPublishSeq ? 'seq ' + d.lastPublishSeq + ' · 命中 ' + (d.lastStoredOn || []).length + ' 个节点' : '尚未发布'],
     ['引导', d.lastYindao ? (d.lastYindao.detail || `成功 ${d.lastYindao.ok} / 失败 ${d.lastYindao.failed}`) : '尚未引导', d.lastYindao ? fmtTime(d.lastYindao.at) : ''],
@@ -939,28 +952,35 @@ function renderDht() {
   const addrs = d.addresses || [];
   const portStates = new Map((P && P.items || []).map((it) => [it.port, it]));
   $('#dhtAdvNew').value = '';
-  $('#dhtAdvList').innerHTML = addrs.length
-    ? addrs.map((a) => {
-        const tag = !a.manual
-          ? '<span class="tag on">自动兜底</span>'
-          : (!a.enabled ? '<span class="tag off">暂停</span>'
-            : (a.valid ? '<span class="tag on">正常</span>' : '<span class="tag off" title="' + esc(a.lastError || '') + '">异常</span>'));
-        const ps = portStates.get(a.port);
-        const portTag = !a.manual
-          ? ''
-          : (!ps ? '<span class="tag off">端口未配置</span>'
-            : (ps.status === 'listening' ? '<span class="tag on">端口监听中</span>'
-              : (ps.status === 'paused' ? '<span class="tag off">端口暂停</span>' : '<span class="tag off">端口异常</span>')));
-        const portBtn = a.manual && ps && ps.status !== 'listening'
-          ? `<button class="sm" data-dht-enable-port="${a.port}">${ps.status === 'paused' ? '启用端口' : '启用端口'}</button>`
-          : '';
-        const op = a.manual
-          ? `<button class="sm" data-dht-tgl-addr="${esc(a.host + ':' + a.port)}">${a.enabled ? '暂停' : '启用'}</button>` +
-            `<button class="sm danger" data-dht-del-addr="${esc(a.host + ':' + a.port)}">删除</button>`
-          : '';
-        return `<span style="display:inline-flex;align-items:center;gap:6px;margin:2px 8px 2px 0;flex-wrap:wrap"><code>${esc(a.host)}:${a.port}</code>${tag}${portTag}${portBtn}${op}</span>`;
-      }).join('')
-    : '<span class="muted">（无手动地址；自动兜底生效）</span>';
+  $('#dhtAdvList').innerHTML = '<div class="tablewrap"><table>' +
+    '<tr><th>地址</th><th>类型</th><th>状态</th><th>端口监听</th><th>操作</th></tr>' +
+    (addrs.map((a) => {
+      const isAuto = !a.manual;
+      const st = isAuto
+        ? (a.enabled ? '<span class="tag on">生效中</span>' : '<span class="tag off">暂停</span>')
+        : (!a.enabled ? '<span class="tag off">暂停</span>'
+          : (a.valid ? '<span class="tag on">生效中</span>' : `<span class="tag off" title="${esc(a.lastError || '')}">异常</span>`));
+      const ps = portStates.get(a.port);
+      const portTag = !ps
+        ? (a.manual ? '<span class="tag off">端口未配置</span>' : '')
+        : (ps.status === 'listening' ? '<span class="tag on">端口监听中</span>'
+          : (ps.status === 'paused' ? '<span class="tag off">端口暂停</span>' : '<span class="tag off">端口异常</span>'));
+      const portBtn = a.manual && ps && ps.status !== 'listening'
+        ? `<button class="sm" data-dht-enable-port="${a.port}">启用端口</button>`
+        : '';
+      const ops = [];
+      if (a.manual) {
+        ops.push(`<button class="sm" data-dht-edit-addr="${esc(a.host + ':' + a.port)}">修改</button>`);
+        ops.push(`<button class="sm" data-dht-tgl-addr="${esc(a.host + ':' + a.port)}">${a.enabled ? '暂停' : '启用'}</button>`);
+        ops.push(`<button class="sm danger" data-dht-del-addr="${esc(a.host + ':' + a.port)}">删除</button>`);
+      } else {
+        ops.push(`<button class="sm" data-dht-tgl-auto="${esc(a.key || '')}" ${a.enabled ? '' : 'disabled'}>${a.enabled ? '暂停' : '已暂停'}</button>`);
+      }
+      return `<tr><td><code>${esc(a.host)}:${a.port}</code>${isAuto ? `<div class="cell-sub">${esc(a.label || '')}</div>` : ''}</td>` +
+        `<td>${isAuto ? '<span class="tag">自动兜底</span>' : '手动'}</td><td>${st}</td><td>${portTag}${portBtn}</td>` +
+        `<td><div class="toolbar" style="margin:0">${ops.join('')}</div></td></tr>`;
+    }).join('') || '<tr><td colspan="5" class="empty">（无手动地址；自动兜底生效）</td></tr>') +
+    '</table></div>';
   $('#dhtAnchorDef').innerHTML = (d.defaultAnchors || []).length
     ? (d.defaultAnchors || []).map((a) => `<span style="display:inline-block;margin:2px 8px 2px 0"><code>${esc(a.host)}:${a.port}</code></span>`).join('')
     : '<span class="muted">（无）</span>';
@@ -974,7 +994,7 @@ function renderDht() {
       || `<tr><td colspan="4" class="empty">还没有对端。配置锚点后本机会引导入网；无锚点时只监听、等待被引导。</td></tr>`);
   $('#dhtHint').textContent = d.lastError
     ? '最近错误：' + d.lastError
-    : 'DHT 强制开启：使用 FWArmy 就必须进网。默认锚点 DHT.pondsi.com / DHT2.pondsi.com × 443/62666 自动引导；对外地址每条验证通过才用于宣告（每 5 分钟复查），全部失效/暂停时自动启用「推断 IP:443 / 推断 IP:62666」兜底（不可全部关闭）。';
+    : 'DHT 强制开启：使用 FWArmy 就必须进网。默认锚点 DHT.pondsi.com / DHT2.pondsi.com × 443/62666 自动引导；对外地址每条验证通过才用于宣告（每 5 分钟复查）。自动兜底 = 公网 IPv4/IPv6 × 443/62666（最多 4 条，IPv6 优先），不可修改/删除，只能暂停（须先有其它生效地址）；定时自检发现没有任何生效地址时自动恢复全部兜底。';
   $('#dhtMsg').textContent = '';
 }
 async function loadDht() {
@@ -1060,7 +1080,7 @@ async function genInbound() {
     const warn = $('#exInPortWarn');
     if (chosen !== (E && E.port)) {
       warn.hidden = false;
-      warn.textContent = `⚠ 端口 ${chosen} 不在本机监听端口集合（${(E && E.listeningPorts || []).join('、') || '无'}，可能被占用）。对方连 ${chosen} 连不到本机——此凭据已被强制禁止。请在「端口」页启用该端口（被占可强制启用）或改用已监听端口重新生成。`;
+      warn.innerHTML = `⚠ 端口 <code>${esc(chosen)}</code> 不在本机监听端口集合（${esc((E && E.listeningPorts || []).join('、') || '无')}，可能被占用）。对方连 ${chosen} 连不到本机——此凭据已被强制禁止。请在<a href="#" data-goto="ports">端口</a>页启用该端口（被占可强制启用）或改用已监听端口重新生成。`;
     } else {
       warn.hidden = true;
     }
@@ -1362,7 +1382,9 @@ $('#dhtAdvList').addEventListener('click', async (ev) => {
   const tgl = ev.target.closest('button[data-dht-tgl-addr]');
   const del = ev.target.closest('button[data-dht-del-addr]');
   const enp = ev.target.closest('button[data-dht-enable-port]');
-  if (!tgl && !del && !enp) return;
+  const edit = ev.target.closest('button[data-dht-edit-addr]');
+  const autoTgl = ev.target.closest('button[data-dht-tgl-auto]');
+  if (!tgl && !del && !enp && !edit && !autoTgl) return;
   if (!D) return;
   const list = (D.addresses || []).filter((a) => a.manual);
   try {
@@ -1377,7 +1399,29 @@ $('#dhtAdvList').addEventListener('click', async (ev) => {
       await loadDht();
       return;
     }
-    if (tgl) {
+    if (autoTgl) {
+      // R135：自动兜底只能暂停/恢复（不可修改/删除）；全部暂停需先有其它生效地址（服务端校验）
+      const key = autoTgl.dataset.dhtTglAuto;
+      const cur = (D.config && D.config.pausedAuto) || [];
+      const paused = cur.includes(key);
+      const next = paused ? cur.filter((x) => x !== key) : [...cur, key];
+      const j = await api('/api/admin/dht-config', { pausedAuto: next });
+      D = j.dht; renderDht();
+      toast(paused ? '自动兜底已恢复' : '自动兜底已暂停（仍有其它生效地址）');
+    } else if (edit) {
+      const key = edit.dataset.dhtEditAddr;
+      const v = prompt('修改对外地址（域名IP:端口）：', key);
+      if (!v) return;
+      const i = v.lastIndexOf(':');
+      if (i <= 0 || !/^\d{1,5}$/.test(v.slice(i + 1)) || /[\s/?#]/.test(v.slice(0, i))) { toast('格式应为 域名或IP:端口（如 relay.example.com:58588）', true); return; }
+      const items = list.map((a) => {
+        const same = `${a.host}:${a.port}` === key;
+        return { host: same ? v.slice(0, i) : a.host, port: same ? Number(v.slice(i + 1)) : a.port, enabled: a.enabled };
+      });
+      const j = await api('/api/admin/dht-config', { addresses: items });
+      D = j.dht; renderDht();
+      toast('对外地址已修改，等待重新验证');
+    } else if (tgl) {
       const key = tgl.dataset.dhtTglAddr;
       const items = list.map((a) => ({ host: a.host, port: a.port, enabled: `${a.host}:${a.port}` === key ? !a.enabled : a.enabled }));
       const j = await api('/api/admin/dht-config', { addresses: items });

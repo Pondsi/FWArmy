@@ -111,14 +111,19 @@ stats | ip | update | version               usage stats, public IP probe, update
   (aligned with WArmy; anchors need no credential — anonymous discovery; security comes from node
   Ed25519 signatures, group-key encryption and inbound rate limiting). Additional anchors can be
   added/removed on the admin page. External addresses (domain/IP:port) are a managed list with
-  per-entry health (verified / failed / paused) and an auto fallback pair (inferred IP : 443/62666)
-  that always stays enabled.
-- **Ports (R133/R134)**: FWArmy listens on **multiple business ports** — default **8787** (admin
-  entry, changeable below the public-IP bar), **59599** (relay credentials) and **58588** (expand
-  credentials); no more auto-increment on conflict. The "端口" admin tab shows every port's state
-  (listening / paused / error, TCP and DHT-UDP 443/62666), which credentials reference it, and lets
-  you add / pause / resume / remove ports — occupying processes can be force-killed to take the port
-  back. A credential is only usable while its port is in the listening set.
+  per-entry health (生效中 / 异常 / 暂停) and edit / pause / delete actions. Auto fallback = probed
+  public IPv4 & IPv6 (IPv6 preferred) × ports 443/62666 (up to 4 entries, no edit/delete): each can be
+  paused only while another address is active, and a periodic self-check re-enables all fallbacks when
+  no address is active at all.
+- **Ports (R135)**: FWArmy listens on **multiple business ports** — default **8787** (admin
+  entry), **59599** (relay credentials) and **58588** (expand credentials); no auto-increment on
+  conflict. The "端口" admin tab shows every port's state (listening / paused / error, TCP and
+  DHT-UDP 443/62666), which credentials reference it, and lets you add / pause / resume / remove
+  ports — occupying processes can be force-killed to take the port back. Adding a port asks for its
+  protocol (TCP business / UDP DHT); pausing a UDP port keeps its config (resume restores it), and at
+  least one DHT UDP port must stay active. The admin entry port cannot be paused/removed — only
+  changed to another port (old port keeps listening as a plain business port). A credential is only
+  usable while its port is in the listening set.
 - **Relay credentials v2**: generated tokens embed host + port (`fwnexp_v2_<payload>`), so clients fill
   in only "name + credential"; legacy tokens without an address still work with a manual address.
   Inbound relay responses distinguish `offline` (recipient offline — never cached, sender retries later)
