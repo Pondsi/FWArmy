@@ -283,6 +283,12 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
       </label>
     </div>
     <div class="toolbar" style="margin-top:12px">
+      <button class="primary" id="dhtAnchorSelf">一键变成锚点</button>
+      <input id="dhtAnchorDomain" placeholder="可选：填你的域名（如 dht.pondsi.com）" style="max-width:300px" title="填域名则校验其解析是否指向本机公网 IP，并生成以域名为锚点的地址">
+      <span class="muted">本机仍是完整服务器（中继/F中继照常）</span>
+    </div>
+    <div id="dhtAnchorSelfBox" class="hint" style="margin-top:8px" hidden></div>
+    <div class="toolbar" style="margin-top:12px">
       <button id="dhtPublish">立即发布本站记录</button>
       <input id="dhtQueryFp" placeholder="按指纹查询（base32，52 位）" style="max-width:260px">
       <button id="dhtQueryBtn">查询</button>
@@ -1441,6 +1447,44 @@ $('#dhtAnchorAdd').addEventListener('click', async () => {
     D = j.dht; renderDht();
     toast('锚点已添加并生效');
   } catch (e) { toast(e.message, true); }
+});
+// R135c：一键变成锚点——生成可分享的锚点地址（UDP 监听端口 × 公网 IP/域名），本机不改配置、功能不受影响
+$('#dhtAnchorSelf').addEventListener('click', async () => {
+  const domain = $('#dhtAnchorDomain').value.trim();
+  const btn = $('#dhtAnchorSelf');
+  btn.disabled = true; btn.textContent = '生成中…';
+  try {
+    const j = await api('/api/admin/dht-anchor', domain ? { domain } : {});
+    const box = $('#dhtAnchorSelfBox');
+    const pub = j.publicIp || {};
+    let html = '';
+    const dns = j.dns || {};
+    if (dns.status === 'match') html += '<span class="tag on">域名解析指向本机公网 IP</span> ';
+    else if (dns.status === 'mismatch') html += `<span class="tag off" title="对方将引导到域名解析结果">⚠ 域名解析到 ${esc((dns.ips || []).join('、'))}，本机公网 IP 是 ${esc(pub.ipv6 || pub.ipv4 || '未探测到')}</span> `;
+    else if (dns.status === 'no-record') html += '<span class="tag off">⚠ 该域名没有解析记录</span> ';
+    if (!j.addrs || !j.addrs.length) {
+      html += '<span class="muted">（无可用地址：请先在「端口」页启用/添加一个 UDP 端口，再点一次）</span>';
+    } else {
+      html += '<div class="toolbar" style="margin:6px 0">' +
+        '<span class="muted">把下面任一地址告诉其他 FWArmy，对方在「手动锚点」里添加即可引导到本机：</span>' +
+        '<button class="sm" id="dhtAnchorCopyAll">复制全部</button></div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:6px">' +
+        j.addrs.map((a) => `<span style="display:inline-flex;align-items:center;gap:4px"><code>${esc(a.host)}:${a.port}</code><button class="sm" data-copy-addr="${esc(a.host + ':' + a.port)}">复制</button></span>`).join('') +
+        '</div><div style="margin-top:6px">' + esc(j.note || '') + '</div>';
+    }
+    box.innerHTML = html;
+    box.hidden = false;
+    box.querySelectorAll('button[data-copy-addr]').forEach((b) => b.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(b.dataset.copyAddr); toast('已复制 ' + b.dataset.copyAddr); }
+      catch { toast('复制失败（浏览器限制），请手动选择复制', true); }
+    }));
+    const ca = box.querySelector('#dhtAnchorCopyAll');
+    if (ca) ca.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(j.addrs.map((a) => `${a.host}:${a.port}`).join('\n')); toast('已复制全部锚点地址'); }
+      catch { toast('复制失败（浏览器限制），请手动选择复制', true); }
+    });
+  } catch (e) { toast(e.message, true); }
+  finally { btn.disabled = false; btn.textContent = '一键变成锚点'; }
 });
 $('#dhtAnchorList').addEventListener('click', async (ev) => {
   const b = ev.target.closest('button[data-dht-del-anchor]');

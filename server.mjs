@@ -3600,6 +3600,39 @@ export async function startServer(options = {}) {
         dht: dhtPublicView(),
       });
     }
+    /* ── R135c：一键变成锚点——生成可分享的锚点地址（本机 UDP 监听端口 × 公网 IP/域名），不改任何配置 ── */
+    if (req.method === 'POST' && p === '/api/admin/dht-anchor') {
+      const j = await body(req).catch(() => ({}));
+      const domain = String(j.domain || '').trim().slice(0, 253);
+      if (domain && /[\s/?#]/.test(domain)) return send(res, 400, { ok: false, error: 'bad-domain' });
+      let udpPorts = [...new Set(dhtNodes.filter((n) => n.listening && n.address && n.address.port).map((n) => n.address.port))];
+      if (!udpPorts.length) udpPorts = cfg.dht.udpPorts.filter((p) => !cfg.dht.pausedUdpPorts.includes(p));
+      if (!lastPub || !lastPub.at) await probePublicIp().catch(() => {});
+      const pub = { ipv4: lastPub.ipv4 || '', ipv6: lastPub.ipv6 || '' };
+      let dnsCheck = { status: 'none', ips: [] };
+      if (domain) {
+        const ips = await new Promise((resolve) => {
+          dns.lookup(domain, { all: true }, (err, addrs) => {
+            if (err || !Array.isArray(addrs) || !addrs.length) return resolve([]);
+            resolve(addrs.map((a) => a.address));
+          });
+        });
+        const mine = [pub.ipv6, pub.ipv4].filter(Boolean);
+        const hit = mine.some((x) => ips.includes(x));
+        dnsCheck = { status: !ips.length ? 'no-record' : (hit ? 'match' : 'mismatch'), ips };
+      }
+      const hosts = domain ? [domain] : [...new Set([pub.ipv6 || pub.ipv4, pub.ipv4].filter(Boolean))];
+      const addrs = hosts.flatMap((h) => udpPorts.map((port) => ({
+        host: h, port,
+        kind: domain ? 'domain' : (h.includes(':') ? 'ipv6' : 'ipv4'),
+      })));
+      log('INFO', `[dht] 一键变成锚点：${addrs.map((a) => `${a.host}:${a.port}`).join('、') || '（无可用 UDP 端口）'} 域名校验=${dnsCheck.status}`);
+      return send(res, 200, {
+        ok: true, addrs, udpPorts,
+        publicIp: pub, dns: dnsCheck,
+        note: '锚点无需凭证：其他 FWArmy 在「手动锚点」里添加任一地址即可引导到本机（发现≠授权，消息仍走凭据通道）；本机仍是完整服务器（中继/F中继照常）。',
+      });
+    }
     if (req.method === 'POST' && p === '/api/admin/security-gc') {
       const r = pruneSecurity(now());
       if (!saveSecurity()) return send(res, 500, { ok: false, error: 'persist-failed' });
