@@ -391,13 +391,21 @@ export class DhtJieDian {
       this.isV6 = String(host).includes(':') || host === '::';
       const sock = dgram.createSocket({ type: this.isV6 ? 'udp6' : 'udp4', reuseAddr: true });
       this.socket = sock;
+      let boundOk = false;
       sock.on('error', (e) => {
         this.emit('error', String(e.message ?? e));
-        if (this.socket === sock) this.socket = null;
-        reject(e);
+        // R135h：绑定期错误致命（端口占用）；运行期网络错误（ICMP 拒绝/瞬态）不杀死节点——
+        // UDP 无连接，后续发包独立成败；此前「socket 置空」会让公网锚点 ICMP 拒绝直接杀掉整个 DHT 节点。
+        if (!boundOk) {
+          if (this.socket === sock) this.socket = null;
+          reject(e);
+        } else {
+          this.stats.dgramErrors = (this.stats.dgramErrors || 0) + 1;
+        }
       });
       sock.on('message', (msg, rinfo) => { void this.handleDatagram(msg, rinfo.address, rinfo.port); });
       sock.bind({ port: opts.port ?? this.opts.port ?? 0, address: host }, () => {
+        boundOk = true;
         const a = sock.address();
         this.bound = { host, port: a.port };
         resolve(this.address);

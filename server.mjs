@@ -2058,12 +2058,17 @@ export async function startServer(options = {}) {
         },
       });
       let bound = null;
-      try { bound = await node.start({ port: udpPort }); }
-      catch (e) {
-        dhtState.lastError = `UDP 端口 ${udpPort} 绑定失败：` + String((e && e.message) || e).slice(0, 200);
-        log('ERROR', '[dht] ' + dhtState.lastError);
-        continue; // 一个失败不拖垮其它
+      for (let attempt = 1; attempt <= 3 && !bound; attempt++) {
+        try { bound = await node.start({ port: udpPort }); }
+        catch (e) {
+          // R135h：绑定失败自动重试（Windows UDP 端口释放延迟/瞬时占用），3 次后仍失败才放弃
+          if (attempt === 3) {
+            dhtState.lastError = `UDP 端口 ${udpPort} 绑定失败：` + String((e && e.message) || e).slice(0, 200);
+            log('ERROR', '[dht] ' + dhtState.lastError);
+          } else await sleep(400);
+        }
       }
+      if (!bound) continue; // 一个失败不拖垮其它
       list.push(node);
       log('INFO', `[dht] 节点已启动 udp=${bound.host}:${bound.port} 指纹=${dhtZhiWen.slice(0, 16)}… 锚点=${yindaoSeeds().length}`);
     }
