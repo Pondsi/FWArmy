@@ -925,7 +925,7 @@ function normAddrList(raw) {
 
 /* ── R135g 附加内容（会话提示消息）：纯文字校验 / 库归一化 / 凭证级模式 ── */
 const ADDITION_MAX_TEXTS = 1000;
-const ADDITION_MAX_BYTES = 512;
+const ADDITION_MAX_BYTES = 120; // R135t：按 WArmy 一行参考收紧（CJK≈30 字 / Latin≈60 字符，120B 覆盖两者）
 /** 附加内容必须纯文字：可打印文本、无控制字符（允许 \t）、无 HTML 特殊字符、长度 ≤ 512 字节（一行）。 */
 function validAdditionText(s) {
   if (typeof s !== 'string') return false;

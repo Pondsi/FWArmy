@@ -141,8 +141,8 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <div class="toolbar" id="credPager"></div>
   </div>
   <div class="panel">
-    <h2 title="会话提示消息：最多 1000 条纯文字；每条中继凭据可配置模式（随机/顺序/按比例/关闭）；添加规则与防篡改审计见帮助文档">附加内容（会话提示消息）</h2>
-    <textarea id="addTexts" rows="6" placeholder="每行一条附加内容（纯文字：无 HTML 字符/无换行，单条 ≤512 字节）" title="附加内容库：每行一条，最多 1000 条；纯文字校验（HTML 特殊字符/换行/超长自动过滤）；保存后每条中继凭据可配置使用模式" style="width:100%;box-sizing:border-box"></textarea>
+    <h2 title="会话提示消息：最多 1000 条纯文字（单条 ≤120 字节，约一行）；每条中继凭据可配置模式（随机/顺序/按比例/关闭）；添加规则与防篡改审计见帮助文档">附加内容（会话提示消息）</h2>
+    <textarea id="addTexts" rows="6" placeholder="每行一条附加内容（纯文字：无 HTML 字符/无换行，单条 ≤120 字节（约 30 个中文字或 60 个英文字符，一行））" title="附加内容库：每行一条，最多 1000 条；纯文字校验（HTML 特殊字符/换行/超长自动过滤）；保存后每条中继凭据可配置使用模式" style="width:100%;box-sizing:border-box"></textarea>
     <div class="toolbar" style="margin-top:8px">
       <button class="primary" id="addSave" title="保存内容库（非法条目自动过滤并提示数量）">保存内容库</button>
       <span class="muted" id="addCount"></span>
@@ -594,7 +594,7 @@ function loadDemoView() {
     updateAvailable: false, lastCheck: 0, lastError: '', canInstall: false, installing: false, staged: false,
     queue: 0, history: [], notes: '',
   };
-  ADD = { texts: [], max: 1000, maxBytes: 512 };
+  ADD = { texts: [], max: 1000, maxBytes: 120 };
   for (const [name, fn] of [['render', render], ['renderPorts', renderPorts], ['renderDht', renderDht], ['renderExpand', renderExpand], ['renderReach', renderReach], ['renderUpdate', renderUpdate]]) {
     try { fn(); } catch (e) { console.error('DEMO-RENDER-FAIL:', name, String(e && e.message || e)); }
   }
