@@ -282,7 +282,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <div id="dhtAdvList"></div>
     <div class="grid" style="margin-top:12px">
       <label class="f" title="默认锚点：DHT.pondsi.com / DHT2.pondsi.com × UDP 443/62666，自动生效，与 WArmy 对齐；第一台设备无需别人引导即可入网"><span id="dhtAnchorDef" class="hint" style="display:block;margin-top:4px"></span>默认锚点</label>
-      <label class="f" title="手动锚点 = 引导入网的地址（host 或 host:port）：填对方公网 IP:UDP 端口；第二台设备以第一台为锚点后自动入网、双向可发现">手动锚点（或入网端点）
+      <label class="f" title="手动锚点 = 引导入网的地址（host 或 host:port）：填对方公网 IP:UDP 端口（对方引导地址见其对外地址行内）；第二台设备以第一台为锚点后自动入网、双向可发现">手动锚点（或入网端点）
         <span style="display:flex;gap:6px;width:100%">
           <input id="dhtAnchorNew" placeholder="host 或 host:port，如 1.2.3.4:443" title="锚点格式：host 或 host:port（UDP 端口）；对方必须是可达的 FWArmy 节点" style="flex:1">
           <button class="sm" id="dhtAnchorAdd" title="添加手动锚点并立即引导">添加</button>
@@ -290,11 +290,6 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
         <span id="dhtAnchorList" class="hint" style="margin-top:4px;display:block"></span>
       </label>
     </div>
-    <div class="toolbar" style="margin-top:12px">
-      <button class="primary" id="dhtAnchorSelf" title="生成可分享的锚点地址（本机 UDP 监听端口 × 公网 IP/域名）：把任一地址告诉其他 FWArmy，对方添加到手动锚点即可引导到本机；本机仍是完整服务器">一键变成锚点</button>
-      <input id="dhtAnchorDomain" placeholder="可选：填你的域名（如 dht.pondsi.com）" style="max-width:300px" title="填域名则校验其解析是否指向本机公网 IP，并生成以域名为锚点的地址">
-    </div>
-    <div id="dhtAnchorSelfBox" class="hint" style="margin-top:8px" hidden></div>
     <div class="toolbar" style="margin-top:12px">
       <button id="dhtPublish">立即发布本站记录</button>
       <input id="dhtQueryFp" placeholder="按指纹查询（base32，52 位）" style="max-width:260px">
@@ -1147,9 +1142,11 @@ function renderDht() {
       const portBtn = a.manual && ps && ps.status !== 'listening'
         ? `<button class="sm" data-dht-enable-port="${a.port}">启用端口</button>`
         : '';
-      // R135n：引导地址 = 该行 host × 本机 UDP 端口（投递走 TCP 业务端口，引导走 UDP——发现即引导）
+      // R135n/q：引导地址 = 该行 host × 本机 UDP 端口（投递走 TCP 业务端口，引导走 UDP——发现即引导；复制给别人填「手动锚点」）
       const udpPorts = (d.config && d.config.udpPorts || []).filter((p) => !((d.config.pausedUdpPorts || []).includes(p)));
-      const guide = udpPorts.length ? `引导：<code>${esc(a.host)}:${udpPorts.join(' / ')}</code>` : '';
+      const guide = udpPorts.length
+        ? `引导：<code>${esc(a.host)}:${udpPorts.join(' / ')}</code> <button class="sm" data-copy-guide="${esc(a.host)}|${udpPorts.join(',')}" title="复制引导地址（把此地址告诉其他 FWArmy，对方在「手动锚点」添加即可引导到本机）">复制</button>`
+        : '';
       const ops = [];
       if (a.manual) {
         ops.push(`<button class="sm" data-dht-edit-addr="${esc(a.host + ':' + a.port)}">修改</button>`);
@@ -1245,7 +1242,10 @@ async function addExpandPeer() {
 }
 // R135p：F中继生成接入凭据——弹窗填写（名称/域名IP/端口/限额/有效期），与中继凭据一致（无附加内容设置）
 function openInGenModal() {
-  $('#inGName').value = '';
+  // R135r：默认名称（可直接生成，与中继凭据一致）
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  $('#inGName').value = `接入-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
   $('#inGPort').value = '';
   const p = E && E.publicIp;
   $('#inGHost').value = (p && (p.ipv4 || p.ipv6)) || (E && E.defaultAdvHost) || '';
@@ -1657,8 +1657,16 @@ $('#dhtAdvList').addEventListener('click', async (ev) => {
   const enp = ev.target.closest('button[data-dht-enable-port]');
   const edit = ev.target.closest('button[data-dht-edit-addr]');
   const autoTgl = ev.target.closest('button[data-dht-tgl-auto]');
-  if (!tgl && !del && !enp && !edit && !autoTgl) return;
+  const copyG = ev.target.closest('button[data-copy-guide]');
+  if (!tgl && !del && !enp && !edit && !autoTgl && !copyG) return;
   if (!D) return;
+  if (copyG) { // R135r：复制引导地址（host × UDP 端口），给别人填「手动锚点」
+    const [h, ports] = copyG.dataset.copyGuide.split('|');
+    const text = ports.split(',').map((pt) => `${h}:${pt}`).join('\n');
+    try { await navigator.clipboard.writeText(text); toast('已复制引导地址：' + text.split('\n').join(' / ')); }
+    catch { toast('复制失败（浏览器限制），请手动选择复制', true); }
+    return;
+  }
   const list = (D.addresses || []).filter((a) => a.manual);
   try {
     if (enp) {
@@ -1721,44 +1729,6 @@ $('#dhtAnchorAdd').addEventListener('click', async () => {
     $('#dhtAnchorNew').value = ''; // R135h：添加成功后才清空输入框
     toast('锚点已添加并生效');
   } catch (e) { toast(e.message, true); }
-});
-// R135c：一键变成锚点——生成可分享的锚点地址（UDP 监听端口 × 公网 IP/域名），本机不改配置、功能不受影响
-$('#dhtAnchorSelf').addEventListener('click', async () => {
-  const domain = $('#dhtAnchorDomain').value.trim();
-  const btn = $('#dhtAnchorSelf');
-  btn.disabled = true; btn.textContent = '生成中…';
-  try {
-    const j = await api('/api/admin/dht-anchor', domain ? { domain } : {});
-    const box = $('#dhtAnchorSelfBox');
-    const pub = j.publicIp || {};
-    let html = '';
-    const dns = j.dns || {};
-    if (dns.status === 'match') html += '<span class="tag on">域名解析指向本机公网 IP</span> ';
-    else if (dns.status === 'mismatch') html += `<span class="tag off" title="对方将引导到域名解析结果">⚠ 域名解析到 ${esc((dns.ips || []).join('、'))}，本机公网 IP 是 ${esc(pub.ipv6 || pub.ipv4 || '未探测到')}</span> `;
-    else if (dns.status === 'no-record') html += '<span class="tag off">⚠ 该域名没有解析记录</span> ';
-    if (!j.addrs || !j.addrs.length) {
-      html += '<span class="muted">（无可用地址：请先在「端口」页启用/添加一个 UDP 端口，再点一次）</span>';
-    } else {
-      html += '<div class="toolbar" style="margin:6px 0">' +
-        '<span class="muted">把下面任一地址告诉其他 FWArmy，对方在「手动锚点」里添加即可引导到本机：</span>' +
-        '<button class="sm" id="dhtAnchorCopyAll">复制全部</button></div>' +
-        '<div style="display:flex;flex-wrap:wrap;gap:6px">' +
-        j.addrs.map((a) => `<span style="display:inline-flex;align-items:center;gap:4px"><code>${esc(a.host)}:${a.port}</code><button class="sm" data-copy-addr="${esc(a.host + ':' + a.port)}">复制</button></span>`).join('') +
-        '</div><div style="margin-top:6px">' + esc(j.note || '') + '</div>';
-    }
-    box.innerHTML = html;
-    box.hidden = false;
-    box.querySelectorAll('button[data-copy-addr]').forEach((b) => b.addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(b.dataset.copyAddr); toast('已复制 ' + b.dataset.copyAddr); }
-      catch { toast('复制失败（浏览器限制），请手动选择复制', true); }
-    }));
-    const ca = box.querySelector('#dhtAnchorCopyAll');
-    if (ca) ca.addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(j.addrs.map((a) => `${a.host}:${a.port}`).join('\n')); toast('已复制全部锚点地址'); }
-      catch { toast('复制失败（浏览器限制），请手动选择复制', true); }
-    });
-  } catch (e) { toast(e.message, true); }
-  finally { btn.disabled = false; btn.textContent = '一键变成锚点'; }
 });
 $('#dhtAnchorList').addEventListener('click', async (ev) => {
   const b = ev.target.closest('button[data-dht-del-anchor]');

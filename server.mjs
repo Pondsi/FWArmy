@@ -897,20 +897,27 @@ function normPorts(raw, def = DEFAULT_PORTS, max = 16) {
   }
   return out.length ? out : [...def];
 }
-/** 手动对外地址列表归一化：{host, port, enabled}；去重/去非法/上限 16。 */
+/** 手动对外地址列表归一化：{host, port, enabled}；兼容 'host:port' 字符串（管理页 UI 提交格式）；去重/去非法/上限 16。 */
 function normAddrList(raw) {
   const list = Array.isArray(raw) ? raw : [];
   const out = [];
   const seen = new Set();
   for (const x of list) {
-    const o = x && typeof x === 'object' ? x : {};
-    const host = String(o.host || '').trim().slice(0, 253);
-    const port = Math.floor(Number(o.port));
+    let o = x;
+    if (typeof x === 'string') {
+      const s = String(x).trim();
+      const i = s.lastIndexOf(':');
+      if (i <= 0 || !/^\d{1,5}$/.test(s.slice(i + 1)) || /[\s/?#]/.test(s.slice(0, i))) continue;
+      o = { host: s.slice(0, i), port: Number(s.slice(i + 1)) };
+    }
+    const obj = o && typeof o === 'object' ? o : {};
+    const host = String(obj.host || '').trim().slice(0, 253);
+    const port = Math.floor(Number(obj.port));
     if (!host || /[\s/?#]/.test(host) || !Number.isInteger(port) || port < 1 || port > 65535) continue;
     const key = `${host}|${port}`.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ host, port, enabled: o.enabled !== false, manual: true });
+    out.push({ host, port, enabled: obj.enabled !== false, manual: true });
     if (out.length >= 16) break;
   }
   return out;
@@ -3814,11 +3821,13 @@ export async function startServer(options = {}) {
         j.pausedAuto = norm;
       }
       const next = normDhtCfg({ ...cfg.dht, ...j });
-      // R135h：对外地址预检——域名解析或 IP 必须指向本机（本机网卡/探测公网 IP/回环），否则拒绝添加（宣告出去对方连不到本机）
+      // R135h/r：对外地址预检——域名解析或 IP 必须指向本机（本机网卡/探测公网 IP/回环），否则拒绝添加（宣告出去对方连不到本机）；兼容字符串与对象
       if (j.addresses !== undefined) {
         const list = Array.isArray(j.addresses) ? j.addresses : [];
         for (const a of list) {
-          const host = String(a && a.host || '').trim();
+          const host = typeof a === 'string'
+            ? String(a).slice(0, String(a).lastIndexOf(':')).trim()
+            : String(a && a.host || '').trim();
           if (!host) continue;
           const chk = await hostPointsToSelf(host);
           if (!chk.ok) {
