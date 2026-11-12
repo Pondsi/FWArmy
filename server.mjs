@@ -158,6 +158,8 @@ const DEFAULTS = {
    */
   dht: { enabled: true, udpPorts: [443, 62666], addresses: [], anchors: [], routeByDht: true, retryBaseMs: 1000 },
   ports: DEFAULT_PORTS, // R133 多业务端口：默认监听 59599（中继）+ 58588（扩网）；不再自动顺延
+  // R135g 附加内容库（会话提示消息）：最多 1000 条纯文字；每条中继凭据可绑定模式（关/随机/顺序/按比例）
+  addition: { texts: [] },
 };
 const CONFIG_RANGES = {
   ratePerMin: [1, 1_000_000],
@@ -191,6 +193,8 @@ const X_PREFIX = Buffer.from('302a300506032b656e032100', 'hex');
 const edPub = (b64) => crypto.createPublicKey({ key: Buffer.concat([ED_PREFIX, Buffer.from(String(b64), 'base64')]), format: 'der', type: 'spki' });
 const xPub = (b64) => crypto.createPublicKey({ key: Buffer.concat([X_PREFIX, Buffer.from(String(b64), 'base64')]), format: 'der', type: 'spki' });
 const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
+/** Buffer/字符串 → sha256 hex（哈希链审计用）。 */
+const sha256Hex = (s) => crypto.createHash('sha256').update(s).digest('hex');
 const b64u = (b) => b.toString('base64url');
 const pad2 = (n) => String(n).padStart(2, '0');
 const dayKey = (d = new Date()) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -911,6 +915,47 @@ function normAddrList(raw) {
   }
   return out;
 }
+
+/* ── R135g 附加内容（会话提示消息）：纯文字校验 / 库归一化 / 凭证级模式 ── */
+const ADDITION_MAX_TEXTS = 1000;
+const ADDITION_MAX_BYTES = 512;
+/** 附加内容必须纯文字：可打印文本、无控制字符（允许 \t）、无 HTML 特殊字符、长度 ≤ 512 字节（一行）。 */
+function validAdditionText(s) {
+  if (typeof s !== 'string') return false;
+  if (Buffer.byteLength(s, 'utf8') > ADDITION_MAX_BYTES) return false;
+  if (/[\x00-\x08\x0A-\x1F\x7F]/.test(s)) return false; // 控制字符（\t=\x09 允许，换行/回车不允许）
+  if (/[<>&"']/.test(s)) return false; // HTML 特殊字符（渲染层无法被利用）
+  return s.trim().length > 0;
+}
+/** 附加内容库归一化：每条过纯文字校验，去重，上限 1000。 */
+function normAdditionTexts(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = [];
+  const seen = new Set();
+  for (const x of list) {
+    const s = String(x || '').trim().slice(0, ADDITION_MAX_BYTES + 16);
+    if (!validAdditionText(s) || seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+    if (out.length >= ADDITION_MAX_TEXTS) break;
+  }
+  return out;
+}
+/** 凭证级附加内容配置：{mode: off|random|sequence|weighted, weights: {序号: 权重}}；weights 空 = 全部条目等权。 */
+function normCredAddition(raw) {
+  if (raw === undefined || raw === null) return null;
+  const o = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const mode = ['off', 'random', 'sequence', 'weighted'].includes(o.mode) ? o.mode : 'off';
+  const weights = {};
+  if (o.weights && typeof o.weights === 'object' && !Array.isArray(o.weights)) {
+    for (const k of Object.keys(o.weights)) {
+      const idx = Math.floor(Number(k));
+      const w = Number(o.weights[k]);
+      if (Number.isInteger(idx) && idx >= 1 && idx <= ADDITION_MAX_TEXTS && Number.isFinite(w) && w >= 0) weights[String(idx)] = Math.floor(w);
+    }
+  }
+  return { mode, weights };
+}
 function normDhtCfg(raw) {
   const d = DEFAULTS.dht;
   const t = raw && typeof raw === 'object' ? raw : {};
@@ -1262,6 +1307,94 @@ export async function startServer(options = {}) {
 
   // ── 扩网 / 被扩网状态 ──
   let expand = emptyExpand();
+
+  /* ── R135g 附加内容（会话提示消息）：凭证级选择 + 哈希链审计 + DHT 签名检查点 ── */
+  const additionSeq = new Map(); // credId → 顺序模式计数器（内存，重启归零）
+  const ADDITION_AUDIT_FILE = path.join(DATA, 'addition-audit.log');
+  const ADDITION_AUDIT_MAX_LINES = 200_000; // 超出从头部截断并重置链根（截断是可审计事件：gen++）
+  let additionAudit = { gen: 0, head: '', count: 0, lastSignedAt: 0, lastSignedHead: '' };
+  function loadAdditionAudit() {
+    try {
+      const lines = fs.readFileSync(ADDITION_AUDIT_FILE, 'utf8').split(/\r?\n/).filter(Boolean);
+      if (!lines.length) return;
+      let gen = 0, head = '', count = 0;
+      for (const line of lines) {
+        try {
+          const e = JSON.parse(line);
+          if (e.t === 'gen') { gen = e.gen; head = ''; count = 0; continue; }
+          if (!e.h || !e.m) continue;
+          head = e.h; count++;
+        } catch { /* 跳过坏行（不阻止加载） */ }
+      }
+      additionAudit = { gen, head, count, lastSignedAt: 0, lastSignedHead: '' };
+    } catch { /* 无审计文件 */ }
+  }
+  function auditAppend(msgId, addition) {
+    const m = sha256Hex(String(msgId || '')).slice(0, 16);
+    const a = sha256Hex(String(addition || '')).slice(0, 16);
+    const prev = additionAudit.head || `gen${additionAudit.gen}`;
+    const h = sha256Hex(prev + '|' + m + '|' + a);
+    additionAudit.head = h;
+    additionAudit.count++;
+    let line;
+    try { line = JSON.stringify({ t: 1, at: Date.now(), m, a, h }) + '\n'; fs.appendFileSync(ADDITION_AUDIT_FILE, line); } catch { /* 审计写盘失败不阻断业务 */ }
+    if (additionAudit.count > ADDITION_AUDIT_MAX_LINES) {
+      additionAudit.gen++;
+      additionAudit.head = '';
+      additionAudit.count = 0;
+      try {
+        fs.appendFileSync(ADDITION_AUDIT_FILE, JSON.stringify({ t: 'gen', gen: additionAudit.gen, at: Date.now() }) + '\n');
+      } catch { /* noop */ }
+    }
+  }
+  /** 附加内容选择：按凭证配置（关/随机/顺序/按比例）从库中选一条；未配置/库空 → null。 */
+  function pickAddition(c) {
+    if (!c || !c.addition || c.addition.mode === 'off') return null;
+    const texts = cfg.addition && Array.isArray(cfg.addition.texts) ? cfg.addition.texts : [];
+    if (!texts.length) return null;
+    const w = c.addition.weights || {};
+    const pool = texts.map((t, i) => ({ t, i: i + 1, w: w[String(i + 1)] === undefined ? 1 : w[String(i + 1)] })).filter((x) => x.w > 0);
+    if (!pool.length) return null;
+    const mode = c.addition.mode;
+    if (mode === 'sequence') {
+      const idx = (additionSeq.get(c.id) || 0) % pool.length;
+      additionSeq.set(c.id, idx + 1);
+      return pool[idx].t;
+    }
+    if (mode === 'weighted') {
+      const total = pool.reduce((s, x) => s + x.w, 0);
+      let r = Math.random() * total;
+      for (const x of pool) { r -= x.w; if (r <= 0) return x.t; }
+      return pool[pool.length - 1].t;
+    }
+    return pool[Math.floor(Math.random() * pool.length)].t; // random
+  }
+  /** 审计检查点指纹（独立键，不覆盖本站服务记录）：sha256(本站指纹|addition-audit) → base32。 */
+  function dhtAuditZhiWen() {
+    return warmyZhiWen(sha256Hex(Buffer.from(`${dhtZhiWen || ''}|addition-audit`, 'utf8')));
+  }
+  /** 周期签名检查点：把审计链根签名发布到 DHT（组密钥加密 + 验签 + 防回滚 seq），改造站无法抹掉历史。 */
+  async function dhtPublishAudit() {
+    if (!dhtZhiWen || !cfg.dht.enabled) return { ok: false, error: 'dht-disabled' };
+    if (!additionAudit || !additionAudit.count || !additionAudit.head) return { ok: false, error: 'empty-audit' };
+    const r = await dhtPublishRecord({
+      zhiWen: dhtAuditZhiWen(),
+      record: {
+        fp: dhtAuditZhiWen(), host: activeExternalAddr().host, port: activeExternalAddr().port,
+        scope: 'relay', announcedAt: Date.now(), bieMing: expand.instanceId,
+        extra: {
+          kind: 'fwarmy-addition-audit', instanceId: expand.instanceId,
+          head: additionAudit.head, count: additionAudit.count, gen: additionAudit.gen, version: VERSION,
+        },
+      },
+    });
+    if (r.ok) { additionAudit.lastSignedAt = Date.now(); additionAudit.lastSignedHead = additionAudit.head; }
+    return r;
+  }
+  loadAdditionAudit();
+  const auditTimer = setInterval(() => { void dhtPublishAudit(); }, MANUAL_ADDR_CHECK_MS); // 与对外地址复查同周期（5 分钟）
+  auditTimer.unref();
+
   /** 公网 IP 探测缓存（R131：启动自动探测 + 30 分钟定时 + 手动刷新；顶部常驻显示 IPv4/IPv6）。 */
   let lastPub = { ipv4: '', ipv6: '', at: 0, via: 'none' };
   async function probePublicIp() {
@@ -2340,7 +2473,7 @@ export async function startServer(options = {}) {
     for (const v of ren.values()) for (const x of v.queue) n += Buffer.byteLength(x.env, 'utf8');
     return n;
   }
-  function enqueueLocal(to, env, now = Date.now()) {
+  function enqueueLocal(to, env, now = Date.now(), addition = null) {
     // 防御性暂停门（入口层已拦）：暂停期间绝不产生新队列条目。
     if (!cfg.accepting) return { ok: false, code: 'not-accepting', body: { ok: false, error: 'not-accepting' }, rejected: 1 };
     const y = ren.get(to);
@@ -2350,7 +2483,7 @@ export async function startServer(options = {}) {
     const envBytes = Buffer.byteLength(env, 'utf8');
     if (queuedBytes + envBytes > QUEUE_BYTE_BUDGET) return { ok: false, code: 'queue-full', body: { ok: false, error: 'queue-full', budgetExceeded: true }, rejected: 1 };
     const id = crypto.randomUUID();
-    queue.push({ id, env, exp: now + TTL_MS });
+    queue.push({ id, env, addition: addition || null, exp: now + TTL_MS }); // R135g：附加内容随队列条目存储，poll 同序返回
     y.queue = queue;
     queuedBytes += envBytes;
     // 在线状态只由 register/heartbeat/poll/bye 刷新：发送方持续发消息不能替收件人续在线（F13）。
@@ -2408,7 +2541,7 @@ export async function startServer(options = {}) {
    * prefer（DHT 定位到的目标所在中继站）：匹配的 peer 排最前优先尝试；
    * 转发仍只走已配置互信（凭据 + TLS 指纹固定）的 peer，DHT 不做无凭据投递。
    */
-  async function forwardToPeers(to, env, msgId, meta, route, prefer = null) {
+  async function forwardToPeers(to, env, msgId, meta, route, prefer = null, addition = null) {
     const attempts = [];
     const bytes = Buffer.byteLength(env, 'utf8');
     const deadline = Date.now() + UPSTREAM_TIMEOUT_MS;
@@ -2437,6 +2570,8 @@ export async function startServer(options = {}) {
         msgId, to, envelope: env,
         origin: meta.origin, originPub: meta.originPub, originSig: meta.originSig, createdAt: meta.createdAt,
         route: [...route, expand.instanceId], source: expand.instanceId,
+        // R135g：转出必带附加内容或密封标记——接收站（F中继）见 addition 或 additionLocked 一律不再添加
+        ...(addition ? { addition } : { additionLocked: true }),
       };
       const t0 = Date.now();
       let resultText = '';
@@ -2517,6 +2652,10 @@ export async function startServer(options = {}) {
     if (!isMessageId(msgId)) return fail(400, 'bad-msg-id');
     if (!to || !bytes || bytes > cfg.maxEnvelope) return fail(400, 'bad-envelope');
     if (!Number.isFinite(createdAt) || Math.abs(now() - createdAt) > MESSAGE_WINDOW_MS) return fail(400, 'bad-created-at');
+    // R135g F中继完整性检查：转来的报文必须已带附加内容或密封标记（否则 = 旧版本/被改造上游，直接丢弃）；F中继任何情况不添加。
+    const jAddition = typeof j.addition === 'string' && j.addition ? j.addition : null;
+    if (jAddition === null && j.additionLocked !== true) return fail(400, 'addition-required');
+    if (jAddition !== null && !validAdditionText(jAddition)) return fail(400, 'bad-addition');
     if (!routeJ.ok) {
       if (routeJ.error === 'loop') security.violations.loop++; else security.violations.routeTooLong++;
       saveSecurity();
@@ -2530,7 +2669,7 @@ export async function startServer(options = {}) {
     const note = noteMessage(msgId, String(j.origin || ''));
     if (!note.ok) return fail(409, note.reason === 'blacklisted' ? 'message-blacklisted' : 'duplicate-message', { reason: note.detail || note.reason, count: note.count });
 
-    const local = enqueueLocal(to, env);
+    const local = enqueueLocal(to, env, Date.now(), jAddition); // 注：用真实时间（与 relay 入口一致；注入时钟只影响 noteMessage 窗口）
     if (local.ok) {
       recordExpand('inbound', source, { requests: 1, bytesIn: bytes, relayed: 1, delivered: 1 }, 'queued', cred.id);
       cred.lastAt = now(); cred.lastResult = 'queued';
@@ -2539,7 +2678,7 @@ export async function startServer(options = {}) {
     // 本机确实送不到：带着原来源签名继续转发（中间跳不能改任何签名覆盖字段）。
     const fwd = await forwardToPeers(to, env, msgId, {
       origin: String(j.origin), originPub: String(j.originPub), originSig: String(j.originSig), createdAt,
-    }, routeJ.route, cfg.dht.routeByDht ? (await dhtRouteTarget(to)) : null);
+    }, routeJ.route, cfg.dht.routeByDht ? (await dhtRouteTarget(to)) : null, jAddition);
     const ok = fwd.ok;
     recordExpand('inbound', source, {
       requests: 1, bytesIn: bytes, relayed: 1,
@@ -2690,6 +2829,7 @@ export async function startServer(options = {}) {
       peakPerMin: s.peakPerMin,
       peakAt: s.peakAt,
       lastUsed: c.lastUsed || s.lastUsed || 0,
+      addition: c.addition || null, // R135g：凭证级附加内容配置
     };
   }
   /** 管理面列表分页：limit 默认 200、上限 5000；offset 默认 0；非法值回退默认。 */
@@ -3727,6 +3867,7 @@ export async function startServer(options = {}) {
         id, name, hash: sha(token), hash8: sha(token).slice(0, 8),
         createdAt: new Date().toISOString(), disabled: false, limits, lastUsed: 0,
         host, port: host ? port : 0,
+        addition: normCredAddition(j.addition), // R135g：凭证级附加内容配置（关/随机/顺序/按比例）
       };
       rebuildIndex(); if (!saveCreds()) return send(res, 500, { ok: false, error: 'persist-failed' });
       log('INFO', `新建凭据 id=${id} name=${JSON.stringify(name)}${host ? ` endpoint=${host}:${port}` : ''}`);
@@ -3752,6 +3893,12 @@ export async function startServer(options = {}) {
         if (!h) port = 0;
         c.host = h; c.port = port;
       }
+      // R135g：凭证级附加内容配置（mode=off 或权重表同时清空）
+      if (j.addition !== undefined) {
+        const na = normCredAddition(j.addition);
+        if (na.mode === 'off') { c.addition = null; additionSeq.delete(c.id); }
+        else c.addition = na;
+      }
       credStat(c).name = name;
       if (!saveCreds()) return send(res, 500, { ok: false, error: 'persist-failed' });
       markStatsDirty();
@@ -3773,6 +3920,7 @@ export async function startServer(options = {}) {
       if (!c) return send(res, 404, { ok: false, error: 'not-found' });
       if (String(j.confirmName || '') !== c.name) return send(res, 400, { ok: false, error: 'confirm-name-mismatch' });
       delete creds[c.id];
+      additionSeq.delete(c.id);
       const s = credStat(c); s.deletedAt = Date.now();
       rebuildIndex(); if (!saveCreds()) return send(res, 500, { ok: false, error: 'persist-failed' });
       markStatsDirty();
@@ -3782,6 +3930,41 @@ export async function startServer(options = {}) {
       }
       log('INFO', `删除凭据 id=${c.id}`);
       return send(res, 200, { ok: true });
+    }
+    /* ── R135g 附加内容：库配置 + 审计检查点查看 ── */
+    if (req.method === 'GET' && p === '/api/admin/addition-config') {
+      const cfgAdd = cfg.addition || { texts: [] };
+      return send(res, 200, { ok: true, texts: Array.isArray(cfgAdd.texts) ? cfgAdd.texts : [], max: ADDITION_MAX_TEXTS, maxBytes: ADDITION_MAX_BYTES });
+    }
+    if (req.method === 'POST' && p === '/api/admin/addition-config') {
+      const j = await body(req);
+      const texts = normAdditionTexts(j.texts);
+      if (j.texts !== undefined && !Array.isArray(j.texts)) return send(res, 400, { ok: false, error: 'bad-texts' });
+      const prev = cfg.addition || { texts: [] };
+      cfg.addition = { texts };
+      if (!saveCfg()) { cfg.addition = prev; return send(res, 500, { ok: false, error: 'persist-failed' }); }
+      log('INFO', `附加内容库已保存：${texts.length} 条（上限 ${ADDITION_MAX_TEXTS}）`);
+      return send(res, 200, { ok: true, texts, max: ADDITION_MAX_TEXTS });
+    }
+    if (req.method === 'GET' && p === '/api/admin/addition-audit') {
+      return send(res, 200, {
+        ok: true,
+        gen: additionAudit.gen,
+        count: additionAudit.count,
+        head: additionAudit.head,
+        lastSignedAt: additionAudit.lastSignedAt,
+        lastSignedHead: additionAudit.lastSignedHead,
+        texts: (cfg.addition && Array.isArray(cfg.addition.texts) ? cfg.addition.texts : []).length,
+        enabledCreds: Object.values(creds).filter((c) => c.addition && c.addition.mode !== 'off').length,
+        file: ADDITION_AUDIT_FILE,
+      });
+    }
+    if (req.method === 'POST' && p === '/api/admin/addition-audit-publish') {
+      const r = await dhtPublishAudit();
+      return send(res, 200, { ok: true, publish: r, audit: {
+        gen: additionAudit.gen, count: additionAudit.count, head: additionAudit.head,
+        lastSignedAt: additionAudit.lastSignedAt, lastSignedHead: additionAudit.lastSignedHead,
+      } });
     }
     if (req.method === 'POST' && p === '/api/admin/config') {
       const j = await body(req);
@@ -3933,7 +4116,8 @@ export async function startServer(options = {}) {
         v.lastSeen = now;
         v.queue = v.queue.filter((x) => !yi.includes(x));
         queuedBytes = Math.max(0, queuedBytes - outBytes);
-        return reply(200, { ok: true, envelopes: yi.map((x) => x.env) }, { delivered: yi.length, bytesOut: outBytes });
+        // R135g：附加内容与信封同序返回（无附加 = null），WArmy 客户端据此渲染提示消息
+        return reply(200, { ok: true, envelopes: yi.map((x) => x.env), additions: yi.map((x) => x.addition || null) }, { delivered: yi.length, bytesOut: outBytes });
       }
 
       if (req.method === 'POST' && u.pathname === '/api/register') {
@@ -3960,12 +4144,17 @@ export async function startServer(options = {}) {
         const to = String(j.to || '').slice(0, 200), env = String(j.envelope || '');
         const bytes = Buffer.byteLength(env, 'utf8');
         if (!to || !bytes || bytes > cfg.maxEnvelope) return fail(400, 'bad-envelope');
+        // R135g：客户端方向不允许携带附加内容/密封字段（异常即弃，防注入）
+        if (j.addition !== undefined || j.additionLocked !== undefined) return fail(400, 'addition-not-allowed');
         // 消息身份必须由客户端显式给出：不带 msgId（缺失/空串）视为不合规消息，直接丢弃，不做信封哈希兜底。
         const msgId = String(j.msgId || '');
         if (!isMessageId(msgId)) return fail(400, 'bad-msg-id');
         const at = Date.now();
         const createdAt = at;
-        const local = enqueueLocal(to, env, at);
+        // R135g：按该请求凭据的附加内容配置选一条（未配置/库空 = null，转出时补密封标记）
+        const addition = pickAddition(c);
+        if (addition) auditAppend(msgId, addition);
+        const local = enqueueLocal(to, env, at, addition);
         if (local.ok) {
           const g = gate(c, bytes, at);
           if (!g.ok) {
@@ -3990,7 +4179,7 @@ export async function startServer(options = {}) {
         if (!meta.originSig) {
           return reply(200, { ...local.body, forwarded: false, error: 'signing-unavailable' }, local.offline ? { offline: 1 } : { rejected: 1 });
         }
-        const fwd = await forwardToPeers(to, env, msgId, meta, [], cfg.dht.routeByDht ? (await dhtRouteTarget(to)) : null);
+        const fwd = await forwardToPeers(to, env, msgId, meta, [], cfg.dht.routeByDht ? (await dhtRouteTarget(to)) : null, addition);
         if (fwd.ok) {
           return reply(200, { ok: true, queued: true, forwarded: true, via: fwd.via.name, msgId },
             { bytesIn: bytes, relayed: 1 });

@@ -131,6 +131,16 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <div class="hint">首次不会自动生成凭据；点击生成，可创建多个。留空 = 继承全局默认；分钟次数和流量必须大于 0，其余额度填 0 = 不限。服务器只存 sha256，明文仅生成时显示。删除需输入名称确认。</div>
     <div class="hint">次数 = 有效凭据的业务请求（含拒绝/失败）；流量 = 实际入队与取走的 UTF-8 信封字节之和，不含 HTTP 开销。失败只记实际发生的用量；分钟限速与速度统计共用最近 60 秒窗口。重启清空分钟窗口，不清累计额度。</div>
   </div>
+  <div class="panel">
+    <h2>附加内容（会话提示消息） <small>R135g：最多 1000 条纯文字；每条中继凭据可配置模式（随机/顺序/按比例/关闭）</small></h2>
+    <textarea id="addTexts" rows="6" placeholder="每行一条附加内容（纯文字：无 HTML 字符/无换行，单条 ≤512 字节）" style="width:100%;box-sizing:border-box"></textarea>
+    <div class="toolbar" style="margin-top:8px">
+      <button class="primary" id="addSave">保存内容库</button>
+      <span class="muted" id="addCount"></span>
+    </div>
+    <div class="hint" id="addAudit">审计链：加载中…</div>
+    <div class="hint">添加规则：只有「中继」（客户端直投本站）或「扩网转出」时按该凭据配置添加一条；F中继（别人转发来的消息）一律不添加，且要求已带附加内容或密封标记否则丢弃。全链每条消息最多一条附加内容；客户端方向携带附加内容一律丢弃。每次添加都写入哈希链审计（不可抵赖），链根每 5 分钟签名发布到 DHT（防回滚），WArmy 客户端 24h 内同一会话同一中继收到 ≥2 次附加内容即丢弃并临时禁用该中继站。</div>
+  </div>
   <div class="panel" id="configPanel">
     <h2>全局默认 <small>只影响“留空继承”的凭据</small></h2>
     <div class="grid">
@@ -381,6 +391,17 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
       <label class="f">总次数上限（次）<input id="fTotalReq" type="number" min="0" step="1" placeholder="继承全局"></label>
       <label class="f">总流量上限（MB）<input id="fTotal" type="number" min="0" step="1" placeholder="继承全局"></label>
       <label class="f">每年流量上限（MB）<input id="fYearly" type="number" min="0" step="1" placeholder="继承全局"></label>
+      <label class="f">附加内容（会话提示消息）模式
+        <select id="fAddition">
+          <option value="off">关闭（不加附加内容）</option>
+          <option value="random">随机</option>
+          <option value="sequence">按顺序循环</option>
+          <option value="weighted">按频率比例</option>
+        </select>
+      </label>
+      <label class="f">权重（可选，格式「序号:权重」逗号分隔，如 1:100,2:0；留空 = 全部等权；权重 0 = 不使用该条）
+        <input id="fAddWeights" placeholder="1:100,2:0,3:50">
+      </label>
     </div>
     <div class="row"><button class="ghost" data-close="credModal">取消</button><button class="primary" id="saveCred">保存</button></div>
   </div>
@@ -1177,6 +1198,11 @@ function openCredModal(c) {
   $('#fTotalReq').value = c && c.limits.totalRequests != null ? c.limits.totalRequests : '';
   $('#fTotal').value = c && c.limits.totalBytes != null ? mb(c.limits.totalBytes) : '';
   $('#fYearly').value = c && c.limits.yearlyBytes !== null ? mb(c.limits.yearlyBytes) : '';
+  const ad = c && c.addition ? c.addition : null;
+  $('#fAddition').value = ad && ad.mode !== 'off' ? ad.mode : 'off';
+  $('#fAddWeights').value = ad && ad.weights && Object.keys(ad.weights).length
+    ? Object.entries(ad.weights).filter(([, w]) => w > 0).map(([k, w]) => `${k}:${w}`).join(',')
+    : '';
   $('#credModal').classList.add('open');
   setTimeout(() => $('#fName').focus(), 30);
 }
@@ -1209,13 +1235,27 @@ async function saveCred() {
       port = Number(portRaw);
       if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('端点端口必须是 1–65535 的整数（不填默认 59599）');
     }
+    // R135g：附加内容配置（模式 + 权重表）
+    const addMode = $('#fAddition').value || 'off';
+    const weightsRaw = $('#fAddWeights').value.trim();
+    const weights = {};
+    if (weightsRaw !== '') {
+      for (const part of weightsRaw.split(/[,，;；\s]+/).filter(Boolean)) {
+        const [k, w] = part.split(':');
+        const idx = Math.floor(Number(k));
+        const wt = Number(w);
+        if (!Number.isInteger(idx) || idx < 1 || !Number.isFinite(wt) || wt < 0) throw new Error('权重格式应为「序号:权重」如 1:100,2:0');
+        weights[String(idx)] = Math.floor(wt);
+      }
+    }
+    const addition = { mode: addMode, weights };
     if (editing) {
-      await api('/api/admin/credential-update', { id: editing.id, name, limits, host, port });
+      await api('/api/admin/credential-update', { id: editing.id, name, limits, host, port, addition });
       toast('已保存');
       $('#credModal').classList.remove('open');
       await refresh();
     } else {
-      const r = await api('/api/admin/credentials', { name, limits, host, port });
+      const r = await api('/api/admin/credentials', { name, limits, host, port, addition });
       $('#newToken').textContent = r.token;
       $('#newTokenEp').textContent = host
         ? `服务器端点：${host}:${port || 59599}（请填进 WArmy 的服务器地址；端口不填时默认 59599）`
@@ -1226,7 +1266,43 @@ async function saveCred() {
     }
   } catch (e) { toast(e.message, true); }
 }
+/* ── R135g 附加内容（会话提示消息）：内容库 + 审计检查点 ── */
+let ADD = null;
+async function loadAddition() {
+  try {
+    ADD = await api('/api/admin/addition-config');
+    $('#addTexts').value = (ADD.texts || []).join('\n');
+    $('#addCount').textContent = `${(ADD.texts || []).length} / ${ADD.max} 条`;
+    await refreshAdditionAudit();
+  } catch (e) { toast('附加内容读取失败：' + e.message, true); }
+}
+async function refreshAdditionAudit() {
+  try {
+    const a = await api('/api/admin/addition-audit');
+    $('#addAudit').innerHTML = `审计链：${a.count} 条 · 链头 <code>${esc((a.head || '').slice(0, 16))}…</code> · 上次签名检查点 ${a.lastSignedAt ? fmtTime(a.lastSignedAt) : '—'}（每 5 分钟自动发布到 DHT；改造站删除/替换附加内容会留下可对照证据） <button class="sm" id="addAuditPub">立即发布检查点</button> <button class="sm" id="addAuditRefresh">刷新</button>`;
+    const pb = $('#addAuditPub');
+    if (pb) pb.addEventListener('click', async () => {
+      try {
+        const r = await api('/api/admin/addition-audit-publish', {});
+        toast(r.publish && r.publish.ok ? '检查点已发布到 DHT（防回滚签名记录）' : '发布失败：' + (r.publish && r.publish.error), !(r.publish && r.publish.ok));
+        await refreshAdditionAudit();
+      } catch (e) { toast(e.message, true); }
+    });
+    const rb = $('#addAuditRefresh');
+    if (rb) rb.addEventListener('click', () => void refreshAdditionAudit());
+  } catch (e) { /* 审计状态读取失败不打扰 */ }
+}
+$('#addSave').addEventListener('click', async () => {
+  const lines = $('#addTexts').value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+  try {
+    const j = await api('/api/admin/addition-config', { texts: lines });
+    $('#addCount').textContent = `${j.texts.length} / ${j.max} 条`;
+    toast(`内容库已保存：${j.texts.length} 条（非法条目已过滤：HTML 字符/换行/超长/重复）`);
+    await refreshAdditionAudit();
+  } catch (e) { toast(e.message, true); }
+});
 async function toggleCred(c) {
+
   try {
     await api('/api/admin/credential-update', { id: c.id, disabled: !c.disabled });
     toast(c.disabled ? '已启用' : '已停用');
@@ -1634,6 +1710,7 @@ $('#credModal').addEventListener('click', (ev) => { if (ev.target === $('#credMo
 $('#tokenModal').addEventListener('click', (ev) => { if (ev.target === $('#tokenModal')) $('#tokenModal').classList.remove('open'); });
 
 refresh().then(loadFirstRun);
+loadAddition(); // R135g：附加内容库 + 审计状态（一次性加载，避免覆盖编辑中的 textarea）
 setInterval(() => { refresh(); if (activeTab === 'logs') loadLogs(); if (activeTab === 'expand' || activeTab === 'frelay') loadExpand(); if (activeTab === 'dht') loadDht(); if (activeTab === 'ports') loadPorts(); }, 5000);
 </script>
 </html>
