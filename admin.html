@@ -266,14 +266,13 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
   <div class="panel">
     <h2>DHT 发现 <small>默认强制开启 · 只做设备发现，消息仍走凭据通道</small></h2>
     <div class="cards" id="dhtCards"></div>
-    <div class="grid">
-      <label class="f">对外地址（域名IP:端口，验证通过才宣告；自动兜底 = 公网 IPv4/IPv6 × 443/62666，最多 4 条，不可修改/删除，只能暂停）
-        <span style="display:flex;gap:6px;width:100%">
-          <input id="dhtAdvNew" placeholder="relay.example.com:58588 或 1.2.3.4:59599" style="flex:1">
-          <button class="sm" id="dhtAdvAdd">添加</button>
-        </span>
-        <span id="dhtAdvList" style="margin-top:6px;display:block"></span>
-      </label>
+    <div class="hint" style="margin:10px 0 6px">对外地址（域名IP:端口，验证通过才宣告；自动兜底 = 公网 IPv4/IPv6 × 443/62666，最多 4 条，不可修改/删除，只能暂停）</div>
+    <div style="display:flex;gap:6px;margin-bottom:6px">
+      <input id="dhtAdvNew" placeholder="relay.example.com:58588 或 1.2.3.4:59599" style="flex:1">
+      <button class="sm" id="dhtAdvAdd">添加</button>
+    </div>
+    <div id="dhtAdvList"></div>
+    <div class="grid" style="margin-top:12px">
       <label class="f">默认锚点（自动生效，与 WArmy 对齐）<span id="dhtAnchorDef" class="hint" style="display:block;margin-top:4px"></span></label>
       <label class="f">手动锚点（或入网端点）
         <span style="display:flex;gap:6px;width:100%">
@@ -936,18 +935,13 @@ function renderDht() {
   const d = D;
   const st = d.running ? '运行中' : '启动失败';
   const lastPub = d.lastPublishAt ? fmtTime(d.lastPublishAt) : '—';
-  const adv = d.advertised || {};
-  const udpText = (d.udps || []).map((u) => `${u.port}`).join('、') || (d.udp ? String(d.udp.port) : '—');
   $('#dhtCards').innerHTML = [
     ['节点', st, 'DHT 发现层强制开启，不可关闭'],
-    ['生效对外地址', `${esc(adv.host)}:${adv.port}`, adv.source === 'manual' ? '手动地址（验证有效）' : '自动兜底（手动全部失效/暂停时启用）'],
     ['指纹', d.fingerprint ? d.fingerprint.slice(0, 20) + '…' : '—', 'base32(sha256(公钥))，52 位'],
     ['节点 ID', d.nodeIdHex ? d.nodeIdHex.slice(0, 20) + '…' : '—', '由指纹派生（sha256）'],
-    ['UDP 监听', udpText, '默认 443、62666，可在「端口」页暂停/添加（暂停保留配置）'],
     ['对端数', String(d.contacts || 0), '路由表 contacts'],
     ['上次发布', lastPub, d.lastPublishSeq ? 'seq ' + d.lastPublishSeq + ' · 命中 ' + (d.lastStoredOn || []).length + ' 个节点' : '尚未发布'],
     ['引导', d.lastYindao ? (d.lastYindao.detail || `成功 ${d.lastYindao.ok} / 失败 ${d.lastYindao.failed}`) : '尚未引导', d.lastYindao ? fmtTime(d.lastYindao.at) : ''],
-    ['发布次数', String(d.selfPublishes || 0), '本站记录 + 客户端定位记录'],
   ].map(([k, v, s]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join('');
   const addrs = d.addresses || [];
   const portStates = new Map((P && P.items || []).map((it) => [it.port, it]));
