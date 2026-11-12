@@ -4027,6 +4027,12 @@ export async function startServer(options = {}) {
   const httpsSrv = tlsInfo
     ? https.createServer({ key: tlsInfo.keyPem, cert: tlsInfo.certPem, minVersion: 'TLSv1.2' }, requestListener)
     : null;
+  // R135f：keep-alive 超时调大（Node 默认 5s 与管理页 5s 轮询撞车 → 连接刚被关闭就被复用 → ECONNRESET → 管理页「端口读取失败: Failed to fetch」）
+  for (const s of [httpSrv, httpsSrv]) {
+    if (!s) continue;
+    s.keepAliveTimeout = 30_000;
+    s.headersTimeout = 31_000;
+  }
   /**
    * 同一端口按首字节分流（0x16=TLS），这样管理页/旧客户端仍能走回环 HTTP，
    * 而公网来源的明文会在请求层被 426 拒绝。注意 resume 必须放到 nextTick，

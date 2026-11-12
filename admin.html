@@ -476,12 +476,22 @@ function toast(msg, err) {
   clearTimeout(toast._t);
   toast._t = setTimeout(() => { t.className = 'toast'; }, 3200);
 }
-async function api(path, body) {
-  const r = await fetch(path, {
-    method: body === undefined ? 'GET' : 'POST',
-    headers: body === undefined ? {} : { 'content-type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+async function api(path, body, _retried) {
+  let r;
+  try {
+    r = await fetch(path, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: body === undefined ? {} : { 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (e) {
+    // R135f：网络抖动/keep-alive 竞态（服务器刚关闭空闲连接被复用）时自动重试一次
+    if (!_retried) {
+      await new Promise((res) => setTimeout(res, 150));
+      return api(path, body, true);
+    }
+    throw e;
+  }
   let j;
   try { j = await r.json(); } catch { throw new Error('服务器返回了非 JSON（HTTP ' + r.status + '）'); }
   if (!j || j.ok !== true) throw new Error((j && j.error) || ('HTTP ' + r.status));
