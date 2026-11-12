@@ -594,7 +594,6 @@ function loadDemoView() {
 }
 // R135m：静态预览演示数据——调用在文件最末尾执行（let P/D/E 等声明之后，避免 TDZ）
 function toast(msg, err) {
-  if (STATIC_MODE) return; // 静态预览不弹提示（无服务器可连）
   const t = $('#toast');
   t.textContent = msg;
   t.className = 'toast show' + (err ? ' err' : '');
@@ -610,6 +609,8 @@ async function api(path, body, _retried) {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (e) {
+    // R135n：静态预览模式（未运行程序）下任何操作给出明确提示，而不是静默失败
+    if (STATIC_MODE) throw new Error('静态预览模式：未连接服务器，此操作需运行程序');
     // R135f：网络抖动/keep-alive 竞态（服务器刚关闭空闲连接被复用）时自动重试一次
     if (!_retried) {
       await new Promise((res) => setTimeout(res, 150));
