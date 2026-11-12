@@ -982,7 +982,7 @@ function renderDht() {
   ].map(([k, v, s]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join('');
   const addrs = d.addresses || [];
   const portStates = new Map((P && P.items || []).map((it) => [it.port, it]));
-  $('#dhtAdvNew').value = '';
+  // R135h：不再在渲染时清空输入框（5 秒轮询会把用户正在输入的内容清掉）；添加成功后由 dhtAdvNow/dhtAnchorAdd 清空
   $('#dhtAdvList').innerHTML = '<div class="tablewrap"><table>' +
     '<tr><th>地址</th><th>类型</th><th>状态</th><th>端口监听</th><th>操作</th></tr>' +
     (addrs.map((a) => {
@@ -1015,7 +1015,6 @@ function renderDht() {
   $('#dhtAnchorDef').innerHTML = (d.defaultAnchors || []).length
     ? (d.defaultAnchors || []).map((a) => `<span style="display:inline-block;margin:2px 8px 2px 0"><code>${esc(a.host)}:${a.port}</code></span>`).join('')
     : '<span class="muted">（无）</span>';
-  $('#dhtAnchorNew').value = '';
   $('#dhtAnchorList').innerHTML = (d.anchors || []).length
     ? (d.anchors || []).map((a) => `<span style="display:inline-flex;align-items:center;gap:6px;margin:2px 8px 2px 0"><code>${esc(a.host)}:${a.port}</code><button class="sm danger" data-dht-del-anchor="${esc(a.host + ':' + a.port)}">×</button></span>`).join('')
     : '<span class="muted">（无手动锚点）</span>';
@@ -1045,6 +1044,7 @@ async function dhtAdvNow() {
     list.push(v);
     const j = await api('/api/admin/dht-config', { addresses: list });
     D = j.dht; renderDht();
+    $('#dhtAdvNew').value = ''; // R135h：添加成功后才清空输入框
     toast('对外地址已添加，等待验证');
   } catch (e) { toast(e.message, true); }
 }
@@ -1109,9 +1109,10 @@ async function genInbound() {
     $('#exInToken').textContent = r.token || '';
     $('#exInTokenBox').hidden = false;
     const warn = $('#exInPortWarn');
-    if (chosen !== (E && E.port)) {
+    const lpNow = (E && E.listeningPorts || []).map(Number);
+    if (!lpNow.includes(chosen)) { // R135h：仅当所选端口不在本机监听集合时才警告（之前误用 E.port=主端口 导致 58588 永远误报）
       warn.hidden = false;
-      warn.innerHTML = `⚠ 端口 <code>${esc(chosen)}</code> 不在本机监听端口集合（${esc((E && E.listeningPorts || []).join('、') || '无')}，可能被占用）。对方连 ${chosen} 连不到本机——此凭据已被强制禁止。请在<a href="#" data-goto="ports">端口</a>页启用该端口（被占可强制启用）或改用已监听端口重新生成。`;
+      warn.innerHTML = `⚠ 端口 <code>${esc(chosen)}</code> 不在本机监听端口集合（${esc(lpNow.join('、') || '无')}，可能被占用）。对方连 ${chosen} 连不到本机——此凭据已被强制禁止。请在<a href="#" data-goto="ports">端口</a>页启用该端口（被占可强制启用）或改用已监听端口重新生成。`;
     } else {
       warn.hidden = true;
     }
@@ -1186,7 +1187,14 @@ $('#inCredModal').addEventListener('click', (ev) => { if (ev.target === $('#inCr
 function openCredModal(c) {
   editing = c || null;
   $('#credModalTitle').textContent = c ? '编辑凭据' : '新建凭据';
-  $('#fName').value = c ? c.name : '';
+  if (c) {
+    $('#fName').value = c.name;
+  } else {
+    // R135h：默认名称，可直接保存生成（避免「请填写名称」卡住快速生成流程）
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    $('#fName').value = `中继-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+  }
   $('#fHost').value = c && c.endpoint ? c.endpoint.host : ((S && S.publicIp && (S.publicIp.ipv4 || S.publicIp.ipv6)) || '');
   $('#fPort').value = c && c.endpoint ? String(c.endpoint.port) : '';
   $('#fRate').value = c && c.limits.ratePerMin !== null ? c.limits.ratePerMin : '';
@@ -1531,6 +1539,7 @@ $('#dhtAnchorAdd').addEventListener('click', async () => {
     list.push(v);
     const j = await api('/api/admin/dht-config', { anchors: list });
     D = j.dht; renderDht();
+    $('#dhtAnchorNew').value = ''; // R135h：添加成功后才清空输入框
     toast('锚点已添加并生效');
   } catch (e) { toast(e.message, true); }
 });

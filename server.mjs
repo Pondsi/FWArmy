@@ -1936,6 +1936,29 @@ export async function startServer(options = {}) {
   function anyActiveExternalAddr() {
     return addrStates.some((a) => (a.manual ? a.enabled && a.valid : a.enabled));
   }
+  /** R135h：对外地址预检——host 必须指向本机（本机网卡 IP / 探测公网 IP / 回环），域名须解析到其中；否则该地址宣告出去对方连不到本机。 */
+  function hostPointsToSelf(host) {
+    const mine = new Set();
+    for (const a of localAddresses()) {
+      const ad = String(a.address || '');
+      if (ad && !ad.includes('%')) mine.add(ad.toLowerCase());
+    }
+    if (lastPub && lastPub.ipv4) mine.add(lastPub.ipv4.toLowerCase());
+    if (lastPub && lastPub.ipv6) mine.add(lastPub.ipv6.toLowerCase());
+    const selfIp = (h) => /^127\./.test(h) || h === '::1' || mine.has(h.toLowerCase());
+    return new Promise((resolve) => {
+      if (net.isIP(host)) {
+        const h = String(host).toLowerCase();
+        return resolve({ ok: selfIp(h), reason: selfIp(h) ? '' : 'not-self', ips: [host], mine: [...mine] });
+      }
+      dns.lookup(host, { all: true }, (err, addrs) => {
+        if (err || !Array.isArray(addrs) || !addrs.length) return resolve({ ok: false, reason: 'dns-empty', ips: [], mine: [...mine] });
+        const ips = addrs.map((x) => x.address);
+        const ok = ips.some((x) => selfIp(x));
+        resolve({ ok, reason: ok ? '' : 'not-self', ips, mine: [...mine] });
+      });
+    });
+  }
   syncAddrStates();
   /** 生效的对外地址：第一个启用且验证通过的手动条目；否则第一个启用的自动兜底。 */
   function activeExternalAddr() {
@@ -3708,6 +3731,20 @@ export async function startServer(options = {}) {
         j.pausedAuto = norm;
       }
       const next = normDhtCfg({ ...cfg.dht, ...j });
+      // R135h：对外地址预检——域名解析或 IP 必须指向本机（本机网卡/探测公网 IP/回环），否则拒绝添加（宣告出去对方连不到本机）
+      if (j.addresses !== undefined) {
+        const list = Array.isArray(j.addresses) ? j.addresses : [];
+        for (const a of list) {
+          const host = String(a && a.host || '').trim();
+          if (!host) continue;
+          const chk = await hostPointsToSelf(host);
+          if (!chk.ok) {
+            const why = chk.reason === 'dns-empty' ? '域名无法解析'
+              : `解析到 ${chk.ips.join('、')}，而本机是 ${chk.mine.join('、') || '（未探测到公网 IP）'}`;
+            return send(res, 400, { ok: false, error: 'bad-address', hint: `${host}：${why}——对外地址必须是本机的公网 IP 或解析指向本机的域名（解析指向本机才能被对方连到）` });
+          }
+        }
+      }
       if (j.anchors !== undefined) {
         const list = Array.isArray(j.anchors) ? j.anchors : String(j.anchors || '').split(/[\r\n,]+/);
         next.anchors = guiFanAnChors(list);
