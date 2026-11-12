@@ -11,6 +11,9 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:14px/1.
 body{padding:20px 20px 48px}
 .wrap{max-width:1240px;margin:0 auto}
 header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px}
+/* R135l：右侧区（公网 IP / 帮助 / 电源按钮）固定为一组——按钮始终在右侧最后，停止/运行不改变位置 */
+.hright{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+#powerBtn{min-width:96px}
 .brand{display:flex;align-items:center;gap:10px}
 .brand img{width:40px;height:40px;object-fit:contain}
 .brand b{font-size:24px;letter-spacing:.5px}
@@ -89,15 +92,17 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
 </style>
 <div class="wrap">
 <header>
-  <div class="brand"><img src="/assets/logo.svg" alt="FWArmy logo"><b>FWArmy</b><span>WArmy专属服务器</span></div>
-  <div class="pubip" id="pubIpBar" title="本机探测到的公网 IP（IPv6 优先）。点击重新探测">
-    <span class="ico" id="pubIpIco">⟳</span>
-    <span id="pubIpText">公网 IP：检测中…</span>
+  <div class="brand"><img src="assets/logo.svg" alt="FWArmy logo"><b>FWArmy</b><span>WArmy专属服务器</span></div>
+  <div class="hright">
+    <div class="pubip" id="pubIpBar" title="本机探测到的公网 IP（IPv6 优先）。点击重新探测">
+      <span class="ico" id="pubIpIco">⟳</span>
+      <span id="pubIpText">公网 IP：检测中…</span>
+    </div>
+    <div class="pubip" style="gap:6px" id="helpBar">
+      <button class="sm" id="helpBtn" title="打开使用说明帮助文档（本地新窗口，含全部功能与常见问题）">帮助 / 说明</button>
+    </div>
+    <div class="pills"><div class="pills" id="pills"></div><button id="powerBtn" class="good" disabled>加载状态…</button></div>
   </div>
-  <div class="pubip" style="gap:6px" id="helpBar">
-    <button class="sm" id="helpBtn" title="打开使用说明帮助文档（本地新窗口，含全部功能与常见问题）">帮助 / 说明</button>
-  </div>
-  <div class="pills"><div class="pills" id="pills"></div><button id="powerBtn" class="good" disabled>加载状态…</button></div>
 </header>
 
 <div id="firstRun" class="banner" hidden>
@@ -526,7 +531,10 @@ const fromMb = (v) => {
   if (!Number.isFinite(n) || n < 0) throw new Error('请输入 ≥ 0 的数字');
   return n === 0 ? 0 : Math.round(n * 1048576);
 };
+// R135l：静态预览模式（file:// 直接打开界面，不运行程序）——界面/气泡/帮助文档可验收，提示静默
+const STATIC_MODE = location.protocol === 'file:';
 function toast(msg, err) {
+  if (STATIC_MODE) return; // 静态预览不弹提示（无服务器可连）
   const t = $('#toast');
   t.textContent = msg;
   t.className = 'toast show' + (err ? ' err' : '');
@@ -736,13 +744,19 @@ async function refreshPublicIp(animate) {
   }
 }
 $('#pubIpBar').addEventListener('click', () => refreshPublicIp(true));
-// R135k：帮助文档——服务器导出到数据目录并用系统命令打开（file:// 本地路径，程序自行识别，浏览器跨协议弹窗会被拦截）
+// R135k/l：帮助文档——服务器导出到数据目录并用系统命令打开（file:// 本地路径，程序自行识别）；未连接服务器（静态预览）时直接打开同目录 help.html
 $('#helpBtn').addEventListener('click', async () => {
   try {
     const j = await api('/api/admin/help-open', {});
     if (j.opened) toast('帮助文档已在浏览器新窗口打开');
     else toast('帮助文档已导出：' + j.file + '（系统打开失败，请手动用浏览器打开该路径）', true);
-  } catch (e) { toast('帮助文档打开失败：' + e.message, true); }
+  } catch {
+    try {
+      const u = new URL('help.html', location.href);
+      window.open(u.href, '_blank');
+      toast('已打开帮助文档（静态预览模式，未连接服务器）');
+    } catch { toast('帮助文档打开失败', true); }
+  }
 });
 async function refresh() {
   if (refreshInFlight) return;
@@ -1765,6 +1779,6 @@ $('#tokenModal').addEventListener('click', (ev) => { if (ev.target === $('#token
 
 refresh().then(loadFirstRun);
 loadAddition(); // R135g：附加内容库 + 审计状态（一次性加载，避免覆盖编辑中的 textarea）
-setInterval(() => { refresh(); if (activeTab === 'logs') loadLogs(); if (activeTab === 'expand' || activeTab === 'frelay') loadExpand(); if (activeTab === 'dht') loadDht(); if (activeTab === 'ports') loadPorts(); }, 5000);
+if (!STATIC_MODE) setInterval(() => { refresh(); if (activeTab === 'logs') loadLogs(); if (activeTab === 'expand' || activeTab === 'frelay') loadExpand(); if (activeTab === 'dht') loadDht(); if (activeTab === 'ports') loadPorts(); }, 5000);
 </script>
 </html>
