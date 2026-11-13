@@ -84,7 +84,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.6.8';
+export const VERSION = '0.6.9';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -2056,14 +2056,66 @@ export async function startServer(options = {}) {
   }
   const addrCheckTimer = setInterval(() => { void addrSelfHeal(); }, MANUAL_ADDR_CHECK_MS);
   addrCheckTimer.unref();
+  const udpRetryTimers = new Map(); // R135z：启动瞬间绑定失败（Windows UDP 释放延迟）→ 延迟自动补绑
   async function dhtStop() {
     const list = dhtNodes;
     dhtNodes = [];
+    for (const [port, t] of udpRetryTimers) { clearTimeout(t); log('INFO', `[dht] 取消端口 ${port} 的延迟补绑`); }
+    udpRetryTimers.clear();
     for (const n of list) { try { await n.stop(); } catch { /* noop */ } }
     log('INFO', '[dht] 节点已停止');
     return { ok: true };
   }
   /** 启动 DHT 节点（R133）：cfg.dht.udpPorts（默认 443、62666）各一个节点，同一身份；端口占用即失败。 */
+  async function bindUdpNode(udpPort) {
+    const rawPub = Buffer.from(String(expand.identity.pub || ''), 'base64');
+    const adv = activeExternalAddr();
+    const node = new DhtJieDian({
+      zhiWen: dhtZhiWen,
+      publicKeyRaw: rawPub,
+      sign: (msg) => crypto.sign(null, msg, identityKey),
+      nodeId: expand.instanceId,
+      host: '::', // udp6 双栈：IPv6 直连支持
+      advertiseHost: adv.host,
+      port: 0,
+      tcpPort: adv.port, // 宣告的业务端口 = 生效对外地址的端口
+      groupKeys: [PUBLIC_DISCOVERY_KEY()],
+      onEvent: (e) => {
+        if (e.type === 'error') log('WARN', `[dht] ${e.detail || ''}`);
+        else log('INFO', `[dht] ${e.type}${e.detail ? ' ' + e.detail : ''}`);
+      },
+    });
+    let bound = null;
+    for (let attempt = 1; attempt <= 5 && !bound; attempt++) {
+      try { bound = await node.start({ port: udpPort }); }
+      catch (e) {
+        // R135h/z：Windows UDP 端口释放延迟/瞬时占用——退避重试（400/800/1600/3200ms），5 次仍失败才放弃
+        if (attempt === 5) {
+          dhtState.lastError = `UDP 端口 ${udpPort} 绑定失败：` + String((e && e.message) || e).slice(0, 200);
+          log('ERROR', '[dht] ' + dhtState.lastError);
+        } else await sleep(400 * attempt);
+      }
+    }
+    return bound ? node : null;
+  }
+  function scheduleUdpRetry(udpPort, n = 1) {
+    if (n > 3) return; // 10s / 30s / 60s 三次自动补绑，仍失败就等用户处理（端口页会显示异常）
+    if (udpRetryTimers.has(udpPort)) return;
+    const t = setTimeout(async () => {
+      udpRetryTimers.delete(udpPort);
+      if (!cfg.dht.enabled || cfg.dht.pausedUdpPorts.includes(udpPort)) return;
+      try {
+        const node = await bindUdpNode(udpPort);
+        if (node) {
+          dhtNodes.push(node);
+          dhtState.lastError = '';
+          log('INFO', `[dht] 端口 ${udpPort} 延迟绑定成功（自动恢复）`);
+        } else scheduleUdpRetry(udpPort, n + 1);
+      } catch { scheduleUdpRetry(udpPort, n + 1); }
+    }, 10_000 * n);
+    t.unref?.();
+    udpRetryTimers.set(udpPort, t);
+  }
   async function dhtStart() {
     if (dhtNodes.length) await dhtStop();
     if (!cfg.dht.enabled) { dhtState.lastError = ''; return { ok: false, error: 'disabled' }; }
@@ -2075,39 +2127,16 @@ export async function startServer(options = {}) {
       return { ok: false, error: dhtState.lastError };
     }
     dhtZhiWen = warmyZhiWen(rawPub);
-    const adv = activeExternalAddr();
     const list = [];
     for (const udpPort of cfg.dht.udpPorts) {
       if (cfg.dht.pausedUdpPorts.includes(udpPort)) continue; // R135：暂停的 UDP 端口不启动监听（配置保留）
-      const node = new DhtJieDian({
-        zhiWen: dhtZhiWen,
-        publicKeyRaw: rawPub,
-        sign: (msg) => crypto.sign(null, msg, identityKey),
-        nodeId: expand.instanceId,
-        host: '::', // udp6 双栈：IPv6 直连支持
-        advertiseHost: adv.host,
-        port: 0,
-        tcpPort: adv.port, // 宣告的业务端口 = 生效对外地址的端口
-        groupKeys: [PUBLIC_DISCOVERY_KEY()],
-        onEvent: (e) => {
-          if (e.type === 'error') log('WARN', `[dht] ${e.detail || ''}`);
-          else log('INFO', `[dht] ${e.type}${e.detail ? ' ' + e.detail : ''}`);
-        },
-      });
-      let bound = null;
-      for (let attempt = 1; attempt <= 3 && !bound; attempt++) {
-        try { bound = await node.start({ port: udpPort }); }
-        catch (e) {
-          // R135h：绑定失败自动重试（Windows UDP 端口释放延迟/瞬时占用），3 次后仍失败才放弃
-          if (attempt === 3) {
-            dhtState.lastError = `UDP 端口 ${udpPort} 绑定失败：` + String((e && e.message) || e).slice(0, 200);
-            log('ERROR', '[dht] ' + dhtState.lastError);
-          } else await sleep(400);
-        }
+      const node = await bindUdpNode(udpPort);
+      if (!node) {
+        scheduleUdpRetry(udpPort); // R135z：启动瞬间绑定失败自动补绑，无需手动点
+        continue;
       }
-      if (!bound) continue; // 一个失败不拖垮其它
       list.push(node);
-      log('INFO', `[dht] 节点已启动 udp=${bound.host}:${bound.port} 指纹=${dhtZhiWen.slice(0, 16)}… 锚点=${yindaoSeeds().length}`);
+      log('INFO', `[dht] 节点已启动 udp=${node.address ? node.address.host + ':' + node.address.port : udpPort} 指纹=${dhtZhiWen.slice(0, 16)}… 锚点=${yindaoSeeds().length}`);
     }
     if (!list.length) return { ok: false, error: dhtState.lastError };
     dhtNodes = list;
