@@ -70,8 +70,10 @@ const seaConfig = {
   disableExperimentalSEAWarning: true,
   useSnapshot: false,
   useCodeCache: false,
-  assets: { 'admin.html': 'admin.html', 'logo.svg': 'assets/logo.svg' },
+  assets: { 'admin.html': 'admin.html', 'logo.svg': 'assets/logo.svg', 'help.html': 'help.html' },
 };
+// R135y：Windows 托盘模式——GUI 子系统（双击/start 无控制台窗口，托盘图标由 fwarmy-tray.ps1 提供；stdout 在管道重定向下仍可用）
+if (process.platform === 'win32') seaConfig.windowsSubsystem = 'windows';
 fs.writeFileSync(path.join(BUILD, 'sea-config.json'), JSON.stringify(seaConfig, null, 2));
 run(process.execPath, ['--experimental-sea-config', path.join(BUILD, 'sea-config.json')]);
 const blobPath = path.join(ROOT, seaConfig.output);
@@ -90,11 +92,32 @@ npx(POSTJECT, postArgs);
 if (process.platform === 'darwin') run('codesign', ['--sign', '-', outExe]);
 if (process.platform !== 'win32') fs.chmodSync(outExe, 0o755);
 
+if (process.platform === 'win32') {
+  console.log('[3.5/5] 注入 logo 图标（resedit；缺依赖则跳过）');
+  try {
+    const { NtExecutable, NtExecutableResource, Data, Resource } = require('resedit');
+    const icoPath = path.join(ROOT, 'assets', 'fwarmy.ico');
+    if (fs.existsSync(icoPath)) {
+      const data = fs.readFileSync(outExe);
+      const exe = NtExecutable.from(data, { ignoreCert: true });
+      const res = NtExecutableResource.from(exe);
+      for (const e of [...res.entries]) if (e.type === 3 || e.type === 14) res.removeResourceEntry(e.type, e.id);
+      const iconFile = Data.IconFile.from(fs.readFileSync(icoPath));
+      Resource.IconGroupEntry.replaceIconsForResource(res.entries, 1, 0, iconFile.icons.map((it) => it.data));
+      res.outputResource(exe);
+      fs.writeFileSync(outExe, Buffer.from(exe.generate()));
+      console.log('图标注入完成（assets/fwarmy.ico，' + iconFile.icons.length + ' 个尺寸）');
+    }
+  } catch (e) {
+    console.log('警告：图标注入跳过（' + String((e && e.message) || e).slice(0, 120) + '）——npm i resedit 后自动启用');
+  }
+}
+
 console.log('[4/5] 组装便携目录（启动脚本/说明/文档）');
 const common = ['admin.html', 'README.md', 'install.ps1', 'install.sh', 'FWArmy.command', 'FWArmy.desktop'];
 const docsList = ['docs/INSTALL-3-PLATFORMS.md', 'docs/USAGE-3-PLATFORMS.md', 'docs/SERVER-RELAY.md', 'docs/RELEASE-SOP.md'];
 const perPlatform = process.platform === 'win32'
-  ? ['start.bat', 'stop.bat', 'fwarmy-headless.bat', 'fwarmy-console.bat']
+  ? ['start.bat', 'stop.bat', 'fwarmy-headless.bat', 'fwarmy-console.bat', 'fwarmy-tray.ps1']
   : ['start.sh', 'stop.sh', 'fwarmy-headless.sh', 'fwarmy-console.sh',
     ...(process.platform === 'darwin' ? ['FWArmy.command'] : ['FWArmy.desktop'])];
 for (const f of [...common, ...docsList, ...perPlatform]) {
@@ -109,6 +132,28 @@ const logoSrc = path.join(ROOT, 'assets', 'logo.svg');
 if (fs.existsSync(logoSrc)) {
   fs.mkdirSync(path.join(OUT, 'assets'), { recursive: true });
   fs.copyFileSync(logoSrc, path.join(OUT, 'assets', 'logo.svg'));
+}
+const icoSrc = path.join(ROOT, 'assets', 'fwarmy.ico');
+if (fs.existsSync(icoSrc)) {
+  fs.mkdirSync(path.join(OUT, 'assets'), { recursive: true });
+  fs.copyFileSync(icoSrc, path.join(OUT, 'assets', 'fwarmy.ico'));
+}
+// R132：把解压后的文件夹图标设为 logo（Windows 要求 desktop.ini 带 hidden+system 属性，脚本一次性完成）
+if (process.platform === 'win32') {
+  const sfib = [
+    '@echo off',
+    'rem 把当前文件夹图标设为 FWArmy logo（Windows 要求 desktop.ini 带 hidden+system 属性，本脚本一次性完成）',
+    'setlocal',
+    'set "DIR=%~dp0"',
+    '> "%DIR%desktop.ini" echo [.ShellClassInfo]',
+    '>>"%DIR%desktop.ini" echo IconResource=%DIR%assets\\fwarmy.ico,0',
+    'attrib +s +h "%DIR%desktop.ini"',
+    'attrib +s "%DIR%"',
+    'echo 完成：文件夹图标已设为 FWArmy logo（刷新资源管理器查看）',
+    'pause',
+    '',
+  ].join('\r\n');
+  fs.writeFileSync(path.join(OUT, 'set-folder-icon.bat'), sfib, 'utf8');
 }
 const info = [
   '# BUILD-INFO 由 build-sea.mjs 在构建单文件时生成/更新；请勿手改数值。',

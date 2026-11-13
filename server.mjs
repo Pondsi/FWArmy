@@ -84,7 +84,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.6.6';
+export const VERSION = '0.6.7';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -674,7 +674,7 @@ function localAddresses() {
  * 解析命令行。单文件 SEA 的 process.argv 会把 exe 路径重复一次，调用方统一传“真正的参数”。
  */
 export function parseArgs(argv = []) {
-  const o = { port: 8787, host: '0.0.0.0', open: null, data: '', quiet: false, logFile: '', portExplicit: false };
+  const o = { port: 8787, host: '0.0.0.0', open: null, data: '', quiet: false, logFile: '', portExplicit: false, noTray: false };
   for (const a of argv) {
     if (a.startsWith('--port=')) { o.port = Number(a.slice(7)); o.portExplicit = true; }
     else if (a.startsWith('--host=')) o.host = a.slice(7) || '0.0.0.0';
@@ -683,6 +683,7 @@ export function parseArgs(argv = []) {
     else if (a === '--open') o.open = true;
     else if (a === '--no-open' || a === '--headless') o.open = false;
     else if (a === '--quiet') o.quiet = true;
+    else if (a === '--no-tray') o.noTray = true; // R135y：禁用系统托盘（无桌面/CI/服务场景）
   }
   if (!Number.isFinite(o.port) || o.port < 1 || o.port > 65535) o.port = 8787;
   return o;
@@ -3393,6 +3394,7 @@ export async function startServer(options = {}) {
     }
     const args = ['--server', `--port=${actualPort || opt.port}`, `--host=${opt.host}`, `--data=${DATA}`, '--no-open'];
     if (opt.quiet) args.push('--quiet');
+    if (opt.noTray) args.push('--no-tray'); // R135y：更新重启保留托盘开关
     if (opt.logFile) args.push(`--log-file=${opt.logFile}`);
     const old = `${current}.old-${Date.now()}`;
     log('INFO', `更新：关闭服务并重启以应用 ${upd.latest ? upd.latest.version : '新版本'}`);
@@ -4490,6 +4492,8 @@ export async function startServer(options = {}) {
   log('INFO', `[fwarmy] ${PRODUCT} ${VERSION} 已启动 ${scheme}://${opt.host}:${port}  管理页 ${adminUrl}（本机直接打开，无需密钥）`);
   log('INFO', `[fwarmy] 数据目录 ${DATA}；只存凭据哈希/配置/统计/消息ID哈希，不存消息；队列 TTL ${TTL_MS / 1000}s`);
   if (firstRunPending()) log('INFO', '[fwarmy] 首次启动凭据待保存：打开管理页查看（不会写进日志）');
+  // R135y：Windows 系统托盘（logo 图标 / 双击开管理页 / 右键退出）；--no-tray 或非交互会话禁用
+  if (process.platform === 'win32' && !opt.noTray) setTimeout(() => startTray(port), 1200);
   /** 上一版更新留下的 .old/.new：新进程稳定后清掉；Windows 上旧进程退出前文件仍被锁，失败就下次再清。 */
   if (IS_SEA) {
     setTimeout(() => {
@@ -4528,6 +4532,18 @@ export async function startServer(options = {}) {
     const child = spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true });
     child.on('error', () => { /* Linux 没有 xdg-open 时不要因为未处理的 error 崩服务 */ });
     child.unref();
+    return child;
+  }
+  /** R135y：启动系统托盘（fwarmy-tray.ps1，与 exe 同目录分发）；失败只记日志不影响服务。 */
+  function startTray(entryPort) {
+    try {
+      const trayPath = path.join(HERE, 'fwarmy-tray.ps1');
+      if (!fs.existsSync(trayPath)) return;
+      spawnDetached('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', trayPath, '-Port', String(entryPort), '-Pid', String(process.pid), '-Data', DATA]);
+      log('INFO', `[fwarmy] 系统托盘已启动（管理页 http://127.0.0.1:${entryPort}/）`);
+    } catch (e) {
+      log('WARN', '托盘启动失败：' + String((e && e.message) || e).slice(0, 120));
+    }
   }
   /** 第二个实例只打开管理页就退出；先关掉日志流，否则 Windows 上可能一直挂着。 */
   function finishAlreadyRunning(url) {
