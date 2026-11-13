@@ -84,7 +84,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.6.4';
+export const VERSION = '0.6.5';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -119,8 +119,8 @@ const EXPAND_DEFAULT_PORT = 58588;
 const CRED_DEFAULT_PORT = 59599;
 /** 默认业务监听端口列表（R134：管理入口 8787 + 中继 59599 + 扩网 58588；被占端口在「端口」页可处理）。 */
 const DEFAULT_PORTS = [8787, CRED_DEFAULT_PORT, EXPAND_DEFAULT_PORT];
-/** 内置引导锚点（R133 用户拍板：443 与 62666 双端口 × DHT/DHT2 两域名；原话 https://DHT.pondsi.com 等，剥协议取主机）。 */
-const DEFAULT_ANCHORS = ['DHT.pondsi.com', 'DHT.pondsi.com:62666', 'DHT2.pondsi.com', 'DHT2.pondsi.com:62666'];
+/** 内置引导锚点（R133 用户拍板：443 与 62666 双端口 × DHT/DHT2 两域名；R135w 追加 dht.numumu.com 双端口；原话 https://DHT.pondsi.com 等，剥协议取主机）。 */
+const DEFAULT_ANCHORS = ['DHT.pondsi.com', 'DHT.pondsi.com:62666', 'DHT2.pondsi.com', 'DHT2.pondsi.com:62666', 'dht.numumu.com', 'dht.numumu.com:62666'];
 /** 手动对外地址的验证周期：验证通过才用于宣告，失效自动回退自动推断。 */
 const MANUAL_ADDR_CHECK_MS = 5 * 60_000;
 /** 无凭据来源（未配对）的 /api/expand/relay 请求按来源 IP 限速（防滥用 §9：直接丢弃 + 限速）。 */
@@ -152,7 +152,7 @@ const DEFAULTS = {
    * DHT 发现（默认强制开启，只做设备发现，消息仍走凭据通道）：
    *  - udpPorts 监听端口列表（默认 443 与 62666；测试可用 FWARMY_DHT_PORTS 覆盖）；
    *  - addresses 手动对外地址列表 [{host, port, enabled}]（每条验证通过才宣告，失效自动回退）；
-   *  - anchors 引导节点列表（默认内置 4 个：DHT/DHT2 × 443/62666；可手动追加）；
+   *  - anchors 引导节点列表（默认内置 6 个：DHT/DHT2/numumu × 443/62666；可手动追加）；
    *  - routeByDht：投递失败时用 DHT 定位目标所在中继站，优先转发给已配置互信的匹配 peer；
    *  - retryBaseMs 为内部字段（config.json 可写，管理页不暴露）：锚点引导失败后的退避基值。
    */

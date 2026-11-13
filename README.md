@@ -132,8 +132,9 @@ stats | ip | update | version               usage stats, public IP probe, update
   rate-limited by source IP. The **advertised address is the business TCP port** (auto-inferred public
   IP, IPv6 preferred; manual host/domain allowed while it verifies as this instance, re-checked every
   5 minutes); the **bootstrap (guide) address** shown per entry is the same host × the UDP DHT ports.
-  Default anchors are **`DHT.pondsi.com`** and **`DHT2.pondsi.com`** on UDP **443** and **62666**
-  (aligned with WArmy; anchors need no credential — anonymous discovery; security comes from node
+  Default anchors are **`DHT.pondsi.com`**, **`DHT2.pondsi.com`** and **`dht.numumu.com`** on UDP
+  **443** and **62666** (fixed, read-only; anchors need no credential — anonymous discovery; security
+  comes from node
   Ed25519 signatures, group-key encryption and inbound rate limiting). The admin page lists the default
   anchors read-only (fixed, full `host:port`) and lets you add/remove **manual anchors** above them.
   External addresses are a managed list with per-entry health (active / error / paused) and

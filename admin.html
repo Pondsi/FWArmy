@@ -291,7 +291,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
         </span>
         <span id="dhtAnchorList" class="hint" style="margin-top:4px;display:block"></span>
       </label>
-      <label class="f" title="默认锚点：DHT.pondsi.com / DHT2.pondsi.com × UDP 443/62666，自动生效、不可删除，与 WArmy 对齐；第一台设备无需别人引导即可入网"><span id="dhtAnchorDef" class="hint" style="display:block;margin-top:4px"></span>默认锚点（自动生效，不可删除）</label>
+      <label class="f" title="默认锚点：DHT.pondsi.com / DHT2.pondsi.com / dht.numumu.com × UDP 443/62666，自动生效、不可删除；第一台设备无需别人引导即可入网"><span id="dhtAnchorDef" class="hint" style="display:block;margin-top:4px"></span>默认锚点（自动生效，不可删除）</label>
     </div>
     <div class="toolbar" style="margin-top:12px">
       <button id="dhtPublish">立即发布本站记录</button>
@@ -588,7 +588,7 @@ function loadDemoView() {
     advertised: { host: '', port: 0, source: 'auto' },
     fingerprint: '', nodeIdHex: '', contacts: 0, contactsList: [],
     addresses: [], anchors: [],
-    defaultAnchors: [{ host: 'DHT.pondsi.com', port: 443 }, { host: 'DHT.pondsi.com', port: 62666 }, { host: 'DHT2.pondsi.com', port: 443 }, { host: 'DHT2.pondsi.com', port: 62666 }],
+    defaultAnchors: [{ host: 'DHT.pondsi.com', port: 443 }, { host: 'DHT.pondsi.com', port: 62666 }, { host: 'DHT2.pondsi.com', port: 443 }, { host: 'DHT2.pondsi.com', port: 62666 }, { host: 'dht.numumu.com', port: 443 }, { host: 'dht.numumu.com', port: 62666 }],
     config: { enabled: true, udpPorts: [443, 62666], pausedUdpPorts: [], addresses: [], pausedAuto: [], anchors: [], routeByDht: true },
     lastPublishAt: 0, lastPublishSeq: 0, lastStoredOn: [], lastError: '静态预览：未连接服务器（DHT 未运行）', lastYindao: null, selfPublishes: 0,
   };
