@@ -908,7 +908,10 @@ function renderUpdate() {
   $('#updInstall').disabled = !U.canInstall;
   let msg = '';
   if (U.installing) msg = '正在下载/校验…';
-  else if (U.staged) msg = '已下载，等待重启';
+  else if (U.staged) {
+    // R135z：更新已应用（版本已最新）时不再显示「等待重启」——交接中给更准确的文案
+    msg = (!U.updateAvailable && U.lastInstall && U.lastInstall.ok) ? '更新完成，正在完成重启交接…' : '已下载，等待重启';
+  }
   else if (U.updateAvailable) msg = '发现 v' + l.version + '，可以下载并重启';
   else if (U.lastCheck) msg = '已是最新';
   else msg = '尚未检查';
@@ -1946,7 +1949,7 @@ $('#credModal').addEventListener('click', (ev) => { if (ev.target === $('#credMo
 $('#tokenModal').addEventListener('click', (ev) => { if (ev.target === $('#tokenModal')) $('#tokenModal').classList.remove('open'); });
 
 if (!STATIC_MODE) { refresh().then(loadFirstRun); loadAddition(); } // R135m：静态预览模式跳过（演示数据已由 loadDemoView 填充）
-if (!STATIC_MODE) setInterval(() => { refresh(); if (activeTab === 'logs') loadLogs(); if (activeTab === 'expand' || activeTab === 'frelay') loadExpand(); if (activeTab === 'dht') loadDht(); if (activeTab === 'ports') loadPorts(); }, 5000);
+if (!STATIC_MODE) setInterval(() => { refresh(); if (activeTab === 'logs') loadLogs(); if (activeTab === 'expand' || activeTab === 'frelay') loadExpand(); if (activeTab === 'dht') loadDht(); if (activeTab === 'ports') loadPorts(); if (activeTab === 'update') loadUpdate(); }, 5000);
 if (STATIC_MODE) loadDemoView(); // 静态预览：填充演示数据（所有 let 声明之后执行）
 </script>
 </html>

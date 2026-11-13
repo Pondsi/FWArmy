@@ -116,7 +116,7 @@ const docs = [
   'docs/SERVER-RELAY.md',
 ];
 const byPlatform = {
-  'win-x64': ['FWArmy.exe', 'start.bat', 'stop.bat', 'fwarmy-headless.bat', 'fwarmy-console.bat'],
+  'win-x64': ['FWArmy.exe', 'start.bat', 'stop.bat', 'fwarmy-headless.bat', 'fwarmy-console.bat', 'fwarmy-tray.ps1', 'set-folder-icon.bat'],
   'macos-x64': ['FWArmy', 'FWArmy.command', 'start.sh', 'stop.sh', 'fwarmy-headless.sh', 'fwarmy-console.sh'],
   'macos-arm64': ['FWArmy', 'FWArmy.command', 'start.sh', 'stop.sh', 'fwarmy-headless.sh', 'fwarmy-console.sh'],
   'linux-x64': ['FWArmy', 'FWArmy.desktop', 'start.sh', 'stop.sh', 'fwarmy-headless.sh', 'fwarmy-console.sh'],
@@ -151,6 +151,8 @@ if (!fs.existsSync(logo)) {
 }
 fs.mkdirSync(path.join(stage, 'assets'), { recursive: true });
 fs.copyFileSync(logo, path.join(stage, 'assets', 'logo.svg'));
+const ico = path.join(DIST, 'assets', 'fwarmy.ico');
+if (fs.existsSync(ico)) fs.copyFileSync(ico, path.join(stage, 'assets', 'fwarmy.ico'));
 
 // 从最终二进制重新写一份准确的 BUILD-INFO（staging 内；数值与二进制一致）
 const rebuiltInfo = [
