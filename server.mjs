@@ -84,7 +84,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.6.5';
+export const VERSION = '0.6.6';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -3079,7 +3079,7 @@ export async function startServer(options = {}) {
       lastError: upd.lastError,
       latest,
       updateAvailable: available,
-      canInstall: !!(IS_SEA && platform && available && assetOk && !updateInstalling),
+      canInstall: !!(IS_SEA && platform && available && assetOk && !updateInstalling && !staged), // R135w：等待重启（staged）期间不可再点
       installing: updateInstalling,
       checking: updateChecking,
       staged: !!staged,
@@ -3261,6 +3261,7 @@ export async function startServer(options = {}) {
   }
   async function installUpdate(force = false) {
     if (updateInstalling) throw new Error('update-in-progress');
+    if (IS_SEA && pendingUpdatePath && fs.existsSync(pendingUpdatePath)) throw new Error('update-pending-restart'); // R135w：等待重启期间拒绝重复安装（防竞态）
     if (!IS_SEA) throw new Error('not-single-file');
     const platform = updatePlatform();
     if (!platform) throw new Error('unsupported-platform');
@@ -3382,6 +3383,8 @@ export async function startServer(options = {}) {
     const staged = stagedPath || pendingUpdatePath || (current + '.new');
     log('INFO', `更新：检查待替换文件 ${staged} exists=${fs.existsSync(staged)}`);
     if (!fs.existsSync(staged)) {
+      pendingUpdatePath = ''; // R135w：staged 缺失是异常态，清掉待重启标记以允许重试
+      updateFreeze = false;
       upd.lastError = 'staged-missing';
       upd.lastInstall = { version: upd.latest ? upd.latest.version : '', at: Date.now(), ok: false, error: 'staged-missing' };
       saveUpdate();

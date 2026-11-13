@@ -989,7 +989,10 @@ async function ptAction(action, port, protocol) {
     const j = await api('/api/admin/ports', { action, port, ...(protocol ? { protocol } : {}) });
     P = j.ports; renderPorts();
     if (j.start && !j.start.ok) toast('启用失败：' + (j.start.error === 'occupied' ? '端口被占用（可点「强制启用」）' : j.start.error), true);
-    else toast(action === 'remove' ? '端口已删除' : '端口操作完成');
+    else {
+      if (action === 'add') $('#ptNewPort').value = ''; // R135w：添加成功才清空，失败保留输入便于修正
+      toast(action === 'remove' ? '端口已删除' : (action === 'add' ? '端口已添加' : '端口操作完成'));
+    }
     if (action === 'add' || action === 'remove' || action === 'pause' || action === 'resume' || action === 'force') await refresh();
   } catch (e) { toast(e.message, true); }
 }
@@ -1854,7 +1857,10 @@ $('#updInstall').addEventListener('click', async () => {
     }
     toast('等待重启超时；请刷新页面或查看 data/server.log', true);
   } catch (e) {
-    toast('更新失败：' + e.message, true);
+    const m = String(e.message || '');
+    if (m === 'already-latest') toast('已是最新版本');
+    else if (m === 'update-pending-restart') toast('更新正在重启中，请稍候刷新页面');
+    else toast('更新失败：' + m, true);
     b.disabled = false;
     await loadUpdate();
   }
