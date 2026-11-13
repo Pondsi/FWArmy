@@ -4,6 +4,6 @@ dist/
 *.log
 sea-prep.blob
 
-# 测试临时文件
+# temp scratch files (gate runs, smoke tests)
 .tmp-*
 out/
