@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.13';
+export const VERSION = '0.7.14';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -116,10 +116,10 @@ const INBOUND_BYTES_PER_MIN = 20 * 1024 * 1024;
 const EXPAND_DEFAULT_PORT = 58588;
 /** 中继页业务凭据默认端口（R133 用户拍板：中继默认 59599）。 */
 const CRED_DEFAULT_PORT = 59599;
-/** 默认业务监听端口列表（R142：管理入口 8787 + 中继 59599 + 扩网 58588 + TCP 443/62666 业务默认；被占端口在「端口」页可处理）。 */
-const DEFAULT_PORTS = [8787, CRED_DEFAULT_PORT, EXPAND_DEFAULT_PORT, 443, 62666];
-/** R142 前的旧默认（[8787,59599,58588]）：原样等于旧默认的配置自动迁移为新默认（业务端口默认打开策略）。 */
-const LEGACY_DEFAULT_PORTS = [8787, CRED_DEFAULT_PORT, EXPAND_DEFAULT_PORT];
+/** 默认业务监听端口列表（R147：管理入口 8787 + 中继 59599 + 扩网 58588——R142 曾加 TCP 443/62666，用户拍板移除：443 TCP 通常被占且无业务必要，62666 只需 UDP DHT）。 */
+const DEFAULT_PORTS = [8787, CRED_DEFAULT_PORT, EXPAND_DEFAULT_PORT];
+/** R142 的过渡默认（含 TCP 443/62666）：恰等于它的配置自动回退到 3 个默认端口（用户自定义过的端口列表不动）。 */
+const R142_DEFAULT_PORTS = [8787, CRED_DEFAULT_PORT, EXPAND_DEFAULT_PORT, 443, 62666];
 /** 内置引导锚点（R133 用户拍板：443 与 62666 双端口 × DHT/DHT2 两域名；R135w 追加 dht.numumu.com 双端口；原话 https://DHT.pondsi.com 等，剥协议取主机）。 */
 const DEFAULT_ANCHORS = ['DHT.pondsi.com', 'DHT.pondsi.com:62666', 'DHT2.pondsi.com', 'DHT2.pondsi.com:62666', 'dht.numumu.com', 'dht.numumu.com:62666'];
 /** 管理页语言白名单（R138：与 admin.html LANGS 27 项一致；选择持久化到 config.json.lang）。 */
@@ -1058,8 +1058,8 @@ export async function startServer(options = {}) {
   cfg.accepting = cfg.accepting !== false;
   cfg.tls = normTlsCfg(cfgRaw && cfgRaw.tls);
   cfg.dht = normDhtCfg(cfgRaw && cfgRaw.dht);
-  // R142：旧默认端口配置自动迁移为新默认（含 TCP 443/62666 业务端口）
-  if (JSON.stringify(cfg.ports) === JSON.stringify(LEGACY_DEFAULT_PORTS)) cfg.ports = [...DEFAULT_PORTS];
+  // R142 曾把 TCP 443/62666 加入默认业务端口；R147 用户拍板移除——配置恰等于 R142 迁移结果时自动回退到 3 个默认端口
+  if (JSON.stringify(cfg.ports) === JSON.stringify(R142_DEFAULT_PORTS)) cfg.ports = [...DEFAULT_PORTS];
   cfg.ports = normPorts(cfg.ports);
   // R138：语言选择服务端持久化——null 表示从未选择（前端据此决定首启弹窗）；换端口/换浏览器/重启都记住。
   cfg.lang = (cfgRaw && typeof cfgRaw.lang === 'string' && UI_LANGS.includes(cfgRaw.lang)) ? cfgRaw.lang : null;
