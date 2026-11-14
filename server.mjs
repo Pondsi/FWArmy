@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.5';
+export const VERSION = '0.7.6';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -116,8 +116,10 @@ const INBOUND_BYTES_PER_MIN = 20 * 1024 * 1024;
 const EXPAND_DEFAULT_PORT = 58588;
 /** 中继页业务凭据默认端口（R133 用户拍板：中继默认 59599）。 */
 const CRED_DEFAULT_PORT = 59599;
-/** 默认业务监听端口列表（R134：管理入口 8787 + 中继 59599 + 扩网 58588；被占端口在「端口」页可处理）。 */
-const DEFAULT_PORTS = [8787, CRED_DEFAULT_PORT, EXPAND_DEFAULT_PORT];
+/** 默认业务监听端口列表（R142：管理入口 8787 + 中继 59599 + 扩网 58588 + TCP 443/62666 业务默认；被占端口在「端口」页可处理）。 */
+const DEFAULT_PORTS = [8787, CRED_DEFAULT_PORT, EXPAND_DEFAULT_PORT, 443, 62666];
+/** R142 前的旧默认（[8787,59599,58588]）：原样等于旧默认的配置自动迁移为新默认（业务端口默认打开策略）。 */
+const LEGACY_DEFAULT_PORTS = [8787, CRED_DEFAULT_PORT, EXPAND_DEFAULT_PORT];
 /** 内置引导锚点（R133 用户拍板：443 与 62666 双端口 × DHT/DHT2 两域名；R135w 追加 dht.numumu.com 双端口；原话 https://DHT.pondsi.com 等，剥协议取主机）。 */
 const DEFAULT_ANCHORS = ['DHT.pondsi.com', 'DHT.pondsi.com:62666', 'DHT2.pondsi.com', 'DHT2.pondsi.com:62666', 'dht.numumu.com', 'dht.numumu.com:62666'];
 /** 管理页语言白名单（R138：与 admin.html LANGS 27 项一致；选择持久化到 config.json.lang）。 */
@@ -1056,6 +1058,8 @@ export async function startServer(options = {}) {
   cfg.accepting = cfg.accepting !== false;
   cfg.tls = normTlsCfg(cfgRaw && cfgRaw.tls);
   cfg.dht = normDhtCfg(cfgRaw && cfgRaw.dht);
+  // R142：旧默认端口配置自动迁移为新默认（含 TCP 443/62666 业务端口）
+  if (JSON.stringify(cfg.ports) === JSON.stringify(LEGACY_DEFAULT_PORTS)) cfg.ports = [...DEFAULT_PORTS];
   cfg.ports = normPorts(cfg.ports);
   // R138：语言选择服务端持久化——null 表示从未选择（前端据此决定首启弹窗）；换端口/换浏览器/重启都记住。
   cfg.lang = (cfgRaw && typeof cfgRaw.lang === 'string' && UI_LANGS.includes(cfgRaw.lang)) ? cfgRaw.lang : null;
@@ -3340,6 +3344,14 @@ export async function startServer(options = {}) {
         if (!Number.isFinite(d) || d < 0 || d > 36500) return send(res, 400, { ok: false, error: 'bad-expires-days' });
         if (d > 0) expiresAt = now() + d * 86400000;
       }
+      // R142：凭据端口不在监听集 → 自动添加并监听（业务端口默认打开策略）
+      if (j.port !== undefined) {
+        const inPort = Math.floor(Number(j.port));
+        if (Number.isInteger(inPort) && inPort >= 1 && inPort <= 65535) {
+          const ep = await ensureCredPort(inPort);
+          if (!ep.ok) return send(res, 401, { ok: false, error: 'credential-port-unavailable', hint: ep.error || '' });
+        }
+      }
       const { token, item } = generateInboundToken(j.name, j.port, j.host, limits, expiresAt);
       log('INFO', `被扩网：已生成新的接入凭据 #${expand.inbound.length}（地址 ${item.addr}，只显示一次）`);
       return send(res, 200, { ok: true, token, item: { id: item.id, name: item.name, masked: item.masked }, inbound: expandView().inbound });
@@ -3790,6 +3802,10 @@ export async function startServer(options = {}) {
       if (host && /[\s/?#]/.test(host)) return send(res, 400, { ok: false, error: 'bad-host' });
       let port = Number(j.port);
       if (host && (!Number.isInteger(port) || port < 1 || port > 65535)) port = CRED_DEFAULT_PORT; // R133：中继凭据默认 59599
+      if (host) { // R142：凭据端口不在监听集 → 自动添加并监听（业务端口默认打开策略）
+        const ep = await ensureCredPort(port);
+        if (!ep.ok) return send(res, 401, { ok: false, error: 'credential-port-unavailable', hint: ep.error || '' });
+      }
       const token = b64u(crypto.randomBytes(32));
       const id = crypto.randomUUID();
       creds[id] = {
@@ -4171,6 +4187,24 @@ export async function startServer(options = {}) {
   }
   /** R133 多业务端口：每端口一个分流器；状态 listening/paused/error（occupied）。 */
   const portStates = new Map(); // port → { srv, status, error }
+  /** R142：凭据端口不在监听集合时自动添加（配置 + 尝试监听）——业务端口默认打开策略；监听失败仅记录（端口页可处理），不拒绝凭据。 */
+  async function ensureCredPort(port) {
+    const p = Number(port);
+    if (!Number.isInteger(p) || p < 1 || p > 65535) return { ok: false, error: 'bad-port' };
+    let added = false;
+    if (!cfg.ports.includes(p)) {
+      cfg.ports = normPorts([...cfg.ports, p]);
+      if (!saveCfg()) return { ok: false, error: 'persist-failed' };
+      added = true;
+    }
+    const st = portStates.get(p);
+    if (!st || !st.srv) {
+      const r = await startPort(p);
+      if (!r.ok) log('WARN', `凭据端口 ${p} 已加入配置但监听失败（端口页可处理）：` + (r.error || ''));
+    }
+    const after = portStates.get(p);
+    return { ok: true, added, listening: !!(after && after.srv) };
+  }
   async function startPort(port) {
     const cur = portStates.get(port);
     if (cur && cur.srv) { try { cur.srv.close(); } catch { /* noop */ } }
