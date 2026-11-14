@@ -99,6 +99,8 @@ jobs:
           $env:FWARMY_BASE = (Get-Location).Path
           $env:LOCALAPPDATA = $tmp
           $env:FWARMY_SKIP_SHORTCUT = '1'
+          # R143：install.ps1 默认版本是 0.5.1，out 里只有当前版本 zip——必须显式传当前版本
+          $env:FWARMY_VERSION = (Get-Content '..\package.json' -Raw | ConvertFrom-Json).version
           & ..\install.ps1
           $exe = Join-Path $tmp 'FWArmy\FWArmy.exe'
           $pSmoke = Start-Process -FilePath $exe -ArgumentList '--version' -Wait -PassThru
