@@ -1639,8 +1639,11 @@ async function loadFirstRun() {
   if (firstRun && firstRun.pending) showFirstRun();
 }
 function showFirstRun() {
-  $('#firstRun').hidden = false;
-  $('#firstRunToken').textContent = firstRun.token || '';
+  // R140：元素可能因版本组合缺失——判空避免整页报错
+  const fr = $('#firstRun');
+  if (fr) fr.hidden = false;
+  const tok = $('#firstRunToken');
+  if (tok) tok.textContent = firstRun.token || '';
 }
 let refreshInFlight = false;
 const CRED_PAGE_SIZE = 200;
@@ -1766,8 +1769,11 @@ function renderUpdate() {
   $('#updMsg').textContent = msg;
   $('#updNotes').textContent = (l.notes && String(l.notes).trim()) || (U.lastCheck ? _t('upd.notesEmpty') : _t('upd.notes'));
   const link = $('#updLink');
-  if (l.url && /^https:\/\/github\.com\/Pondsi\/FWArmy\/releases\//.test(l.url)) { link.hidden = false; link.href = l.url; }
-  else { link.hidden = true; link.removeAttribute('href'); }
+  // R140：元素可能因版本组合缺失——判空避免「读取更新状态失败」整页报错
+  if (link) {
+    if (l.url && /^https:\/\/github\.com\/Pondsi\/FWArmy\/releases\//.test(l.url)) { link.hidden = false; link.href = l.url; }
+    else { link.hidden = true; link.removeAttribute('href'); }
+  }
   const rows = [
     [_t('card.current'), 'v' + U.current],
     ['运行形态', U.singleFile ? _t('upd.single') : _t('upd.source')],
@@ -2137,15 +2143,19 @@ async function saveInGen() {
     const chosen = port || 58588;
     const r = await api('/api/admin/expand-inbound', { name: $('#inGName').value.trim(), ...(port ? { port } : {}), ...(host ? { host } : {}), limits, expiresDays });
     $('#inGenModal').classList.remove('open');
-    $('#exInToken').textContent = r.token || '';
-    $('#exInTokenBox').hidden = false;
+    const tb = $('#exInTokenBox');
+    if (tb) tb.hidden = false;
+    const tok = $('#exInToken');
+    if (tok) tok.textContent = r.token || '';
     const warn = $('#exInPortWarn');
     const lpNow = (E && E.listeningPorts || []).map(Number);
-    if (!lpNow.includes(chosen)) { // R135h：仅当所选端口不在本机监听集合时才警告（之前误用 E.port=主端口 导致 58588 永远误报）
-      warn.hidden = false;
-      warn.innerHTML = `⚠ 端口 <code>${esc(chosen)}</code> 不在本机监听端口集合（${esc(lpNow.join('、') || '无')}，可能被占用）。对方连 ${chosen} 连不到本机——此凭据已被强制禁止。请在<a href="#" data-goto="ports">端口</a>页启用该端口（被占可强制启用）或改用已监听端口重新生成。`;
-    } else {
-      warn.hidden = true;
+    if (warn) { // R140：元素缺失时跳过警告渲染，不崩页面
+      if (!lpNow.includes(chosen)) { // R135h：仅当所选端口不在本机监听集合时才警告（之前误用 E.port=主端口 导致 58588 永远误报）
+        warn.hidden = false;
+        warn.innerHTML = `⚠ 端口 <code>${esc(chosen)}</code> 不在本机监听端口集合（${esc(lpNow.join('、') || '无')}，可能被占用）。对方连 ${chosen} 连不到本机——此凭据已被强制禁止。请在<a href="#" data-goto="ports">端口</a>页启用该端口（被占可强制启用）或改用已监听端口重新生成。`;
+      } else {
+        warn.hidden = true;
+      }
     }
     toast('已生成；请立即复制给对方');
     await loadExpand();
@@ -2681,7 +2691,7 @@ $('#delConfirm').addEventListener('input', () => { $('#doDelete').disabled = !de
 $('#doDelete').addEventListener('click', doDelete);
 $('#firstRunCopy').addEventListener('click', () => copyText($('#firstRunToken').textContent));
 $('#firstRunAck').addEventListener('click', async () => {
-  try { await api('/api/admin/first-credential-ack', {}); firstRun = { pending: false }; $('#firstRun').hidden = true; toast('已删除明文引导文件'); await refresh(); }
+  try { await api('/api/admin/first-credential-ack', {}); firstRun = { pending: false }; const fr = $('#firstRun'); if (fr) fr.hidden = true; toast('已删除明文引导文件'); await refresh(); }
   catch (e) { toast(e.message, true); }
 });
 $('#copyToken').addEventListener('click', () => copyText($('#newToken').textContent));
