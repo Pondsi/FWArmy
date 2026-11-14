@@ -84,7 +84,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.0';
+export const VERSION = '0.7.1';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -3441,6 +3441,37 @@ export async function startServer(options = {}) {
         copyFallback = true;
       }
       movedNew = true;
+      // R136：自动更新除替换 exe 外，同步白名单伴随文件（托盘脚本/启动脚本/图标等）——
+      // 旧目录（无这些文件）自动更新上来也能获得完整功能；data/ 一律不碰。
+      try {
+        const workDir = path.join(DATA, 'updates', upd.latest ? String(upd.latest.version).replace(/[^0-9A-Za-z._-]/g, '_') : '');
+        const extractDir = path.join(workDir, 'extract');
+        const COMPANION_FILES = ['fwarmy-tray.ps1', 'start.bat', 'stop.bat', 'fwarmy-headless.bat', 'fwarmy-console.bat', 'set-folder-icon.bat', 'install.ps1', 'assets/fwarmy.ico', 'assets/logo.svg'];
+        // R137：归档顶层带版本目录（Compress-Archive 压入 stage 目录名），扁平直取会全部落空——
+        // 必须与 findUpdateBinary 同模式递归查找，旧目录自动更新才能补齐伴随文件。
+        const findCompanion = (dir, base, depth = 0) => {
+          let ents = [];
+          try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return ''; }
+          for (const e of ents) if (e.isFile() && e.name === base) return path.join(dir, e.name);
+          if (depth >= 3) return '';
+          for (const e of ents) {
+            if (!e.isDirectory()) continue;
+            const hit = findCompanion(path.join(dir, e.name), base, depth + 1);
+            if (hit) return hit;
+          }
+          return '';
+        };
+        for (const f of COMPANION_FILES) {
+          const src = findCompanion(extractDir, path.basename(f));
+          if (!src) { log('WARN', `更新：归档中未找到伴随文件 ${f}（跳过）`); continue; }
+          const dst = path.join(path.dirname(current), f);
+          try {
+            fs.mkdirSync(path.dirname(dst), { recursive: true });
+            fs.copyFileSync(src, dst);
+            log('INFO', `更新：同步伴随文件 ${f}`);
+          } catch { /* 单个文件失败不影响主替换 */ }
+        }
+      } catch { /* 伴随文件同步失败不影响主替换 */ }
       const childEnv = { ...process.env };
       // 测试模式下给新进程标注目标版本，跨版本夹具才能验证健康判定（生产不设置）。
       if (process.env.FWARMY_UPDATE_TEST === '1' && upd.latest && upd.latest.version) {
@@ -4563,10 +4594,21 @@ export async function startServer(options = {}) {
     child.unref();
     return child;
   }
-  /** R135y：启动系统托盘（fwarmy-tray.ps1，与 exe 同目录分发）；失败只记日志不影响服务。 */
+  /** R135y：启动系统托盘（fwarmy-tray.ps1，与 exe 同目录分发）；R136：目录缺失时从内嵌 asset 提取（旧目录自动更新上来也能有托盘）。 */
   function startTray(entryPort) {
     try {
-      const trayPath = path.join(HERE, 'fwarmy-tray.ps1');
+      let trayPath = path.join(HERE, 'fwarmy-tray.ps1');
+      if (!fs.existsSync(trayPath) && IS_SEA && SEA && typeof SEA.getAsset === 'function') {
+        try {
+          const buf = SEA.getAsset('fwarmy-tray.ps1');
+          if (buf && buf.length) {
+            fs.writeFileSync(trayPath, buf);
+            log('INFO', '[fwarmy] 托盘脚本缺失，已从内嵌资源提取到 ' + trayPath);
+          }
+        } catch (e) {
+          log('WARN', '提取托盘脚本失败：' + String((e && e.message) || e).slice(0, 120));
+        }
+      }
       if (!fs.existsSync(trayPath)) return;
       spawnDetached('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', trayPath, '-Port', String(entryPort), '-Pid', String(process.pid), '-Data', DATA]);
       log('INFO', `[fwarmy] 系统托盘已启动（管理页 http://127.0.0.1:${entryPort}/）`);

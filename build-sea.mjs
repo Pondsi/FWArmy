@@ -70,7 +70,7 @@ const seaConfig = {
   disableExperimentalSEAWarning: true,
   useSnapshot: false,
   useCodeCache: false,
-  assets: { 'admin.html': 'admin.html', 'logo.svg': 'assets/logo.svg', 'help.html': 'help.html' },
+  assets: { 'admin.html': 'admin.html', 'logo.svg': 'assets/logo.svg', 'help.html': 'help.html', 'fwarmy-tray.ps1': 'fwarmy-tray.ps1' }, // R136：托盘脚本内嵌——旧目录自动更新上来时从 asset 提取，不再依赖目录文件
 };
 // R135y：Windows 托盘模式——GUI 子系统（双击/start 无控制台窗口，托盘图标由 fwarmy-tray.ps1 提供；stdout 在管道重定向下仍可用）
 if (process.platform === 'win32') seaConfig.windowsSubsystem = 'windows';
