@@ -19,7 +19,6 @@
  *   POST /api/admin/public-ip           探测公网 IP
  *   GET  /api/admin/security            重放/黑名单/来源密钥固定策略
  *   GET/POST /api/admin/tls             TLS 证书策略（改动需重启）
- *   GET/POST /api/admin/reach           公网可达性（NAT-PMP 只读探针 / 显式映射 / STUN）
  *   POST /api/admin/shutdown            关闭服务器
  *
  * 业务面（都必须带 `Authorization: Bearer <凭据>`）：
@@ -84,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.2';
+export const VERSION = '0.7.3';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -467,200 +466,6 @@ function dechunk(buf) {
   return Buffer.concat(out);
 }
 
-/* ── STUN / NAT-PMP（纯 UDP，不内置任何公网服务器）───────────────── */
-const STUN_MAGIC = 0x2112a442;
-function stunRequest(software = 'FWArmy/1') {
-  const tid = crypto.randomBytes(12);
-  const val = Buffer.from(String(software).slice(0, 32), 'utf8');
-  const pad = (4 - (val.length % 4)) % 4;
-  const a = Buffer.alloc(4 + val.length + pad);
-  a.writeUInt16BE(0x8022, 0); a.writeUInt16BE(val.length, 2); val.copy(a, 4); /* SOFTWARE 属性类型 RFC 5389 = 0x8022 */
-  const head = Buffer.alloc(20);
-  head.writeUInt16BE(0x0001, 0);
-  head.writeUInt16BE(a.length, 2);
-  head.writeUInt32BE(STUN_MAGIC, 4);
-  tid.copy(head, 8);
-  return { buf: Buffer.concat([head, a]), tid };
-}
-function parseStun(buf) {
-  if (!buf || buf.length < 20) return null;
-  if (buf.readUInt16BE(0) !== 0x0101) return null;
-  const len = buf.readUInt16BE(2);
-  const tid = buf.subarray(8, 20);
-  const out = { tid, mapped: null };
-  let p = 20;
-  const end = Math.min(buf.length, 20 + len);
-  while (p + 4 <= end) {
-    const t = buf.readUInt16BE(p), l = buf.readUInt16BE(p + 2);
-    const v = buf.subarray(p + 4, p + 4 + l);
-    if (t === 0x0020 && l >= 8 && v[1] === 1) {
-      // XOR-MAPPED-ADDRESS（RFC 5389 §15.2）IPv4：端口 XOR magic 高 16 位，地址 XOR magic
-      const port = v.readUInt16BE(2) ^ (STUN_MAGIC >>> 16);
-      const ip = (v.readUInt32BE(4) ^ STUN_MAGIC) >>> 0;
-      out.mapped = { host: `${ip >>> 24}.${(ip >>> 16) & 255}.${(ip >>> 8) & 255}.${ip & 255}`, port };
-    } else if (t === 0x0020 && l >= 20 && v[1] === 2) {
-      // XOR-MAPPED-ADDRESS IPv6：地址 XOR（magic(4B) + transaction id(12B)）
-      const port = v.readUInt16BE(2) ^ (STUN_MAGIC >>> 16);
-      const mask = Buffer.alloc(16); mask.writeUInt32BE(STUN_MAGIC, 0); tid.copy(mask, 4);
-      const ip6 = Buffer.alloc(16);
-      for (let i = 0; i < 16; i++) ip6[i] = v[4 + i] ^ mask[i];
-      const g = [];
-      for (let i = 0; i < 16; i += 2) g.push(ip6.readUInt16BE(i).toString(16));
-      out.mapped = { host: g.join(':'), port };
-    } else if (t === 0x0001 && l >= 8 && v[1] === 1) {
-      out.mapped = { host: `${v[4]}.${v[5]}.${v[6]}.${v[7]}`, port: v.readUInt16BE(2) };
-    } else if (t === 0x0001 && l >= 20 && v[1] === 2) {
-      const g = [];
-      for (let i = 0; i < 16; i += 2) g.push(v.readUInt16BE(4 + i).toString(16));
-      out.mapped = { host: g.join(':'), port: v.readUInt16BE(2) };
-    }
-    p += 4 + l + ((4 - (l % 4)) % 4);
-  }
-  return out;
-}
-async function stunUdp(pkt, addr, timeoutMs) {
-  return await new Promise((resolve) => {
-    const sock = dgram.createSocket('udp4');
-    let done = false;
-    const fin = (v) => { if (done) return; done = true; clearTimeout(t); try { sock.close(); } catch { /* noop */ } resolve(v); };
-    const t = setTimeout(() => fin(null), Math.max(100, timeoutMs));
-    sock.on('message', (m) => fin(m));
-    sock.on('error', () => fin(null));
-    try { sock.send(pkt, addr.port, addr.host, (e) => { if (e) fin(null); }); } catch { fin(null); }
-  });
-}
-/** 问 STUN 自己的公网映射；servers 为空就如实返回 no-server（隐私默认）。 */
-export async function stunBinding({ servers = [], timeoutMs = 1500, send = null } = {}) {
-  const t0 = Date.now();
-  const attempts = [];
-  const list = (servers || []).map((s) => String(s || '').trim()).filter(Boolean);
-  if (!list.length) return { ok: false, reason: 'no-server', detail: '未配置 STUN 服务器（不内置公网服务器）', attempts, ms: 0 };
-  const { buf, tid } = stunRequest();
-  for (const raw of list) {
-    const ta = Date.now();
-    let host = raw.replace(/^stuns?:\/\//i, '').split('?')[0];
-    let port = 3478;
-    const m = /^\[([^\]]+)\](?::(\d+))?$/.exec(host);
-    if (m) { host = m[1]; if (m[2]) port = Number(m[2]); }
-    else if (host.split(':').length === 2) { const [h, pp] = host.split(':'); host = h; port = Number(pp) || 3478; }
-    try {
-      // 注入 send 的门禁不解析 DNS：离线 mock 不需要真实域名。
-      if (!send && !isIp(host)) host = (await lookup(host)).address;
-      const resp = send ? await send(buf, { host, port }, timeoutMs) : await stunUdp(buf, { host, port }, timeoutMs);
-      if (!resp) { attempts.push({ server: raw, ok: false, reason: 'timeout', ms: Date.now() - ta }); continue; }
-      const j = parseStun(resp);
-      if (!j || !j.tid.equals(tid)) { attempts.push({ server: raw, ok: false, reason: 'bad-response', ms: Date.now() - ta }); continue; }
-      if (!j.mapped) { attempts.push({ server: raw, ok: false, reason: 'no-mapped', ms: Date.now() - ta }); continue; }
-      attempts.push({ server: raw, ok: true, reason: 'ok', ms: Date.now() - ta });
-      return { ok: true, publicAddress: j.mapped, via: raw, reason: 'resolved', attempts, ms: Date.now() - t0 };
-    } catch (e) {
-      attempts.push({ server: raw, ok: false, reason: 'network', ms: Date.now() - ta });
-      void e;
-    }
-  }
-  return { ok: false, reason: 'timeout', attempts, ms: Date.now() - t0 };
-}
-
-const NATPMP_PORT = 5351;
-/** RFC 6886 §3.5 Result Codes */
-const NATPMP_TEXT = { 0: 'ok', 1: 'unsupported-version', 2: 'refused', 3: 'network-failure', 4: 'out-of-resources', 5: 'unsupported-opcode' };
-async function natpmpUdp(pkt, gateway, timeoutMs) {
-  return await new Promise((resolve) => {
-    const sock = dgram.createSocket('udp4');
-    let done = false;
-    const fin = (v) => { if (done) return; done = true; clearTimeout(t); try { sock.close(); } catch { /* noop */ } resolve(v); };
-    const t = setTimeout(() => fin(null), Math.max(100, timeoutMs));
-    sock.on('message', (m) => fin(m));
-    sock.on('error', () => fin(null));
-    try { sock.send(pkt, NATPMP_PORT, gateway, (e) => { if (e) fin(null); }); } catch { fin(null); }
-  });
-}
-/** 解析 NAT-PMP 响应（RFC 6886）：响应位（opcode|0x80）必须置位；映射响应 16 字节，公开地址响应 12 字节。 */
-function parseNatpmpResp(resp) {
-  if (!resp || resp.length < 8) return null;
-  const opcode = resp[1];
-  if ((opcode & 0x80) === 0) return null;
-  const out = { version: resp[0], opcode: opcode & 0x7f, result: resp.readUInt16BE(2), seconds: resp.readUInt32BE(4) };
-  if (out.opcode === 0 && resp.length >= 12) out.externalIp = `${resp[8]}.${resp[9]}.${resp[10]}.${resp[11]}`;
-  else if (resp.length >= 16) {
-    out.internalPort = resp.readUInt16BE(8);
-    out.externalPort = resp.readUInt16BE(10);
-    out.lifetime = resp.readUInt32BE(12);
-  }
-  return out;
-}
-/**
- * 只读探针：发 RFC 6886 标准「公开地址查询」（2 字节：version=0, opcode=0），不会创建任何映射。
- * 无应答时再发 version=255 探活（RFC 6886 §3.5：支持 NAT-PMP 的网关会回 UNSUPPORTED_VERSION）。
- */
-export async function natpmpProbe({ gateways = [], timeoutMs = 1200, request = null } = {}) {
-  const t0 = Date.now();
-  const attempts = [];
-  const gws = (gateways.length ? gateways : gatewayCandidates()).filter(Boolean);
-  if (!gws.length) return { alive: false, detail: '没有私有网关候选（可能直连公网或没有 IPv4 网卡）', attempts, ms: 0 };
-  const send = request || ((pkt, gw, t) => natpmpUdp(pkt, gw, t));
-  for (const gw of gws) {
-    if (!isPrivateIpv4(gw)) { attempts.push({ gateway: gw, ok: false, reason: 'bad-gateway' }); continue; }
-    const reqProbe = Buffer.from([0x00, 0x00]); // 标准公开地址查询
-    const resp = await send(reqProbe, gw, timeoutMs);
-    const parsed = parseNatpmpResp(resp);
-    if (parsed) {
-      const txt = NATPMP_TEXT[parsed.result] || `result-${parsed.result}`;
-      attempts.push({ gateway: gw, ok: true, reason: txt, request: reqProbe.toString('hex') });
-      return {
-        alive: true, gateway: gw, externalIp: parsed.externalIp || '',
-        detail: `网关 ${gw} 应答 NAT-PMP（${txt}${parsed.externalIp ? '，公网地址 ' + parsed.externalIp : ''}）`,
-        attempts, ms: Date.now() - t0,
-      };
-    }
-    const reqProbe255 = Buffer.from([0xff, 0x00]); // 版本探活，不创建映射
-    const resp2 = await send(reqProbe255, gw, timeoutMs);
-    const parsed2 = parseNatpmpResp(resp2);
-    if (parsed2) {
-      const txt = NATPMP_TEXT[parsed2.result] || `result-${parsed2.result}`;
-      attempts.push({ gateway: gw, ok: true, reason: txt, request: reqProbe255.toString('hex') });
-      return { alive: true, gateway: gw, detail: `网关 ${gw} 应答 NAT-PMP（${txt}）`, attempts, ms: Date.now() - t0 };
-    }
-    attempts.push({ gateway: gw, ok: false, reason: 'timeout', request: reqProbe.toString('hex') });
-  }
-  return { alive: false, detail: `${gws.length} 个网关候选都没应答 5351/UDP（不支持或被挡）`, attempts, ms: Date.now() - t0 };
-}
-/**
- * 申请/取消映射（会改路由器状态，必须显式调用）。请求按 RFC 6886 映射格式（12 字节）：
- * version=0, opcode=1(UDP)|2(TCP), reserved=0, 内部端口, 建议外部端口(0=路由器挑), 租期秒(0=删除映射)。
- */
-export async function natpmpMap({ gateway, internalPort, externalPort = 0, leaseSec = 7200, protocol = 'tcp', timeoutMs = 1500, request = null }) {
-  const gw = String(gateway || '');
-  if (!isPrivateIpv4(gw)) return { ok: false, reason: 'bad-gateway', detail: '只允许向私有/链路本地网关申请映射' };
-  const op = protocol === 'tcp' ? 2 : 1; // RFC 6886：UDP=1、TCP=2
-  const pkt = Buffer.alloc(12);
-  pkt[0] = 0;
-  pkt[1] = op;
-  pkt.writeUInt16BE(0, 2);
-  pkt.writeUInt16BE(Number(internalPort) & 0xffff, 4);
-  pkt.writeUInt16BE((Number(externalPort) || 0) & 0xffff, 6);
-  pkt.writeUInt32BE(Math.max(0, Math.min(0xffffffff, Math.trunc(Number(leaseSec) || 0))), 8);
-  const resp = request ? await request(pkt, gw, timeoutMs) : await natpmpUdp(pkt, gw, timeoutMs);
-  const parsed = parseNatpmpResp(resp);
-  if (!parsed) return { ok: false, reason: resp ? 'bad-response' : 'timeout', gateway: gw };
-  if (parsed.opcode !== op) return { ok: false, reason: 'bad-response', gateway: gw, detail: '响应 opcode 与请求不一致' };
-  if (parsed.result !== 0) return { ok: false, reason: NATPMP_TEXT[parsed.result] || 'router-refused', gateway: gw, result: parsed.result };
-  return {
-    ok: true, gateway: gw, reason: 'router-ok',
-    internalPort: parsed.internalPort, externalPort: parsed.externalPort, lifetime: parsed.lifetime,
-  };
-}
-function gatewayCandidates() {
-  const out = [];
-  for (const list of Object.values(os.networkInterfaces())) {
-    for (const it of list || []) {
-      if (it.family !== 'IPv4' || it.internal || !isPrivateIpv4(it.address)) continue;
-      const base = it.address.split('.').slice(0, 3).join('.') + '.';
-      for (const tail of ['1', '254']) { const g = base + tail; if (g !== it.address && !out.includes(g)) out.push(g); }
-    }
-  }
-  return out;
-}
 function localAddresses() {
   const out = [];
   for (const [iface, list] of Object.entries(os.networkInterfaces())) {
@@ -799,7 +604,6 @@ function emptyExpand() {
     identity: { pub: '', priv: '' },
     inbound: [],
     outbound: [],
-    natpmp: null,
     stats: { inbound: emptySide(), outbound: emptySide(), perOutbound: {}, perSource: {}, perInbound: {} },
   };
 }
@@ -860,12 +664,6 @@ function normExpand(raw) {
     if (one) { one.name = '旧版接入凭据'; one.createdAt = one.createdAt || Date.now(); o.inbound = [one]; }
   }
   o.outbound = Array.isArray(raw.outbound) ? raw.outbound.map(normOutbound).filter(Boolean) : [];
-  const nm = raw.natpmp && typeof raw.natpmp === 'object' ? raw.natpmp : null;
-  o.natpmp = nm && Number(nm.externalPort) > 0 ? {
-    gateway: String(nm.gateway || ''), internalPort: Number(nm.internalPort) || 0,
-    externalPort: Number(nm.externalPort) || 0, lifetimeSec: Number(nm.lifetimeSec) || 0,
-    mappedAt: Number(nm.mappedAt) || 0, protocol: nm.protocol === 'udp' ? 'udp' : 'tcp',
-  } : null;
   const st = raw.stats && typeof raw.stats === 'object' ? raw.stats : {};
   o.stats.inbound = normSide(st.inbound);
   o.stats.outbound = normSide(st.outbound);
@@ -1863,49 +1661,6 @@ export async function startServer(options = {}) {
     };
   }
 
-  /* ── 公网可达性：只报证据，不把“发过包/有映射”说成“已打通”────── */
-  let lastNatpmp = null;
-  let lastStun = null;
-  function mappingValid() {
-    const m = expand.natpmp;
-    if (!m || !m.externalPort) return false;
-    return now() < m.mappedAt + Math.max(0, m.lifetimeSec * 1000) - 60_000;
-  }
-  function reachView() {
-    const local = localAddresses();
-    const inbound = security.lastInbound;
-    const fromRemote = !!inbound.from && !/^(::1|::ffff:127\.0\.0\.1|127\.)/.test(inbound.from);
-    const m = expand.natpmp;
-    const mv = mappingValid();
-    const advertised = [];
-    if (lastStun && lastStun.ok && lastStun.publicAddress) advertised.push(`${scheme || 'https'}://${lastStun.publicAddress.host}:${boundPort || opt.port}`);
-    if (mv) advertised.push(`${scheme || 'https'}://<公网IP>:${m.externalPort}`);
-    for (const a of local.filter((x) => !x.internal && x.family === 'IPv4')) advertised.push(`${scheme || 'https'}://${a.address}:${boundPort || opt.port}`);
-    let verdict = 'lan-only';
-    if (fromRemote && now() - inbound.at < 7 * 86400000) verdict = 'confirmed-inbound';
-    else if (mv) verdict = 'mapped';
-    else if (lastStun && lastStun.ok) verdict = 'stun-visible';
-    else if (!local.some((x) => !x.internal)) verdict = 'unknown';
-    return {
-      ok: true,
-      listening: { host: opt.host, port: boundPort || opt.port, scheme: scheme || (tlsInfo ? 'https' : 'http'), tls: tlsPublicView() },
-      local,
-      natpmp: lastNatpmp,
-      mapping: m ? { ...m, valid: mv, expiresAt: m.mappedAt + Math.max(0, m.lifetimeSec * 1000) } : null,
-      stun: lastStun,
-      evidence: inbound,
-      advertised,
-      verdict,
-      // confirmed-inbound 只来自“确实有外部实例连进来过”；mapped/stun-visible 仍需对端实测。
-      hints: verdict === 'confirmed-inbound'
-        ? ['最近 7 天有非回环来源成功抵达本机（来自被扩网请求）']
-        : verdict === 'mapped'
-          ? ['已拿到 NAT-PMP 外部端口；公网 IP 仍需 STUN 或对端实测，不能仅凭映射宣称可达']
-          : verdict === 'stun-visible'
-            ? ['STUN 报告了公网映射地址；请用另一台 FWArmy 实测 /api/expand/ping']
-            : ['目前只有本机/局域网地址；需要端口映射、公网 IPv6 或 VPN'],
-    };
-  }
 
   /* ── DHT 发现层（默认强制开启；只做设备发现，消息仍走凭据通道）──── */
   let dhtNodes = [];
@@ -1913,11 +1668,9 @@ export async function startServer(options = {}) {
   let dhtRetryDelayMs = cfg.dht.retryBaseMs;
   let dhtState = { lastPublishAt: 0, lastPublishSeq: 0, lastStoredOn: [], lastError: '', lastYindao: null, selfPublishes: 0 };
   const didLastPub = new Map(); // did → 上次代发布定位记录的时间
-  /** 自动推断 IP：探测到的公网 IP（ipify）优先（R135：IPv6 优先，无 IPv6 才用 IPv4），其次 STUN > NAT-PMP > 本机非回环 IPv6 > IPv4 > 回环。 */
+  /** 自动推断 IP：探测到的公网 IP（ipify）优先（R135：IPv6 优先，无 IPv6 才用 IPv4），其次本机非回环 IPv6 > IPv4 > 回环（R139：移除 STUN/NAT-PMP 优先级）。 */
   function autoAdvIp() {
     if (lastPub && (lastPub.ipv6 || lastPub.ipv4)) return lastPub.ipv6 || lastPub.ipv4;
-    if (lastStun && lastStun.ok && lastStun.publicAddress) return lastStun.publicAddress.host;
-    if (lastNatpmp && lastNatpmp.externalIp) return lastNatpmp.externalIp;
     for (const a of localAddresses()) {
       if (!a.internal && a.family === 'IPv6' && !/^fe80:/i.test(a.address) && !a.address.includes('%')) return a.address;
     }
@@ -4000,45 +3753,6 @@ export async function startServer(options = {}) {
       if (!saveSecurity()) return send(res, 500, { ok: false, error: 'persist-failed' });
       log('WARN', '管理员清空消息黑名单');
       return send(res, 200, { ok: true });
-    }
-    if (req.method === 'GET' && p === '/api/admin/reach') return send(res, 200, reachView());
-    if (req.method === 'POST' && p === '/api/admin/reach') {
-      const j = await body(req);
-      const action = String(j.action || '');
-      if (action === 'natpmp-probe') {
-        lastNatpmp = await natpmpProbe({ gateways: Array.isArray(j.gateways) ? j.gateways.map(String).slice(0, 8) : [] });
-        return send(res, 200, { ok: true, natpmp: lastNatpmp, view: reachView() });
-      }
-      if (action === 'stun') {
-        const servers = Array.isArray(j.servers) ? j.servers.map((x) => String(x).slice(0, 253)).filter(Boolean).slice(0, 8) : [];
-        lastStun = await stunBinding({ servers, timeoutMs: 1800 });
-        return send(res, 200, { ok: true, stun: lastStun, view: reachView() });
-      }
-      if (action === 'natpmp-map') {
-        if (j.confirm !== true) return send(res, 400, { ok: false, error: 'confirm-required' });
-        const gw = String(j.gateway || (lastNatpmp && lastNatpmp.gateway) || (gatewayCandidates()[0] || ''));
-        const r = await natpmpMap({ gateway: gw, internalPort: boundPort || opt.port, externalPort: Number(j.externalPort) || 0, leaseSec: Math.max(60, Math.min(86400, Number(j.leaseSec) || 7200)), protocol: 'tcp' });
-        if (!r.ok) return send(res, 200, { ok: true, mapped: false, result: r });
-        const prevNat = expand.natpmp;
-        expand.natpmp = {
-          gateway: gw, internalPort: r.internalPort, externalPort: r.externalPort,
-          lifetimeSec: r.lifetime, mappedAt: Date.now(), protocol: 'tcp',
-        };
-        if (!saveExpand()) {
-          expand.natpmp = prevNat;
-          return send(res, 500, { ok: false, error: 'persist-failed' });
-        }
-        log('INFO', `NAT-PMP：TCP ${r.internalPort} → 外部 ${r.externalPort}（租期 ${r.lifetime}s）`);
-        return send(res, 200, { ok: true, mapped: true, result: r, view: reachView() });
-      }
-      if (action === 'natpmp-unmap') {
-        const m = expand.natpmp;
-        if (!m) return send(res, 200, { ok: true, unmapped: false, error: 'no-mapping' });
-        const r = await natpmpMap({ gateway: m.gateway, internalPort: m.internalPort, externalPort: 0, leaseSec: 0, protocol: 'tcp' });
-        if (r.ok) { expand.natpmp = null; if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' }); }
-        return send(res, 200, { ok: true, unmapped: r.ok, result: r, view: reachView() });
-      }
-      return send(res, 400, { ok: false, error: 'bad-action' });
     }
     if (req.method === 'GET' && p === '/api/admin/tls') return send(res, 200, { ok: true, tls: tlsPublicView(), config: cfg.tls });
     if (req.method === 'POST' && p === '/api/admin/tls') {
