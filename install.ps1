@@ -87,9 +87,9 @@ try {
     }
   }
 
-  # GUI 子系统 exe（R143 起）在 pwsh 下 --version 的 stdout 可能不可用——改用退出码判断
-  & (Join-Path $InstallDir 'FWArmy.exe') --version | Out-Null
-  if ($LASTEXITCODE -ne 0) { Fail 'installed binary cannot run (Smart App Control may have blocked it)' }
+  # GUI 子系统 exe（R143 起）：Start-Process -Wait 拿退出码——pwsh 下直接 & 调用 GUI 程序行为不可靠
+  $pSmoke = Start-Process -FilePath (Join-Path $InstallDir 'FWArmy.exe') -ArgumentList '--version' -Wait -PassThru
+  if ($pSmoke.ExitCode -ne 0) { Fail 'installed binary cannot run (Smart App Control may have blocked it)' }
 
   Write-Host ''
   Write-Host "FWArmy $Version installed to: $InstallDir" -ForegroundColor Green
