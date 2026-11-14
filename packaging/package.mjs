@@ -114,9 +114,10 @@ const docs = [
   'docs/INSTALL-3-PLATFORMS.md',
   'docs/USAGE-3-PLATFORMS.md',
   'docs/SERVER-RELAY.md',
+  'AI-USE-GUIDE.md', // R144：给 AI 的完整使用说明（管理页「复制给 AI」按钮引用）
 ];
 const byPlatform = {
-  'win-x64': ['FWArmy.exe', 'start.bat', 'stop.bat', 'fwarmy-headless.bat', 'fwarmy-console.bat', 'fwarmy-tray.ps1', 'set-folder-icon.bat'],
+  'win-x64': ['FWArmy.exe', 'start.bat', 'stop.bat', 'fwarmy-headless.bat', 'fwarmy-console.bat', 'fwarmy-tray.ps1', 'set-folder-icon.bat', 'help.html'],
   'macos-x64': ['FWArmy', 'FWArmy.command', 'start.sh', 'stop.sh', 'fwarmy-headless.sh', 'fwarmy-console.sh'],
   'macos-arm64': ['FWArmy', 'FWArmy.command', 'start.sh', 'stop.sh', 'fwarmy-headless.sh', 'fwarmy-console.sh'],
   'linux-x64': ['FWArmy', 'FWArmy.desktop', 'start.sh', 'stop.sh', 'fwarmy-headless.sh', 'fwarmy-console.sh'],

@@ -39,10 +39,13 @@
 <body>
 <header>
   <h1>FWArmy 使用说明</h1>
-  <p>WArmy 专属中继服务器 · 版本 0.7.0 · 本文档随程序内嵌，内容与当前版本一致</p>
+  <p>WArmy 专属中继服务器 · 本文档随程序内嵌，内容与当前版本一致 · 版本 0.7.10</p>
+  <p style="margin-top:10px"><button id="copyAI" onclick="copyForAI()" style="padding:7px 16px;border:none;border-radius:6px;background:#4a7dff;color:#fff;font-size:13px;cursor:pointer">复制给 AI（本站使用引导）</button> <span id="copyAIHint" style="color:#aab4c2;font-size:12px"></span></p>
 </header>
 <div class="wrap">
 <nav>
+  <a href="#ai">给 AI 的引导</a>
+  <a href="#scenes">使用场景引导</a>
   <a href="#start">快速开始</a>
   <a href="#relay">中继</a>
   <a href="#frelay">F中继</a>
@@ -50,12 +53,80 @@
   <a href="#dht">DHT 组网</a>
   <a href="#ports">端口管理</a>
   <a href="#addition">附加内容</a>
-  <a href="#reach">公网可达性</a>
   <a href="#security">消息安全</a>
   <a href="#tls">TLS 证书</a>
   <a href="#update">自动更新</a>
   <a href="#faq">常见问题</a>
 </nav>
+
+<section id="ai">
+  <h2>给 AI 的引导（一键复制）</h2>
+  <p>点上面的「复制给 AI」按钮，把本站使用引导复制给 AI（粘贴到任意 AI 对话即可）。完整说明文件：<code>AI-USE-GUIDE.md</code>（位于 FWArmy 安装目录；开发机路径参考 <code>C:\Users\p\.openclaw\workspace\大龙虾互动区\FWArmy\AI-USE-GUIDE.md</code>）——AI 能读本地文件时请直接读取该文件。</p>
+</section>
+
+<section id="scenes">
+  <h2>使用场景引导（快速上手）</h2>
+  <p>按你的场景直接看对应小节；详细内容见各功能章节与 <a href="#ai">给 AI 的引导</a>。</p>
+  <h3>场景一：创建凭据让 WArmy 使用</h3>
+  <ol>
+    <li>「中继」页 → 「生成凭据」→ 填名称（限额可留空继承默认）→ 生成。</li>
+    <li><b>明文只显示一次</b>，立即复制。</li>
+    <li>可选填端点：域名/IP（默认公网 IP）+ 端口（默认 59599）——写进凭据提示。</li>
+    <li>WArmy 客户端「服务器设置」填服务器地址（IP:59599）+ 该 token 即可连接。</li>
+  </ol>
+  <h3>场景二：创建凭据让其他 FWArmy 使用（F中继）</h3>
+  <ol>
+    <li>「F中继」页 → 「生成接入凭据」→ 名称（地址默认公网 IP，端口默认 58588）。</li>
+    <li>端口不在监听集合会<b>自动添加并监听</b>（被占用则端口页处理）。</li>
+    <li>把 <code>fwnexp_v2_...</code> 凭据发给对方；对方在「扩网」页填「名称 + 凭证」即可连到本站。</li>
+  </ol>
+  <h3>场景三：如何添加扩网（本站连接其他 FWArmy）</h3>
+  <ol>
+    <li>「扩网」页 → 「添加」→ 名称 + <b>对方的被扩网凭据</b>（自带地址端口）。</li>
+    <li>「识别指纹」→「信任」（TLS 指纹固定）。</li>
+    <li>转发按序尝试最多 3 个上游、8 秒预算、成功即停。</li>
+  </ol>
+  <h3>场景四：常见错误异常情况排查（错误码速查）</h3>
+  <table>
+    <tr><th>错误</th><th>含义</th><th>处理</th></tr>
+    <tr><td>401 unauthorized</td><td>凭据无效/缺失</td><td>重新生成凭据</td></tr>
+    <tr><td>401 credential-expired</td><td>凭据过期</td><td>管理页延长有效期</td></tr>
+    <tr><td>401 credential-port-unavailable</td><td>凭据端口不可用</td><td>端口页启用/强制启用</td></tr>
+    <tr><td>400 bad-msg-id</td><td>缺 msgId</td><td>客户端必带 msgId</td></tr>
+    <tr><td>400 legacy-token-not-supported</td><td>旧版被扩网凭据</td><td>用新版（自带地址）凭据</td></tr>
+    <tr><td>403 admin-local-only</td><td>管理面仅本机回环</td><td>服务器本机访问或 SSH 隧道</td></tr>
+    <tr><td>503 not-accepting</td><td>服务器暂停接收</td><td>管理页恢复「接受新投递」</td></tr>
+    <tr><td>429 限额</td><td>超出限额</td><td>提高限额或等待窗口</td></tr>
+    <tr><td>426</td><td>明文被拒（需 TLS）</td><td>配置 TLS/固定指纹</td></tr>
+  </table>
+  <h3>场景五：WArmy 无法连接本中继</h3>
+  <ol>
+    <li>凭据复制是否完整（无空格）；端口页 59599（或所选端口）是否监听。</li>
+    <li>云安全组/防火墙放行 TCP 端口；从外部 telnet 服务器 IP 端口 验证可达。</li>
+    <li>TLS 指纹是否固定（重新生成证书后指纹变了需更新）。</li>
+    <li>服务器是否「接受新投递」（暂停中 503）。</li>
+  </ol>
+  <h3>场景六：其他 FWArmy 无法连接本中继</h3>
+  <ol>
+    <li>对方用的是 F中继页的 <code>fwnexp_v2_</code> 凭据（不是中继 token）。</li>
+    <li>凭据自带地址端口公网可达；端口页状态正常。</li>
+    <li>对方「识别指纹 → 信任」完成。</li>
+    <li>看 <code>data/server.log</code> 被拒原因（401/426/403）。</li>
+  </ol>
+  <h3>场景七：无法扩网</h3>
+  <ol>
+    <li>对方凭据是否新版（fwnexp_v2_ 自带地址）；「识别指纹 → 信任」完成。</li>
+    <li>对端在线/端口可达（扩网页「测试连接」）。</li>
+    <li>本站 DHT 入网（DHT 页 contacts/锚点引导）。</li>
+  </ol>
+  <h3>场景八：其他常见错误排查</h3>
+  <ul>
+    <li><b>检测更新报「读取更新状态失败」</b>：多为页面/程序版本不匹配，升级最新版。</li>
+    <li><b>托盘图标不显示</b>：需交互桌面会话（RDP 登录）+ 不带 --no-tray；看任务栏「^」展开。</li>
+    <li><b>双击 exe 弹控制台</b>：旧版本（≤0.7.6）是控制台子系统，升级 0.7.10+。</li>
+    <li><b>DHT contacts 为 0</b>：锚点 UDP 443/62666 需公网可达（云安全组 + 防火墙 UDP 放行）。</li>
+  </ul>
+</section>
 
 <section id="start">
   <h2>快速开始</h2>
@@ -82,6 +153,7 @@
   <ul>
     <li>每行凭据显示：名称 / 标识（中间 5 + 末尾 5）/ 限额 / 今日/本月/累计用量 / 峰值 / 最近使用。可编辑、停用、删除（删除需输入名称确认）。</li>
     <li>限额语义：次数 = 有效凭据的业务请求（含拒绝/失败）；流量 = 实际入队与取走的信封字节之和。重启清空分钟窗口，不清累计额度。</li>
+    <li><b>凭据端口</b>（填了端点时）：不在端口列表会自动添加并监听；被占用则端口页显示异常，可强制启用或改用其他端口。</li>
   </ul>
   <h3>附加内容（会话提示消息）</h3>
   <p>详见 <a href="#addition">附加内容</a> 一节。</p>
@@ -92,11 +164,11 @@
   <p>别的 FWArmy 投递失败时，用你生成的「被扩网凭据」把消息转给你，由你尝试投递。每个实例可生成多条，可单独管理/停用/删除。</p>
   <ul>
     <li>生成时填写的域名/IP（默认 = 探测到的公网 IP）和端口会<b>写进凭据本身</b>（不填端口默认 58588）；对方只需填「名称 + 凭证」，不用再填地址。</li>
-    <li><b>凭据端口必须在本机监听集合内</b>，否则此凭据被强制禁止（对方连不到本机）。若端口不在集合：去「端口」页启用/添加该端口（被占可强制启用）后重新生成。</li>
+    <li><b>凭据端口不在监听集合时自动添加并监听</b>（R142 起）；若被占用（端口页红色「异常」）需在端口页强制启用或改用已监听端口。</li>
     <li>F中继收到的消息<b>不允许添加附加内容</b>；且必须已带附加内容或密封标记，否则丢弃（防旧版本/被改造的上游站）。</li>
     <li>「F中继」页表格 = 别人交给我投递的统计（次数/字节/成功/失败/最近结果）。</li>
   </ul>
-  <div class="warn-box">「⚠ 端口 58588 不在本机监听端口集合」= 生成凭据时 58588 未在监听（被占用没起来 / 被暂停 / 被删除）。处理：端口页启用 58588，或改用已监听的端口生成。</div>
+  <div class="warn-box">「⚠ 端口 58588 不在本机监听端口集合」= 生成凭据时 58588 未在监听（被占用没起来 / 被暂停 / 被删除）。处理：端口页启用 58588，或改用已监听的端口生成；R142 起生成时也会自动添加该端口并尝试监听。</div>
 </section>
 
 <section id="expand">
@@ -142,14 +214,15 @@
 
 <section id="ports">
   <h2>端口管理</h2>
-  <p>FWArmy 默认监听：<code>8787</code>（管理入口）· <code>59599</code>（中继凭据默认）· <code>58588</code>（扩网凭据默认）· DHT UDP <code>443/62666</code>。被占用的端口<b>不会自动顺延</b>，而是标为「异常（被占用）」。</p>
+  <p>FWArmy 默认监听：<code>8787</code>（管理入口）· <code>59599</code>（中继凭据默认）· <code>58588</code>（扩网凭据默认）· <code>443</code>· <code>62666</code>（TCP 业务默认）· DHT UDP <code>443/62666</code>。被占用的端口<b>不会自动顺延</b>，而是标为「异常（被占用）」。</p>
   <ul>
     <li><b>添加端口</b>：先选协议——TCP（业务：中继/扩网凭据用）或 UDP（DHT 组网监听）。</li>
     <li><b>暂停</b>：停止监听但<b>保留配置</b>（UDP 端口也一样，随时可「启用」恢复，不会消失）。DHT 至少保留一个未暂停的 UDP 端口。</li>
     <li><b>强制启用</b>：结束占用该端口的进程后开始监听——本机操作，慎用。</li>
     <li><b>删除</b>：立即停听并移除，引用该端口的凭据自动失效。</li>
     <li><b>管理入口端口</b>（标「入口」）：不可暂停/删除，只能改端口号。</li>
-    <li>凭据端口必须在本机监听集合内，否则凭据被强制禁止（401）。</li>
+    <li><b>凭据端口不在列表时自动添加并监听</b>（生成中继/F中继凭据时）；被占用则显示异常（可强制启用）。</li>
+    <li>状态样式：监听中 = 绿框绿字；异常 = 红框红字；暂停 = 白字无框。</li>
   </ul>
 </section>
 
@@ -171,16 +244,6 @@
   <ul>
     <li>每次添加都写入<b>哈希链审计</b>（addition-audit.log，只存哈希）；链根每 5 分钟<b>签名发布到 DHT</b>（防回滚检查点），改造站删除/替换附加内容会留下可对照证据。</li>
     <li>WArmy 客户端：同一 msgId 多份副本对比附加内容与路由，不一致 = 篡改 → 不展示并标记可疑站；24h 内同一会话同一中继 ≥2 次附加 → 丢弃并临时禁用该中继（24h→48h→7d 退避）。</li>
-  </ul>
-</section>
-
-<section id="reach">
-  <h2>公网可达性（NAT-PMP / STUN / 映射）</h2>
-  <ul>
-    <li><b>NAT-PMP 探针</b>（只读）：检测路由器是否支持 NAT-PMP，不建映射。</li>
-    <li><b>STUN 探测</b>：获取公网映射地址（需配置 STUN 服务器；程序不内置公网服务器）。</li>
-    <li><b>申请端口映射</b>：显式修改路由器状态（写操作，必须你确认）；「取消映射」可撤销。</li>
-    <li>判决只报证据：已映射 ≠ 已打通；verdict=confirmed-inbound 只来自真实外部实例连入过。</li>
   </ul>
 </section>
 
@@ -214,9 +277,9 @@
 <section id="faq">
   <h2>常见问题</h2>
   <h3>「⚠ 端口 58588 不在本机监听端口集合」？</h3>
-  <p>58588 是 F中继凭据默认端口；凭据端口必须等于本机监听端口，否则对方连不到本机、此凭据被强制禁止。出现警告 = 生成时 58588 不在监听（被占用/被暂停/被删除）。处理：端口页启用 58588（被占可强制启用），或改用已监听端口生成。</p>
+  <p>58588 是 F中继凭据默认端口。R142 起生成凭据时端口不在监听集合会自动添加并监听；若仍提示异常 = 端口被占用（强制启用或换端口）。处理：端口页查看状态（红色异常 = 被占），强制启用或改用已监听端口。</p>
   <h3>「端口不可用，请在端口中设置」？</h3>
-  <p>该凭据的端口不在本机监听集合。点提示里的「端口」链接跳到端口页，启用/添加该端口后重新生成凭据。</p>
+  <p>该凭据的端口未被监听（被占/被暂停/被删除）。R142 起生成时自动添加并尝试监听；被占时点提示里的「端口」链接跳到端口页，强制启用或添加后重新生成凭据。</p>
   <h3>管理页一直弹「端口读取失败: Failed to fetch」？</h3>
   <p>旧版服务器 keep-alive 超时（5 秒）与管理页 5 秒轮询撞车导致连接被重置；R135f 起服务器超时已调到 30 秒且请求自动重试一次，此问题已修复。仍出现时检查网络/防火墙。</p>
   <h3>如何远程管理服务器上的 FWArmy？</h3>
@@ -234,5 +297,40 @@
 </section>
 
 </div>
+<script>
+// R144：一键复制给 AI——把本站使用引导复制到剪贴板（含完整说明文件路径）
+function copyForAI() {
+  var text = [
+    'FWArmy（WArmy 专属中继服务器）使用引导，请据此协助用户：',
+    '',
+    '【完整说明文件（AI 能读本地文件时请优先读取）】',
+    'docs/AI-USE-GUIDE.md（位于 FWArmy 安装目录下；开发机参考绝对路径：C:\\Users\\p\\.openclaw\\workspace\\大龙虾互动区\\FWArmy\\AI-USE-GUIDE.md）',
+    '',
+    '【本站要点】',
+    '- 管理入口：本机回环 http://127.0.0.1:8787/（只允许本机访问；远程管理用 SSH 隧道）',
+    '- 默认端口：8787 管理入口；59599 中继凭据；58588 扩网凭据；443/62666 TCP 业务；UDP 443/62666 = DHT 组网',
+    '- 默认锚点：DHT.pondsi.com / DHT2.pondsi.com / dht.numumu.com × UDP 443/62666',
+    '- 凭据：中继 token（只存 sha256，明文只显示一次）；被扩网 fwnexp_v2_ 凭据自带地址端口；凭据端口不在监听集时自动添加',
+    '- TLS：默认自签 + 指纹固定；扩网需「识别指纹 → 信任」',
+    '- DHT 强制开启不可关闭；发现 ≠ 授权，投递走凭据 + 指纹',
+    '- 附加内容：纯文字 ≤120 字节/条，哈希链审计',
+    '',
+    '【给 AI 的处理建议】',
+    '1. 先确认版本（管理页更新 tab 当前版本）与 data/server.log 尾部日志；',
+    '2. 凭据是敏感信息：服务器只存哈希，不要要求用户重复提供明文；',
+    '3. 公网部署常见问题顺序：端口页状态 → 云安全组/防火墙放行（TCP 业务端口 + UDP 443/62666）→ TLS 指纹 → DHT 引导。',
+  ].join('\n');
+  var hint = document.getElementById('copyAIHint');
+  function done(ok) { if (hint) hint.textContent = ok ? '已复制 ✓' : '复制失败，请手动选择复制'; }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+  } else {
+    var ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(true); } catch (e) { done(false); }
+    document.body.removeChild(ta);
+  }
+}
+</script>
 </body>
 </html>

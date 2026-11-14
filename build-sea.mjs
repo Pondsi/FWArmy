@@ -126,8 +126,8 @@ if (process.platform === 'win32') {
 }
 
 console.log('[4/5] 组装便携目录（启动脚本/说明/文档）');
-const common = ['admin.html', 'README.md', 'install.ps1', 'install.sh', 'FWArmy.command', 'FWArmy.desktop'];
-const docsList = ['docs/INSTALL-3-PLATFORMS.md', 'docs/USAGE-3-PLATFORMS.md', 'docs/SERVER-RELAY.md', 'docs/RELEASE-SOP.md'];
+const common = ['admin.html', 'README.md', 'install.ps1', 'install.sh', 'FWArmy.command', 'FWArmy.desktop', 'help.html'];
+const docsList = ['docs/INSTALL-3-PLATFORMS.md', 'docs/USAGE-3-PLATFORMS.md', 'docs/SERVER-RELAY.md', 'docs/RELEASE-SOP.md', 'AI-USE-GUIDE.md'];
 const perPlatform = process.platform === 'win32'
   ? ['start.bat', 'stop.bat', 'fwarmy-headless.bat', 'fwarmy-console.bat', 'fwarmy-tray.ps1']
   : ['start.sh', 'stop.sh', 'fwarmy-headless.sh', 'fwarmy-console.sh',

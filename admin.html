@@ -109,6 +109,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <div class="hrow">
       <div class="pills"><div class="pills" id="pills"></div><button id="powerBtn" class="good" disabled data-i18n="power.loading">加载状态…</button></div>
       <div class="pubip" style="gap:6px" id="helpBar">
+        <button class="sm" id="aiCopyBtn" title="复制本站使用引导给 AI（含完整说明文件路径），粘贴到任意 AI 对话即可">复制给 AI</button>
         <button class="sm" id="helpBtn" data-i18n="btn.help" title="打开使用说明帮助文档（本地新窗口，含全部功能与常见问题）">帮助</button>
       </div>
     </div>
@@ -1707,6 +1708,52 @@ $('#helpBtn').addEventListener('click', async () => {
     } catch { toast('帮助文档打开失败', true); }
   }
 });
+// R144：一键复制给 AI——动态拼本站信息 + 完整说明文件路径
+function copyForAI() {
+  const info = {
+    version: (U && U.current) || '—',
+    entry: (P && P.entryPort) || '—',
+    ports: (P && P.items ? P.items.map((x) => `${x.protocol === 'udp' ? 'UDP' : 'TCP'} ${x.port}:${x.status}`).join('；') : '—'),
+    anchors: (D && D.defaultAnchors ? D.defaultAnchors.map((a) => `${a.host}:${a.port}`).join('、') : '—'),
+    pubIp: (S && S.publicIp) ? ((S.publicIp.ipv4 || '无 IPv4') + ' / ' + (S.publicIp.ipv6 || '无 IPv6')) : '—',
+  };
+  const text = [
+    'FWArmy（WArmy 专属中继服务器）使用引导，请据此协助用户：',
+    '',
+    '【完整说明文件（AI 能读本地文件时请优先读取）】',
+    'AI-USE-GUIDE.md（位于 FWArmy 安装目录下；开发机参考绝对路径：C:\\Users\\p\\.openclaw\\workspace\\大龙虾互动区\\FWArmy\\AI-USE-GUIDE.md）',
+    '',
+    '【本站信息（实时）】',
+    `- 当前版本：v${info.version}`,
+    `- 管理入口：本机回环 http://127.0.0.1:${info.entry}/（只允许本机访问；远程管理用 SSH 隧道）`,
+    `- 端口状态：${info.ports}`,
+    `- 默认锚点：${info.anchors}`,
+    `- 公网 IP：${info.pubIp}`,
+    '',
+    '【关键概念】',
+    '- 凭据：中继 token（只存 sha256，明文只显示一次）；被扩网 fwnexp_v2_ 凭据自带地址端口；凭据端口不在监听集时自动添加',
+    '- TLS：默认自签 + 指纹固定；扩网需「识别指纹 → 信任」',
+    '- DHT 强制开启不可关闭；发现 ≠ 授权，投递走凭据 + 指纹；默认锚点 UDP 443/62666',
+    '- 附加内容：纯文字 ≤120 字节/条，哈希链审计',
+    '',
+    '【给 AI 的处理建议】',
+    '1. 先确认版本（管理页更新 tab 当前版本）与 data/server.log 尾部日志；',
+    '2. 凭据是敏感信息：服务器只存哈希，不要要求用户重复提供明文；',
+    '3. 公网部署常见问题顺序：端口页状态 → 云安全组/防火墙放行（TCP 业务端口 + UDP 443/62666）→ TLS 指纹 → DHT 引导。',
+  ].join('\n');
+  const copy = () => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => toast('已复制给 AI ✓'), () => toast('复制失败，请手动复制', true));
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); toast('已复制给 AI ✓'); } catch { toast('复制失败，请手动复制', true); }
+      document.body.removeChild(ta);
+    }
+  };
+  copy();
+}
+$('#aiCopyBtn').addEventListener('click', copyForAI);
 async function refresh() {
   if (refreshInFlight) return;
   refreshInFlight = true;

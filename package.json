@@ -1,6 +1,6 @@
 {
   "name": "fwarmy",
-  "version": "0.7.10",
+  "version": "0.7.11",
   "private": true,
   "description": "FWArmy standalone relay/rendezvous server: presence + opaque envelope forwarding, no message storage, per-credential usage stats and limits, multi-FWArmy expand network.",
   "type": "module",
