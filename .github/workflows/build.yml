@@ -101,7 +101,8 @@ jobs:
           $env:FWARMY_SKIP_SHORTCUT = '1'
           & ..\install.ps1
           $exe = Join-Path $tmp 'FWArmy\FWArmy.exe'
-          & $exe --version
+          & $exe --version | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'installed exe --version failed' }
           New-Item -ItemType Directory -Force (Join-Path $tmp 'FWArmy\data') | Out-Null
           Set-Content (Join-Path $tmp 'FWArmy\data\keep.txt') 'keep'
           & ..\install.ps1 | Out-Null

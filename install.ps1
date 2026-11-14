@@ -1,30 +1,17 @@
 # FWArmy installer for Windows x64 (no code-signing certificate required)
 #
-#   irm https://github.com/Pondsi/FWArmy/releases/download/v__VERSION__/install.ps1 | iex
+#   irm https://github.com/Pondsi/FWArmy/releases/download/v0.5.1/install.ps1 | iex
 #
 # Downloads the single-file zip, verifies SHA256SUMS, extracts to %LOCALAPPDATA%\FWArmy,
 # and creates a Start Menu shortcut. No admin rights, no auto-start, and never deletes data\.
 #
 # Environment variables:
-#   FWARMY_VERSION        override version (default: read from package.json; release assets
-#                         carry the real version substituted by CI)
+#   FWARMY_VERSION        override version (default 0.5.1)
 #   FWARMY_BASE           override download base (a URL or a local directory; for tests)
 #   FWARMY_SKIP_SHORTCUT  set to 1 to skip the Start Menu shortcut (for tests)
 $ErrorActionPreference = 'Stop'
 
-$Version = $env:FWARMY_VERSION
-if (-not $Version) {
-  # Release assets get __VERSION__ substituted by CI; repository runs (CI smoke, local)
-  # read the version from the package.json next to this script.
-  $Version = '__VERSION__'
-  $pkg = Join-Path $PSScriptRoot 'package.json'
-  if ($PSScriptRoot -and (Test-Path -LiteralPath $pkg)) {
-    try { $Version = (Get-Content -Raw -LiteralPath $pkg | ConvertFrom-Json).version } catch { }
-  }
-  if ($Version -eq '__VERSION__') {
-    throw "FWArmy install failed: cannot determine version. Set `$env:FWARMY_VERSION or run this script from the repository root."
-  }
-}
+$Version = if ($env:FWARMY_VERSION) { $env:FWARMY_VERSION } else { '0.5.1' }
 $Repo = if ($env:FWARMY_REPO) { $env:FWARMY_REPO } else { 'Pondsi/FWArmy' }
 $Base = if ($env:FWARMY_BASE) { $env:FWARMY_BASE } else { "https://github.com/$Repo/releases/download/v$Version" }
 $Asset = "FWArmy-$Version-win-x64.zip"
@@ -100,8 +87,9 @@ try {
     }
   }
 
-  $v = & (Join-Path $InstallDir 'FWArmy.exe') --version
-  if (-not ($v -match 'FWArmy')) { Fail 'installed binary cannot run (Smart App Control may have blocked it)' }
+  # GUI 子系统 exe（R143 起）在 pwsh 下 --version 的 stdout 可能不可用——改用退出码判断
+  & (Join-Path $InstallDir 'FWArmy.exe') --version | Out-Null
+  if ($LASTEXITCODE -ne 0) { Fail 'installed binary cannot run (Smart App Control may have blocked it)' }
 
   Write-Host ''
   Write-Host "FWArmy $Version installed to: $InstallDir" -ForegroundColor Green
