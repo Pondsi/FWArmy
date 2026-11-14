@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.4';
+export const VERSION = '0.7.5';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -4338,7 +4338,7 @@ export async function startServer(options = {}) {
         }
       }
       if (!fs.existsSync(trayPath)) return;
-      spawnDetached('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', trayPath, '-Port', String(entryPort), '-Pid', String(process.pid), '-Data', DATA]);
+      spawnDetached('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', trayPath, '-Port', String(entryPort), '-MainPid', String(process.pid), '-Data', DATA]);
       log('INFO', `[fwarmy] 系统托盘已启动（管理页 http://127.0.0.1:${entryPort}/）`);
     } catch (e) {
       log('WARN', '托盘启动失败：' + String((e && e.message) || e).slice(0, 120));

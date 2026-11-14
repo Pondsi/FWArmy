@@ -3,9 +3,10 @@
 # 主进程退出后本脚本自动退出；无交互桌面（CI/服务会话）时静默退出，不影响主进程。
 param(
   [int]$Port = 8787,
-  [int]$Pid = 0,
+  [int]$MainPid = 0,
   [string]$Data = ''
 )
+# R141：主进程 pid 参数名不用 $Pid——与 PowerShell 内置只读变量 $PID 冲突，脚本一启动就退出，托盘图标从未显示过。
 $ErrorActionPreference = 'SilentlyContinue'
 
 # 无交互桌面（Session 0 / 非交互服务）→ 静默退出
@@ -48,8 +49,8 @@ try {
   $ico = $null
   $icoPath = Join-Path $PSScriptRoot 'assets\fwarmy.ico'
   if (Test-Path $icoPath) { $ico = New-Object System.Drawing.Icon($icoPath) }
-  if (-not $ico -and $Pid -gt 0) {
-    try { $ico = [System.Drawing.Icon]::ExtractAssociatedIcon((Get-Process -Id $Pid).Path) } catch { }
+  if (-not $ico -and $MainPid -gt 0) {
+    try { $ico = [System.Drawing.Icon]::ExtractAssociatedIcon((Get-Process -Id $MainPid).Path) } catch { }
   }
   if (-not $ico) { $ico = [System.Drawing.SystemIcons]::Application }
 
@@ -72,8 +73,8 @@ try {
   $timer = New-Object System.Windows.Forms.Timer
   $timer.Interval = 2000
   $timer.add_Tick({
-    if ($Pid -gt 0) {
-      try { $null = Get-Process -Id $Pid -ErrorAction Stop } catch {
+    if ($MainPid -gt 0) {
+      try { $null = Get-Process -Id $MainPid -ErrorAction Stop } catch {
         $timer.Stop()
         $script:tray.Visible = $false
         [System.Windows.Forms.Application]::Exit()
