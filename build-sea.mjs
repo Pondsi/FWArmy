@@ -111,6 +111,18 @@ if (process.platform === 'win32') {
   } catch (e) {
     console.log('警告：图标注入跳过（' + String((e && e.message) || e).slice(0, 120) + '）——npm i resedit 后自动启用');
   }
+  // R143：PE Subsystem 改为 GUI(2)——sea-config 的 windowsSubsystem 不生效、postject@1.0.0-alpha.6 不支持参数，直接改字节（0.6.7 起产物一直是 Console，双击弹控制台）
+  try {
+    const buf = fs.readFileSync(outExe);
+    const peOff = buf.readUInt32LE(0x3C);
+    const subOff = peOff + 24 + 68; // OptionalHeader.Subsystem（PE32/PE32+ 通用偏移）
+    const before = buf.readUInt16LE(subOff);
+    buf.writeUInt16LE(2, subOff);
+    fs.writeFileSync(outExe, buf);
+    console.log(`PE 子系统改为 GUI（${before} → 2）`);
+  } catch (e) {
+    console.log('警告：PE 子系统修改失败（' + String((e && e.message) || e).slice(0, 120) + '）');
+  }
 }
 
 console.log('[4/5] 组装便携目录（启动脚本/说明/文档）');
