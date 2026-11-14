@@ -1728,7 +1728,7 @@ function copyForAI() {
     'FWArmy（WArmy 专属中继服务器）使用引导，请据此协助用户：',
     '',
     '【完整说明文件（AI 能读本地文件时请优先读取）】',
-    'AI-USE-GUIDE.md（位于 FWArmy 安装目录下；开发机参考绝对路径：C:\\Users\\p\\.openclaw\\workspace\\大龙虾互动区\\FWArmy\\AI-USE-GUIDE.md）',
+    'AI-USE-GUIDE.md（位于 FWArmy 安装目录下；AI 能读本地文件时请读取，否则用下面内容即可）',
     '',
     '【本站信息（实时）】',
     `- 当前版本：v${info.version}`,
@@ -1748,6 +1748,7 @@ function copyForAI() {
     '2. 凭据是敏感信息：服务器只存哈希，不要要求用户重复提供明文；',
     '3. 公网部署常见问题顺序：端口页状态 → 云安全组/防火墙放行（TCP 业务端口 + UDP 443/62666）→ TLS 指纹 → DHT 引导。',
   ].join('\n');
+  window.__aiCopyText = text; // 供测试/调试读取（不参与复制内容语义）
   const copy = () => {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(() => toast('已复制给 AI ✓'), () => toast('复制失败，请手动复制', true));
