@@ -546,11 +546,17 @@ document.addEventListener('DOMContentLoaded', () => {
   const sel = $('#langSel');
   if (sel) { orderedLangs().forEach(([c, n]) => { const o = document.createElement('option'); o.value = c; o.textContent = n; sel.appendChild(o); }); sel.addEventListener('change', () => setLang(sel.value)); }
   applyI18n();
-  // R138：localStorage 无记录时查服务端（换端口/换浏览器/重启都记住）；服务端也无记录才弹首启窗
+  // R138：localStorage 无记录时查服务端（换端口/换浏览器/重启都记住）；R148：服务端「已展示过弹窗」时不再每次弹（托盘/无痕浏览器）
   if (!localStorage.getItem('fwarmy.lang')) {
     api('/api/admin/lang').then((j) => {
-      if (j && j.ok && j.lang) setLang(j.lang, false);
-      else $('#langModal').classList.add('open');
+      if (j && j.ok) {
+        if (j.lang) setLang(j.lang, false);
+        else if (j.asked) { /* 服务端已问过语言，直接默认（zh-CN），不再弹窗 */ }
+        else {
+          $('#langModal').classList.add('open');
+          api('/api/admin/lang', { asked: true }).catch(() => {}); // 标记已展示——之后任何浏览器/托盘打开都不再弹
+        }
+      } else $('#langModal').classList.add('open');
     }).catch(() => $('#langModal').classList.add('open'));
   }
 });

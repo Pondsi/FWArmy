@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.14';
+export const VERSION = '0.7.15';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -1063,6 +1063,8 @@ export async function startServer(options = {}) {
   cfg.ports = normPorts(cfg.ports);
   // R138：语言选择服务端持久化——null 表示从未选择（前端据此决定首启弹窗）；换端口/换浏览器/重启都记住。
   cfg.lang = (cfgRaw && typeof cfgRaw.lang === 'string' && UI_LANGS.includes(cfgRaw.lang)) ? cfgRaw.lang : null;
+  // R148：首启弹窗是否已展示过（托盘/无痕浏览器打开不再每次弹）
+  cfg.langAsked = !!(cfgRaw && cfgRaw.langAsked === true);
   if (cfg.tls.mode === 'off') log('WARN', 'TLS 已关闭：业务凭据会以明文跨网传输，只建议在回环/VPN 内使用');
   const secret = createSecretBox(DATA);
   /** 旧版 first-credential.txt 是明文秘密：启动时改存 AES-GCM（.enc）并删除明文。 */
@@ -3289,15 +3291,17 @@ export async function startServer(options = {}) {
   async function adminApi(req, res, u) {
     const p = u.pathname;
     if (req.method === 'GET' && p === '/api/admin/stats') return send(res, 200, buildStats(u));
-    if (req.method === 'GET' && p === '/api/admin/lang') return send(res, 200, { ok: true, lang: cfg.lang }); // R138：语言持久化（null=未选过）
+    if (req.method === 'GET' && p === '/api/admin/lang') return send(res, 200, { ok: true, lang: cfg.lang, asked: cfg.langAsked }); // R138：语言持久化（null=未选过）；R148：asked=首启弹窗已展示过（托盘/无痕浏览器不再每次弹）
     if (req.method === 'POST' && p === '/api/admin/lang') {
       const j = await body(req);
-      // R138：lang=null 表示清除选择（回到首启询问）；非白名单字符串一律 400
-      if (j.lang !== null && (typeof j.lang !== 'string' || !UI_LANGS.includes(j.lang))) return send(res, 400, { ok: false, error: 'bad-lang' });
-      cfg.lang = j.lang === null ? null : j.lang;
+      // R138：lang=null 表示清除选择（回到首启询问，asked 一并重置）；非白名单字符串一律 400；只传 asked 时不校验 lang
+      if (j.lang !== undefined && j.lang !== null && (typeof j.lang !== 'string' || !UI_LANGS.includes(j.lang))) return send(res, 400, { ok: false, error: 'bad-lang' });
+      if (j.lang === null) cfg.langAsked = false; else cfg.langAsked = true;
+      if (j.asked === true && j.lang === undefined) cfg.langAsked = true; // R148：仅标记「已展示首启弹窗」，不改语言
+      if (j.lang !== undefined) cfg.lang = j.lang === null ? null : j.lang;
       if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
-      log('INFO', '界面语言已保存：' + String(cfg.lang));
-      return send(res, 200, { ok: true, lang: cfg.lang });
+      log('INFO', '界面语言已保存：' + String(cfg.lang) + ' asked=' + cfg.langAsked);
+      return send(res, 200, { ok: true, lang: cfg.lang, asked: cfg.langAsked });
     }
     if (req.method === 'GET' && p === '/api/admin/update') return send(res, 200, updateView());
     if (req.method === 'POST' && p === '/api/admin/update-check') {
