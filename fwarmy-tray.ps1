@@ -9,14 +9,23 @@ param(
 # R141：主进程 pid 参数名不用 $Pid——与 PowerShell 内置只读变量 $PID 冲突，脚本一启动就退出，托盘图标从未显示过。
 $ErrorActionPreference = 'SilentlyContinue'
 
-# 无交互桌面（Session 0 / 非交互服务）→ 静默退出
-if (-not [Environment]::UserInteractive) { exit 0 }
+# R146：托盘状态写入数据目录（管理页据此显示诊断信息：正常/溢出区提示/无交互会话/失败原因）
+$script:TrayDataDir = $Data   # 事件闭包内 $Data 不可见——用脚本作用域变量
+function Write-TrayState([string]$status, [string]$err = '') {
+  try {
+    $obj = @{ status = $status; pid = $PID; at = (Get-Date).ToUniversalTime().ToString('o'); error = $err }
+    $obj | ConvertTo-Json -Compress | Set-Content (Join-Path $script:TrayDataDir 'tray-state.json') -Encoding UTF8
+  } catch { }
+}
+
+# 无交互桌面（Session 0 / 非交互服务）→ 静默退出；状态告知管理页
+if (-not [Environment]::UserInteractive) { Write-TrayState 'no-interactive-session' '无交互桌面会话（Session 0/服务方式）——托盘图标无法显示，请改在 RDP 登录的桌面会话中运行'; exit 0 }
 
 # 单实例：同脚本已有托盘进程则退出
 $self = $MyInvocation.MyCommand.Path
 $dup = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
   Where-Object { $_.CommandLine -like "*$self*" -and $_.ProcessId -ne $PID }
-if ($dup) { exit 0 }
+if ($dup) { Write-TrayState 'duplicate' '已有托盘进程，本实例退出'; exit 0 }
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -68,6 +77,8 @@ try {
   $script:tray.ContextMenuStrip = $menu
   $script:tray.add_DoubleClick({ Open-AdminPage })
   $script:tray.Visible = $true
+  # R146：图标已注册——Windows 7+ 新图标默认进「溢出区」（任务栏 ^ 箭头），管理页据此提示
+  Write-TrayState 'ok' '图标已注册到通知区域；Windows 7+ 新图标默认折叠在任务栏「^」溢出区，请展开查看'
 
   # 主进程消失 → 托盘自动退出（防残留图标）
   $timer = New-Object System.Windows.Forms.Timer
@@ -76,6 +87,7 @@ try {
     if ($MainPid -gt 0) {
       try { $null = Get-Process -Id $MainPid -ErrorAction Stop } catch {
         $timer.Stop()
+        Write-TrayState 'stopped' '主进程已退出，托盘随之退出'
         $script:tray.Visible = $false
         [System.Windows.Forms.Application]::Exit()
       }
@@ -85,5 +97,6 @@ try {
   [System.Windows.Forms.Application]::Run()
 } catch {
   try { $script:tray.Visible = $false } catch { }
+  Write-TrayState 'error' ('托盘启动失败：' + ($_.Exception.Message | Out-String).Trim())
   exit 1
 }

@@ -109,6 +109,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <div class="hrow">
       <div class="pills"><div class="pills" id="pills"></div><button id="powerBtn" class="good" disabled data-i18n="power.loading">加载状态…</button></div>
       <div class="pubip" style="gap:6px" id="helpBar">
+        <span id="trayState" title="系统托盘状态：图标显示于任务栏通知区域（Windows 7+ 新图标默认折叠在「^」溢出区）"></span>
         <button class="sm" id="aiCopyBtn" title="复制本站使用引导给 AI（含完整说明文件路径），粘贴到任意 AI 对话即可">复制给 AI</button>
         <button class="sm" id="helpBtn" data-i18n="btn.help" title="打开使用说明帮助文档（本地新窗口，含全部功能与常见问题）">帮助</button>
       </div>
@@ -1769,11 +1770,32 @@ async function refresh() {
     if ((!S.publicIp || !S.publicIp.at) && !pubIpLoading) void refreshPublicIp(false);
     SEC = await api('/api/admin/security').catch(() => null);
     render();
+    // R146：托盘状态（health 带 tray 字段，来自 fwarmy-tray.ps1 写入的 tray-state.json）
+    try {
+      const h = await fetch('/api/health', { cache: 'no-store' }).then((r) => r.json()).catch(() => null);
+      if (h && h.tray) renderTrayState(h.tray);
+    } catch { /* noop */ }
   } catch (e) {
     toast(_t('toast.srvErr') + e.message, true);
     setPowerStopped();
   }
   finally { refreshInFlight = false; }
+}
+/** R146：托盘状态显示（ok=已注册·默认在溢出区；no-interactive-session=无桌面会话；error=失败原因）。 */
+function renderTrayState(t) {
+  const el = $('#trayState');
+  if (!el) return;
+  const st = t.status || 'unknown';
+  const map = {
+    ok: ['托盘：已注册（新图标默认在任务栏「^」溢出区，请展开查看）', 'ok'],
+    'no-interactive-session': ['托盘：不可用（无交互桌面会话——需在 RDP 登录的桌面运行）', 'bad'],
+    duplicate: ['托盘：重复实例已退出', 'warn'],
+    error: ['托盘：启动失败（' + ((t.error || '').slice(0, 120)) + '）', 'bad'],
+    stopped: ['托盘：已随主进程退出', 'warn'],
+  };
+  const m = map[st] || ['托盘：未启动', 'warn'];
+  el.textContent = m[0];
+  el.className = 'pill ' + m[1];
 }
 async function loadLogs() {
   try {

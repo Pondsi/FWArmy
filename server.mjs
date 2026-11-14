@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.12';
+export const VERSION = '0.7.13';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -3170,6 +3170,11 @@ export async function startServer(options = {}) {
   }
   async function applyUpdate(stagedPath = '') {
     if (!IS_SEA) return;
+    // R146：服务器已关闭（管理员点「停止」）时取消待执行的更新重启——否则 update 计时器会竞态拉起新进程
+    if (updateClosed) {
+      log('WARN', '更新已取消：服务器处于关闭流程');
+      return;
+    }
     const current = process.execPath;
     const staged = stagedPath || pendingUpdatePath || (current + '.new');
     log('INFO', `更新：检查待替换文件 ${staged} exists=${fs.existsSync(staged)}`);
@@ -3992,6 +3997,7 @@ export async function startServer(options = {}) {
           version: (process.env.FWARMY_UPDATE_TEST === '1' && process.env.FWARMY_FAKE_VERSION) ? process.env.FWARMY_FAKE_VERSION : VERSION,
           accepting: cfg.accepting, instanceId: expand.instanceId, dataDirHash,
           presenceTtlMs: cfg.presenceTtlMs, secure: !!req.socket.encrypted, tls: tlsPublicView(),
+          tray: trayStatus(), // R146：托盘状态（fwarmy-tray.ps1 写入 tray-state.json），诊断「看不到图标」的原因
         });
       }
       // 指纹引导：不鉴权、不返回凭据；客户端先拿到指纹，用户确认后才发 Authorization。
@@ -4351,7 +4357,9 @@ export async function startServer(options = {}) {
   }
   function spawnDetached(cmd, args) {
     const { spawn } = require('node:child_process');
-    const child = spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true });
+    // R146：detached:true 在本机/部分受管环境不可靠（进程退出但命令未执行——WDAC/策略拦截）——
+    // 托盘脚本与打开浏览器不需要独立进程组，去掉 detached 保证命令真正执行（GUI 程序无控制台，父退出不影响子进程）。
+    const child = spawn(cmd, args, { stdio: 'ignore', windowsHide: true });
     child.on('error', () => { /* Linux 没有 xdg-open 时不要因为未处理的 error 崩服务 */ });
     child.unref();
     return child;
@@ -4383,6 +4391,17 @@ export async function startServer(options = {}) {
     }
   }
   /** 第二个实例只打开管理页就退出；先关掉日志流，否则 Windows 上可能一直挂着。 */
+  /** R146：读托盘状态文件（fwarmy-tray.ps1 写），供管理页/health 显示诊断信息。PS 5.1 的 Set-Content -Encoding UTF8 带 BOM——读取时剥掉。 */
+  function trayStatus() {
+    try {
+      const f = path.join(DATA, 'tray-state.json');
+      if (fs.existsSync(f)) {
+        const j = JSON.parse(fs.readFileSync(f, 'utf8').replace(/^\uFEFF/, ''));
+        if (j && typeof j === 'object') return { status: String(j.status || 'unknown'), error: String(j.error || ''), at: Number(j.at) ? String(j.at) : '' };
+      }
+    } catch { /* noop */ }
+    return { status: 'unknown', error: '' };
+  }
   function finishAlreadyRunning(url) {
     if (url && opt.open !== false) openBrowser(url);
     try { if (logStream) { logStream.end(); logStream = null; } } catch { /* noop */ }
