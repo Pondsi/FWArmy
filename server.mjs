@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.11';
+export const VERSION = '0.7.12';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -4356,19 +4356,23 @@ export async function startServer(options = {}) {
     child.unref();
     return child;
   }
-  /** R135y：启动系统托盘（fwarmy-tray.ps1，与 exe 同目录分发）；R136：目录缺失时从内嵌 asset 提取（旧目录自动更新上来也能有托盘）。 */
+  /** R135y：启动系统托盘（fwarmy-tray.ps1，与 exe 同目录分发）；R145：每次启动都用内嵌 asset 覆盖磁盘脚本——旧目录残留的 $Pid 冲突版脚本会静默失败，覆盖后保证脚本与 exe 版本一致。 */
   function startTray(entryPort) {
     try {
-      let trayPath = path.join(HERE, 'fwarmy-tray.ps1');
-      if (!fs.existsSync(trayPath) && IS_SEA && SEA && typeof SEA.getAsset === 'function') {
+      const trayPath = path.join(HERE, 'fwarmy-tray.ps1');
+      if (IS_SEA && SEA && typeof SEA.getAsset === 'function') {
         try {
-          const buf = SEA.getAsset('fwarmy-tray.ps1');
-          if (buf && buf.length) {
-            fs.writeFileSync(trayPath, buf);
-            log('INFO', '[fwarmy] 托盘脚本缺失，已从内嵌资源提取到 ' + trayPath);
+          // getAsset 无 encoding 时返回 ArrayBuffer（无 .length）——必须 Buffer.from 再判长，且保留 UTF-8 BOM
+          const raw = SEA.getAsset('fwarmy-tray.ps1');
+          if (raw) {
+            const bytes = Buffer.from(raw);
+            if (bytes.length) {
+              fs.writeFileSync(trayPath, bytes);
+              log('INFO', '[fwarmy] 托盘脚本已与程序版本同步（内嵌资源）');
+            }
           }
         } catch (e) {
-          log('WARN', '提取托盘脚本失败：' + String((e && e.message) || e).slice(0, 120));
+          log('WARN', '同步托盘脚本失败：' + String((e && e.message) || e).slice(0, 120));
         }
       }
       if (!fs.existsSync(trayPath)) return;
