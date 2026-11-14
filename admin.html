@@ -491,16 +491,28 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
 
 <script>
 'use strict';
-/* ── 多语言（R136：27 语言与 WArmy 一致；首启弹语言选择，底部常驻切换；ar/fa 自动 RTL）── */
+/* ── 多语言（R136：27 语言与 WArmy 一致；首启弹语言选择，底部常驻切换；ar/fa 自动 RTL；R138：选择持久化到服务端 + 排序）── */
 const LANGS = [
-  ['zh-CN','简体中文'],['zh-TW','繁體中文'],['en-US','English'],['ja','日本語'],['ko','한국어'],
-  ['ru','Русский'],['es','Español'],['fr','Français'],['pt','Português'],['eo','Esperanto'],
-  ['de','Deutsch'],['it','Italiano'],['nl','Nederlands'],['pl','Polski'],['sv','Svenska'],
-  ['cs','Čeština'],['hu','Magyar'],['da','Dansk'],['nb','Norsk bokmål'],['tr','Türkçe'],
-  ['uk','Українська'],['id','Bahasa Indonesia'],['vi','Tiếng Việt'],['th','ไทย'],['hi','हिन्दी'],
-  ['ar','العربية'],['fa','فارسی'],
+  ['zh-CN','简体中文','简体中文'],['zh-TW','繁體中文','繁體中文'],['en-US','English','英语'],['ja','日本語','日语'],['ko','한국어','韩语'],
+  ['ru','Русский','俄语'],['es','Español','西班牙语'],['fr','Français','法语'],['pt','Português','葡萄牙语'],['eo','Esperanto','世界语'],
+  ['de','Deutsch','德语'],['it','Italiano','意大利语'],['nl','Nederlands','荷兰语'],['pl','Polski','波兰语'],['sv','Svenska','瑞典语'],
+  ['cs','Čeština','捷克语'],['hu','Magyar','匈牙利语'],['da','Dansk','丹麦语'],['nb','Norsk bokmål','挪威语'],['tr','Türkçe','土耳其语'],
+  ['uk','Українська','乌克兰语'],['id','Bahasa Indonesia','印尼语'],['vi','Tiếng Việt','越南语'],['th','ไทย','泰语'],['hi','हिन्दी','印地语'],
+  ['ar','العربية','阿拉伯语'],['fa','فارسی','波斯语'],
 ];
 const RTL_LANGS = ['ar','fa'];
+/** R138：简体中文第一、繁体中文第二，其余按中文名拼音排序（Intl.Collator zh-co-pinyin，不支持时回退 localeCompare）。 */
+let _pinyinColl = null;
+function orderedLangs() {
+  const coll = (() => {
+    if (_pinyinColl) return _pinyinColl;
+    try { _pinyinColl = new Intl.Collator('zh-Hans-CN-u-co-pinyin', { sensitivity: 'base' }); } catch { _pinyinColl = null; }
+    return _pinyinColl;
+  })();
+  const rest = LANGS.filter(([c]) => c !== 'zh-CN' && c !== 'zh-TW');
+  rest.sort((a, b) => coll ? coll.compare(a[2], b[2]) : a[2].localeCompare(b[2]));
+  return [LANGS.find(([c]) => c === 'zh-CN'), LANGS.find(([c]) => c === 'zh-TW'), ...rest];
+}
 let LANG = localStorage.getItem('fwarmy.lang') || 'zh-CN';
 if (!LANGS.some(([c]) => c === LANG)) LANG = 'zh-CN';
 function _t(key) {
@@ -526,24 +538,34 @@ function applyI18n() {
   const lg = $('#langNow');
   if (lg) lg.textContent = (LANGS.find(([c]) => c === LANG) || ['', ''])[1];
 }
-function setLang(code) {
+function setLang(code, persist = true) {
   LANG = code;
   localStorage.setItem('fwarmy.lang', code);
   applyI18n();
   if ($('#langModal')) $('#langModal').classList.remove('open');
+  // R138：服务端持久化——换端口/换浏览器/程序重启都记住，不再重复弹首启窗
+  if (persist) {
+    try { api('/api/admin/lang', { lang: code }).catch(() => {}); } catch { /* 本地模式/离线时仅浏览器记忆 */ }
+  }
 }
 function renderLangPicker(target) {
   const box = $(target);
   if (!box) return;
-  box.innerHTML = LANGS.map(([c, n]) => `<button class="lang-item${c === LANG ? ' on' : ''}" data-lang="${c}" title="${n}">${n}</button>`).join('');
+  box.innerHTML = orderedLangs().map(([c, n]) => `<button class="lang-item${c === LANG ? ' on' : ''}" data-lang="${c}" title="${n}">${n}</button>`).join('');
   box.querySelectorAll('[data-lang]').forEach((b) => b.addEventListener('click', () => setLang(b.dataset.lang)));
 }
 document.addEventListener('DOMContentLoaded', () => {
   renderLangPicker('#langList');
   const sel = $('#langSel');
-  if (sel) { LANGS.forEach(([c, n]) => { const o = document.createElement('option'); o.value = c; o.textContent = n; sel.appendChild(o); }); sel.addEventListener('change', () => setLang(sel.value)); }
+  if (sel) { orderedLangs().forEach(([c, n]) => { const o = document.createElement('option'); o.value = c; o.textContent = n; sel.appendChild(o); }); sel.addEventListener('change', () => setLang(sel.value)); }
   applyI18n();
-  if (!localStorage.getItem('fwarmy.lang')) $('#langModal').classList.add('open'); // 首启语言选择
+  // R138：localStorage 无记录时查服务端（换端口/换浏览器/重启都记住）；服务端也无记录才弹首启窗
+  if (!localStorage.getItem('fwarmy.lang')) {
+    api('/api/admin/lang').then((j) => {
+      if (j && j.ok && j.lang) setLang(j.lang, false);
+      else $('#langModal').classList.add('open');
+    }).catch(() => $('#langModal').classList.add('open'));
+  }
 });
 /* ── 翻译表：zh-CN 为基准；en-US/zh-TW 完整；其余语言核心键同源翻译，缺失回退 en-US ── */
 const I18N = {
@@ -1796,9 +1818,9 @@ function renderPorts() {
   $('#ptTable').innerHTML =
     `<tr>${_t('tbl.port')}${_t('tbl.type')}${_t('tbl.status')}${_t('tbl.creds')}${_t('tbl.desc')}${_t('tbl.actions')}</tr>` +
     (P.items.map((it) => {
-      const stTag = it.status === 'listening' ? _t('card.listening')
-        : it.status === 'paused' ? _t('card.paused')
-          : `${_t('st.errDetail')}`;
+      const stTag = it.status === 'listening' ? `<span class="pill ok">${_t('card.listening')}</span>`
+        : it.status === 'paused' ? `${_t('card.paused')}` // R138：暂停 = 无外框，默认浅色字
+          : `<span class="pill bad">${_t('st.errDetail')}</span>`;
       const btns = [];
       if (it.main) {
         // R135：管理入口端口不可暂停/删除/强制启用，只能更改端口号

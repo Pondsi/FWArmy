@@ -84,7 +84,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.1';
+export const VERSION = '0.7.2';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -121,6 +121,8 @@ const CRED_DEFAULT_PORT = 59599;
 const DEFAULT_PORTS = [8787, CRED_DEFAULT_PORT, EXPAND_DEFAULT_PORT];
 /** 内置引导锚点（R133 用户拍板：443 与 62666 双端口 × DHT/DHT2 两域名；R135w 追加 dht.numumu.com 双端口；原话 https://DHT.pondsi.com 等，剥协议取主机）。 */
 const DEFAULT_ANCHORS = ['DHT.pondsi.com', 'DHT.pondsi.com:62666', 'DHT2.pondsi.com', 'DHT2.pondsi.com:62666', 'dht.numumu.com', 'dht.numumu.com:62666'];
+/** 管理页语言白名单（R138：与 admin.html LANGS 27 项一致；选择持久化到 config.json.lang）。 */
+const UI_LANGS = ['zh-CN', 'zh-TW', 'en-US', 'ja', 'ko', 'ru', 'es', 'fr', 'pt', 'eo', 'de', 'it', 'nl', 'pl', 'sv', 'cs', 'hu', 'da', 'nb', 'tr', 'uk', 'id', 'vi', 'th', 'hi', 'ar', 'fa'];
 /** 手动对外地址的验证周期：验证通过才用于宣告，失效自动回退自动推断。 */
 const MANUAL_ADDR_CHECK_MS = 5 * 60_000;
 /** 无凭据来源（未配对）的 /api/expand/relay 请求按来源 IP 限速（防滥用 §9：直接丢弃 + 限速）。 */
@@ -1257,6 +1259,8 @@ export async function startServer(options = {}) {
   cfg.tls = normTlsCfg(cfgRaw && cfgRaw.tls);
   cfg.dht = normDhtCfg(cfgRaw && cfgRaw.dht);
   cfg.ports = normPorts(cfg.ports);
+  // R138：语言选择服务端持久化——null 表示从未选择（前端据此决定首启弹窗）；换端口/换浏览器/重启都记住。
+  cfg.lang = (cfgRaw && typeof cfgRaw.lang === 'string' && UI_LANGS.includes(cfgRaw.lang)) ? cfgRaw.lang : null;
   if (cfg.tls.mode === 'off') log('WARN', 'TLS 已关闭：业务凭据会以明文跨网传输，只建议在回环/VPN 内使用');
   const secret = createSecretBox(DATA);
   /** 旧版 first-credential.txt 是明文秘密：启动时改存 AES-GCM（.enc）并删除明文。 */
@@ -3523,6 +3527,16 @@ export async function startServer(options = {}) {
   async function adminApi(req, res, u) {
     const p = u.pathname;
     if (req.method === 'GET' && p === '/api/admin/stats') return send(res, 200, buildStats(u));
+    if (req.method === 'GET' && p === '/api/admin/lang') return send(res, 200, { ok: true, lang: cfg.lang }); // R138：语言持久化（null=未选过）
+    if (req.method === 'POST' && p === '/api/admin/lang') {
+      const j = await body(req);
+      // R138：lang=null 表示清除选择（回到首启询问）；非白名单字符串一律 400
+      if (j.lang !== null && (typeof j.lang !== 'string' || !UI_LANGS.includes(j.lang))) return send(res, 400, { ok: false, error: 'bad-lang' });
+      cfg.lang = j.lang === null ? null : j.lang;
+      if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
+      log('INFO', '界面语言已保存：' + String(cfg.lang));
+      return send(res, 200, { ok: true, lang: cfg.lang });
+    }
     if (req.method === 'GET' && p === '/api/admin/update') return send(res, 200, updateView());
     if (req.method === 'POST' && p === '/api/admin/update-check') {
       await checkUpdate(true);
