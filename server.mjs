@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.25';
+export const VERSION = '0.7.26';
 
 /** R153：内置公用中继凭据——所有 FWArmy 出厂默认携带，明文显示在管理页（点击可查看完整/复制）；其余自创凭据仍只存 sha256 不可回看。 */
 const BUILTIN_CREDENTIALS = [
@@ -1352,23 +1352,32 @@ export async function startServer(options = {}) {
     ['ipv4.icanhazip.com', '/'],         // 纯文本
     ['api.ipify.org', '/?format=json'],  // 双栈端点（强制 IPv4 出口后可靠）
   ];
+  const IPV6_ENDPOINTS = [
+    ['api6.ipify.org', '/?format=json'], // 纯 IPv6 端点
+    ['ipv6.icanhazip.com', '/'],         // 纯文本
+  ];
   async function probePublicIp() {
-    // IPv4：强制 IPv4 出口 + 多端点回退（任一成功即停）
+    // IPv4：强制 IPv4 出口 + 多端点回退（任一成功即停）；强制出口失败时回退系统栈 fetch（多网卡/隧道环境兜底）
     let v4 = '';
     for (const [host, path] of IPV4_ENDPOINTS) {
       try {
-        const txt = await httpsGetFixedFamily(host, path, 4);
+        let txt = await httpsGetFixedFamily(host, path, 4);
+        if (!txt) { const r = await fetch(`https://${host}${path}`, { signal: AbortSignal.timeout(4000) }).catch(() => null); txt = r ? await r.text().catch(() => '') : ''; }
         const ip = (txt.includes('{') ? String((JSON.parse(txt) || {}).ip || '') : txt).trim();
         if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) { v4 = ip; break; }
       } catch { /* 下一端点 */ }
     }
-    // IPv6：专用端点（api6 无 AAAA 干扰问题；强制 IPv6 出口，无 v6 出口时失败 → 显示「无」）
+    // IPv6：多端点 + 强制 IPv6 出口优先；失败回退系统栈 fetch——多网卡机器（默认路由无 IPv6、WiFi 有）
+    // 强制直连会走默认路由超时，系统栈选路反而能通（R156 修复：0.7.24 起 v6 显示【无】的根因）
     let v6 = '';
-    try {
-      const txt = await httpsGetFixedFamily('api6.ipify.org', '/?format=json', 6);
-      const ip = String((JSON.parse(txt) || {}).ip || '').trim();
-      if (/^[0-9A-Fa-f:]+$/.test(ip) && ip.includes(':')) v6 = ip;
-    } catch { /* 无 IPv6 */ }
+    for (const [host, path] of IPV6_ENDPOINTS) {
+      try {
+        let txt = await httpsGetFixedFamily(host, path, 6);
+        if (!txt) { const r = await fetch(`https://${host}${path}`, { signal: AbortSignal.timeout(4000) }).catch(() => null); txt = r ? await r.text().catch(() => '') : ''; }
+        const ip = (txt.includes('{') ? String((JSON.parse(txt) || {}).ip || '') : txt).trim();
+        if (/^[0-9A-Fa-f:]+$/.test(ip) && ip.includes(':') && !/^\d+\.\d+\.\d+\.\d+$/.test(ip)) { v6 = ip; break; }
+      } catch { /* 下一端点 */ }
+    }
     const v4b = v4 || v6; // 只有 v6 时也让默认地址可用
     lastPub = { ipv4: v4, ipv6: v6, at: Date.now(), via: v4 || v6 ? 'ipify' : 'none' };
     log('INFO', `[fwarmy] 公网 IP 自动探测：IPv4=${v4 || '无'} IPv6=${v6 || '无'}`);
