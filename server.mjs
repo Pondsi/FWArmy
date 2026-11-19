@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.16';
+export const VERSION = '0.7.17';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -1351,7 +1351,7 @@ export async function startServer(options = {}) {
     for (const [k, s] of Object.entries(expand.stats.perSource)) perSource[k] = sideView(s);
     const inboundStats = sideView(expand.stats.inbound);
     const creds = expand.inbound.map((c) => ({
-      id: c.id, name: c.name, masked: c.masked, addr: c.addr || '', createdAt: c.createdAt, lastAt: c.lastAt,
+      id: c.id, name: c.name, masked: c.masked, addr: c.addr || '', host: c.host || '', createdAt: c.createdAt, lastAt: c.lastAt,
       lastResult: c.lastResult, disabled: c.disabled, limits: c.limits || null, expiresAt: c.expiresAt || 0,
       port: c.port || 0, portOk: listeningPorts().includes(Number(c.port) || 0), // R133：凭据端口须在监听集合
       effective: eff(c),
@@ -1392,17 +1392,17 @@ export async function startServer(options = {}) {
     };
   }
   function generateInboundToken(name = '', portRaw, hostRaw, limits = null, expiresAt = 0) {
-    // 凭证自带地址 = 生成时填写的域名/IP（R130，默认探测到的公网 IP，可改）+ 端口（默认 8787）。
+    // R149：F中继凭证不再内嵌地址（与中继 token 一致）——地址可能变化，凭证带地址会造成「凭据有效但地址失效」的矛盾；
+    // 条目仍保存 host/port 供管理页展示与端口管理，可事后修改；对方添加扩网时需另填地址（或用旧版 v2 凭证自动解析）。
     const host = String(hostRaw || '').trim() || activeExternalAddr().host;
     let port = Math.floor(Number(portRaw));
     if (!Number.isInteger(port) || port < 1 || port > 65535) port = EXPAND_DEFAULT_PORT;
-    const payload = Buffer.from(JSON.stringify({ h: host, p: port, r: crypto.randomBytes(16).toString('base64url') }), 'utf8').toString('base64url');
-    const token = 'fwnexp_v2_' + payload;
+    const token = b64u(crypto.randomBytes(32));
     const hash = sha(token);
     const item = {
       id: crypto.randomUUID(), name: String(name || '').trim().slice(0, 40) || ('接入凭据 ' + (expand.inbound.length + 1)),
       hash, masked: '…' + hash.slice(30, 35) + '…' + hash.slice(-5), // 前缀无意义：只显示最中间 5 个 + 末尾 5 个（R132）
-      port, addr: host + ':' + port, createdAt: now(), lastAt: 0, lastResult: '', disabled: false,
+      host, port, addr: host + ':' + port, createdAt: now(), lastAt: 0, lastResult: '', disabled: false,
       limits: limits || null, expiresAt: Number(expiresAt) || 0, // R129：可管理（改名/流量/速度/有效期）；R135p：生成时即可设置
     };
     expand.inbound.push(item);
@@ -3339,7 +3339,10 @@ export async function startServer(options = {}) {
       const j = await body(req);
       if (j.host !== undefined) {
         const h = String(j.host || '').trim();
-        if (!h || /[\s/?#]/.test(h) || h.length > 253) return send(res, 400, { ok: false, error: 'bad-host', hint: '域名或 IP 不能为空，且不能含空格/斜杠/问号/井号' });
+        const isV6 = h.includes(':') && (h.includes('::') || h.split(':').length > 2);
+        if (!h || /[\s/?#]/.test(h) || h.length > 253 || (h.includes(':') && !isV6)) {
+          return send(res, 400, { ok: false, error: 'bad-host', hint: '域名或 IP 不能为空，不能含空格/斜杠/问号/井号；不要在这里写端口（端口请填到端口输入框），IPv6 地址除外' });
+        }
       }
       // R135p：生成时即可设置限额与有效期（弹窗填写，与中继凭据一致）
       let limits = null;
@@ -3389,6 +3392,19 @@ export async function startServer(options = {}) {
         if (!Number.isInteger(exp) || exp < 0) return send(res, 400, { ok: false, error: 'bad-expires-at' });
         item.expiresAt = exp;
       }
+      // R149：条目地址/端口可改（凭证不再内嵌地址；改后管理页展示与端口检查随之更新）
+      if (j.host !== undefined || j.port !== undefined) {
+        const h = j.host !== undefined ? String(j.host || '').trim().slice(0, 253) : (item.host || '');
+        const isV6 = h.includes(':') && (h.includes('::') || h.split(':').length > 2);
+        if (!h || /[\s/?#]/.test(h) || (h.includes(':') && !isV6)) {
+          return send(res, 400, { ok: false, error: 'bad-host', hint: '域名或 IP 不能为空，不能含空格/斜杠/问号/井号；不要在这里写端口（端口请填到端口输入框），IPv6 地址除外' });
+        }
+        const port = j.port !== undefined ? Math.floor(Number(j.port)) : Number(item.port || EXPAND_DEFAULT_PORT);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+          return send(res, 400, { ok: false, error: 'bad-port', hint: '端口必须是 1–65535 的整数' });
+        }
+        item.host = h; item.port = port; item.addr = h + ':' + port;
+      }
       if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' });
       log('INFO', `被扩网：凭据 ${item.id.slice(0, 8)} 已更新（名称/停用/限额/有效期）`);
       return send(res, 200, { ok: true, item: expandView().inbound.credentials.find((x) => x.id === item.id) });
@@ -3407,21 +3423,38 @@ export async function startServer(options = {}) {
       const j = await body(req);
       const credential = String(j.credential || '').trim();
       if (!credential) return send(res, 400, { ok: false, error: 'credential-required' });
-      // R129：扩网不再显示/填写地址、不再兼容旧版——地址只能来自新版凭证（fwnexp_v2_ 自带 host:port）。
+      // R149：地址来源 = ① 旧版 v2 凭证内嵌（fwnexp_v2_ 自带 host:port，兼容既有对端）；② 手动填写的 host/port（新凭证不带地址）。
       const tok = parseExpandToken(credential);
-      if (!tok) return send(res, 400, { ok: false, error: 'legacy-token-not-supported', hint: '该凭据不是新版（fwnexp_v2_ 开头、自带地址）；请让对方重新生成' });
+      const hostRaw = String(j.host || j.address || '').trim();
+      let host = '', port = 0;
+      if (hostRaw) {
+        const hs = hostRaw.lastIndexOf(':');
+        if (hs > 0 && /^\d{1,5}$/.test(hostRaw.slice(hs + 1)) && !hostRaw.slice(0, hs).includes(':')) {
+          host = hostRaw.slice(0, hs); port = Number(hostRaw.slice(hs + 1));
+        } else {
+          host = hostRaw; port = Math.floor(Number(j.port));
+        }
+        if (/[\s/?#]/.test(host)) return send(res, 400, { ok: false, error: 'bad-address', hint: '地址 host 不能含空格/斜杠/问号/井号' });
+      }
+      if (!host && tok) { host = tok.host; port = tok.port; }
+      if (j.port !== undefined && !port) {
+        port = Math.floor(Number(j.port));
+      }
+      if (!host || !Number.isInteger(port) || port < 1 || port > 65535) {
+        return send(res, 400, { ok: false, error: 'address-required', hint: '新凭证不带地址；请填写对方的域名/IP 与端口（旧版 fwnexp_v2_ 凭证可不填，自动解析）' });
+      }
       const ts = tlsFromInput(j.tls, null);
       if (!ts.ok) return send(res, 400, { ok: false, error: ts.error });
-      const name = String(j.name || '').trim().slice(0, 40) || (tok.host + ':' + tok.port);
+      const name = String(j.name || '').trim().slice(0, 40) || (host + ':' + port);
       const item = {
-        id: crypto.randomUUID(), name, host: tok.host, port: tok.port,
-        credential: '', hint: '', tls: ts.tls, addrFrom: 'credential',
+        id: crypto.randomUUID(), name, host, port,
+        credential: '', hint: '', tls: ts.tls, addrFrom: tok ? 'credential' : 'manual',
         enabled: true, createdAt: Date.now(), lastTest: 0, lastTestOk: false,
       };
       setPeerCredential(item, credential);
       expand.outbound.push(item);
       if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' });
-      log('INFO', `扩网：添加 ${name} → ${tok.host}:${tok.port}（TLS ${ts.tls.mode}，地址来自凭证）`);
+      log('INFO', `扩网：添加 ${name} → ${host}:${port}（TLS ${ts.tls.mode}，地址来自${tok ? '凭证' : '手动'}）`);
       return send(res, 200, { ok: true, item: expandView().outbound.find((x) => x.id === item.id) });
     }
     if (req.method === 'POST' && p === '/api/admin/expand-update') {
@@ -3437,9 +3470,17 @@ export async function startServer(options = {}) {
         const credential = String(j.credential || '').trim();
         if (!credential) return send(res, 400, { ok: false, error: 'credential-required' });
         const tok = parseExpandToken(credential);
-        if (!tok) return send(res, 400, { ok: false, error: 'legacy-token-not-supported', hint: '请让对方重新生成新版（自带地址）凭证' });
         setPeerCredential(item, credential);
-        item.host = tok.host; item.port = tok.port; item.addrFrom = 'credential';
+        if (tok) { item.host = tok.host; item.port = tok.port; item.addrFrom = 'credential'; }
+        else item.addrFrom = 'manual'; // R149：新凭证不带地址，沿用条目现有地址（可在前端另改）
+      }
+      if (j.host !== undefined || j.port !== undefined) {
+        const host = j.host !== undefined ? String(j.host || '').trim() : item.host;
+        const port = j.port !== undefined ? Math.floor(Number(j.port)) : item.port;
+        if (!host || /[\s/?#]/.test(host) || !Number.isInteger(port) || port < 1 || port > 65535) {
+          return send(res, 400, { ok: false, error: 'bad-address', hint: '地址 host 不能含空格/斜杠/问号/井号，端口须为 1–65535' });
+        }
+        item.host = host; item.port = port; item.addrFrom = 'manual';
       }
       if (j.tls !== undefined) {
         const ts = tlsFromInput(j.tls, item.tls);
@@ -3842,6 +3883,8 @@ export async function startServer(options = {}) {
       if (j.host !== undefined || j.port !== undefined) {
         const h = j.host !== undefined ? String(j.host || '').trim().slice(0, 253) : (c.host || '');
         if (h && /[\s/?#]/.test(h)) return send(res, 400, { ok: false, error: 'bad-host' });
+        const isV6 = h.includes(':') && (h.includes('::') || h.split(':').length > 2);
+        if (h && h.includes(':') && !isV6) return send(res, 400, { ok: false, error: 'bad-host', hint: '不要在这里写端口（端口请填到端口输入框），IPv6 地址除外' });
         let port = j.port !== undefined ? Number(j.port) : (c.port || 0);
         if (h && (!Number.isInteger(port) || port < 1 || port > 65535)) port = CRED_DEFAULT_PORT;
         if (!h) port = 0;

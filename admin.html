@@ -223,7 +223,9 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <h2 title="本机送不到的消息（收件人离线/不在本站），按顺序转发给这些互信的 FWArmy（凭据 + TLS 指纹固定；最多 3 个、8 秒预算、成功即停）" data-i18n="ex.out">扩网 · 我连接别人</h2>
     <div class="grid">
       <label class="f" data-i18n="ex.name">名称（可选）<input id="exName" maxlength="40" placeholder="例如：家里的 FWArmy"></label>
-      <label class="f" data-i18n="ex.cred">对方的被扩网凭据<input id="exCred" type="password" autocomplete="off" placeholder="对方「F中继」页生成（自带地址和端口）"></label>
+      <label class="f" data-i18n="ex.cred">对方的被扩网凭据<input id="exCred" type="password" autocomplete="off" placeholder="对方「F中继」页生成；新版不带地址，需另填地址"></label>
+      <label class="f" title="对方服务器的域名或 IP（旧版 fwnexp_v2_ 凭证自带地址，可不填）">对方地址域名/IP<input id="exHost" maxlength="253" placeholder="如 relay.example.com 或 1.2.3.4"></label>
+      <label class="f" title="对方服务器的端口（旧版 fwnexp_v2_ 凭证自带地址，可不填；默认 58588）">对方地址端口<input id="exPort" inputmode="numeric" placeholder="默认 58588"></label>
       <label class="f">传输安全
         <select id="exTls">
           <option value="pin" data-i18n="ex.tlsPin">TLS 自签 + 指纹固定（推荐）</option>
@@ -234,7 +236,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
       <label class="f" data-i18n="ex.fp">证书指纹（可留空，添加后点「识别指纹」）<input id="exFp" placeholder="sha256 十六进制，64 位"></label>
     </div>
     <div class="toolbar" style="margin-top:10px">
-      <button class="primary" id="exAdd" title="添加扩网（对方只需提供「名称 + 被扩网凭据」，地址和端口在凭据里；旧版不含地址的凭据不再支持）" data-i18n="btn.add">添加</button>
+      <button class="primary" id="exAdd" title="添加扩网：填名称 + 对方的被扩网凭据；新版凭证不带地址，需同时填对方的域名/IP 与端口（旧版 fwnexp_v2_ 自带地址，可不填）" data-i18n="btn.add">添加</button>
       <span class="muted" id="exMsg"></span>
     </div>
     <div class="cards" id="exOutCards"></div>
@@ -245,12 +247,12 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
 
 <section id="tab-frelay">
   <div class="panel">
-    <h2 title="生成被扩网凭据，让别的 FWArmy 把送不到的消息转给你投递；凭据自带地址和端口，对方只需填名称+凭据" data-i18n="ex.in">F中继 · 别人连接我</h2>
+    <h2 title="生成被扩网凭据，让别的 FWArmy 把送不到的消息转给你投递；新版凭证不含地址，对方添加时需另填你的域名/IP + 端口" data-i18n="ex.in">F中继 · 别人连接我</h2>
     <div class="toolbar">
-      <button class="primary" id="exGen" title="生成被扩网凭据：弹窗填写名称/域名IP/端口/限额/有效期；凭据自带地址和端口，对方只需填「名称 + 凭证」；明文只显示这一次" data-i18n="ex.gen">生成接入凭据</button>
+      <button class="primary" id="exGen" title="生成被扩网凭据：弹窗填写名称/域名IP/端口/限额/有效期；新版凭证不再包含地址，对方添加扩网时需另填地址；明文只显示这一次" data-i18n="ex.gen">生成接入凭据</button>
       <span class="muted" id="exInState" data-i18n="ex.inState.loading">加载中…</span>
     </div>
-    <div id="exInTokenBox" class="tokenbox" hidden title="凭据明文只显示这一次；已包含地址和端口，对方只需填「名称 + 凭证」">
+    <div id="exInTokenBox" class="tokenbox" hidden title="凭据明文只显示这一次；新版凭证不含地址，请把「凭据 + 域名/IP + 端口」一起发给对方，对方添加扩网时需填写地址">
       <code id="exInToken"></code>
       <button class="sm" id="exInCopy" title="复制凭据" data-i18n="btn.copy">复制</button>
       <div id="exInPortWarn" class="hint" style="margin:0;color:var(--danger,#c0392b)" hidden></div>
@@ -426,6 +428,8 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <h3 id="inCredModalTitle" data-i18n="inCred.title">管理接入凭据</h3>
     <div class="grid">
       <label class="f" title="凭据名称（最多 40 字）">名称<input id="inFName" maxlength="40" placeholder="例如：客厅的电脑"></label>
+      <label class="f" title="对方连接本站的地址域名/IP（展示与端口管理用；对方按此地址连接）">域名/IP<input id="inFHost" maxlength="253" placeholder="自动探测的公网 IP"></label>
+      <label class="f" title="对方连接本站的端口（须在本机监听端口集合内）">端口<input id="inFPort" type="number" min="1" max="65535" step="1" placeholder="58588"></label>
       <label class="f" title="每分钟最多请求次数；留空 = 继承全局，填 0 = 不限制">请求速度（次/分钟）<input id="inFRate" type="number" min="0" step="1" placeholder="继承全局"></label>
       <label class="f" title="每分钟最多流量 MB；留空 = 继承全局，填 0 = 不限制">流量速度（MB/分钟）<input id="inFByteRate" type="number" min="0" step="0.1" placeholder="继承全局"></label>
       <label class="f" title="每日最多请求次数；留空 = 继承全局，填 0 = 不限制">每日次数上限（次）<input id="inFDailyReq" type="number" min="0" step="1" placeholder="继承全局"></label>
@@ -447,7 +451,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <h3 data-i18n="inGen.title">生成接入凭据</h3>
     <div class="grid">
       <label class="f" title="凭据名称（最多 40 字；不填自动生成）" data-i18n="inG.name">名称<input id="inGName" maxlength="40" placeholder="例如：朋友的 FWArmy"></label>
-      <label class="f" title="写进凭据的地址：对方据此连接本站；默认 = 探测到的公网 IP" data-i18n="inG.host">域名/IP（默认 = 探测公网 IP）<input id="inGHost" maxlength="253" placeholder="自动探测的公网 IP"></label>
+      <label class="f" title="对方连接本站的地址域名/IP（默认 = 探测公网 IP）；不再写进凭据，仅作展示与端口管理" data-i18n="inG.host">域名/IP（默认 = 探测公网 IP）<input id="inGHost" maxlength="253" placeholder="自动探测的公网 IP"></label>
       <label class="f" title="对方连接本站的端口；不填默认 58588，且必须在本机监听端口集合内" data-i18n="inG.port">端口（默认 58588）<input id="inGPort" type="number" min="1" max="65535" step="1" placeholder="58588"></label>
       <label class="f" title="每分钟最多请求次数；留空 = 继承全局，填 0 = 不限制">请求速度（次/分钟）<input id="inGRate" type="number" min="0" step="1" placeholder="继承全局"></label>
       <label class="f" title="每分钟最多流量 MB；留空 = 继承全局，填 0 = 不限制">流量速度（MB/分钟）<input id="inGByteRate" type="number" min="0" step="0.1" placeholder="继承全局"></label>
@@ -578,13 +582,13 @@ const I18N = {
 'ports.title':'端口管理','ports.tcp':'TCP（业务）','ports.udp':'UDP（DHT 组网）','ports.add':'添加新的端口',
 'cred.new':'新建凭据','cred.name':'名称','cred.host':'端点域名或 IP（可选，默认公网 IP）','cred.port':'端点端口（可选，默认 59599）','cred.rate':'请求速度（次/分钟）','cred.byteRate':'流量速度（MB/分钟）','cred.daily':'每日次数上限（次）','cred.dailyBytes':'每日流量上限（MB）','cred.monthly':'每月次数上限（次）','cred.monthlyBytes':'每月流量上限（MB）','cred.total':'总次数上限（次）','cred.totalBytes':'总流量上限（MB）','cred.yearly':'每年流量上限（MB）','cred.addition':'附加内容（会话提示消息）模式','cred.weights':'权重（可选：只写要使用的条目，如 1:100,3:50；留空 = 全部参与）',
 'del.title':'删除凭据','del.desc':'删除后使用它的设备立即无法连接，且无法恢复。请输入凭据名称','btn.deletePerm':'永久删除','token.title':'凭据已生成','token.hint':'明文只显示这一次；请立即保存到 WArmy 的服务器设置里','inCred.title':'管理接入凭据','inGen.title':'生成接入凭据','inG.name':'名称（最多 40 字；不填自动生成）','inG.host':'域名/IP（默认 = 探测公网 IP）','inG.port':'端口（默认 58588）','inG.days':'有效期（天，0 = 永久）','inGen.gen':'生成','full.title':'完整内容','full.desc':'',
-'ph.name':'例如：家里的电脑','ph.host':'自动探测的公网 IP','ph.inherit':'继承全局','ph.cred':'对方「F中继」页生成（自带地址和端口）','ph.weight':'1:100,3:50',
+'ph.name':'例如：家里的电脑','ph.host':'自动探测的公网 IP','ph.inherit':'继承全局','ph.cred':'对方「F中继」页生成；新版不带地址，需另填地址','ph.weight':'1:100,3:50',
 'card.node':'节点','card.fp':'指纹','card.nodeId':'节点 ID','card.peers':'对端数','card.lastPub':'上次发布','card.yindao':'引导','card.current':'当前版本','card.latest':'最新版本','card.updState':'更新状态','card.auto':'自动策略','card.queue':'本机队列','card.lastCheck':'上次检查','card.online':'在线','card.offline':'离线','card.enabled':'启用','card.disabled':'停用','card.listening':'监听中','card.paused':'暂停','card.error':'异常',
 'st.unknown':'未知','st.forwarded':'已转发','st.offline':'离线','st.rejected':'已拒绝','st.delivered':'已投递','st.queued':'已入队','st.active':'生效中','st.valid':'有效',
 'btn.open':'打开','btn.test':'测试','btn.identify':'识别指纹','btn.trust':'信任','btn.remove':'移除','btn.toggle':'停用','btn.enable':'启用','btn.pause':'暂停','btn.resume':'启用','btn.force':'强制启用','btn.edit':'修改','btn.stop':'停止','btn.start':'启动','btn.download':'下载并重启','btn.install':'安装',
 'tbl.name':'名称','tbl.status':'状态','tbl.actions':'操作','tbl.port':'端口','tbl.protocol':'协议','tbl.creds':'凭据引用','tbl.lastSeen':'最近见到','tbl.address':'地址','tbl.fp':'指纹','tbl.nodeId':'节点 ID','tbl.hits':'次数','tbl.reason':'原因','tbl.firstAt':'首次','tbl.lastAt':'最近','tbl.scope':'范围','tbl.requests':'请求','tbl.bytes':'流量','tbl.success':'成功','tbl.rejected':'拒绝','tbl.today':'今日','tbl.month':'本月','tbl.total':'累计','tbl.result':'最近结果','tbl.usage':'用量','tbl.expire':'有效期','tbl.masked':'标识（中间+末尾）',
-'empty.noCreds':'还没有凭据。点「生成凭据」新建。','empty.noPeers':'还没有对端。配置锚点后本机会引导入网；无锚点时只监听、等待被引导。','empty.noPorts':'没有端口。点「添加新的端口」。','empty.noBlacklist':'黑名单为空。','empty.noExpand':'还没有扩网地址。把对方的「被扩网凭据」加进来（凭证自带地址）。','empty.noLogs':'（空）',
-'toast.saved':'设置已保存','toast.savedCred':'内容库已保存','toast.updated':'已是最新','toast.updating':'更新正在重启中，请稍候刷新页面','toast.fail':'操作失败：','toast.copied':'已复制','toast.copiedGuide':'已复制引导地址：','toast.fmtErr':'格式应为 域名或IP:端口','toast.needFp':'请输入要查询的指纹','toast.notFound':'未查到：','toast.found':'查到了','toast.notOwn':'未能识别为本实例','toast.portAdded':'端口已添加','toast.portRemoved':'端口已删除','toast.portOpDone':'端口操作完成','toast.entryChanged':'管理入口已改为','toast.nextUse':'下次访问','toast.anchorAdded':'锚点已添加并生效','toast.anchorRemoved':'锚点已移除','toast.anchorNeed':'请输入锚点 host 或 host:port','toast.advAdded':'对外地址已添加','toast.advUpdated':'对外地址状态已更新','toast.advRemoved':'对外地址已删除','toast.advEdited':'对外地址已修改，等待重新验证','toast.advNeed':'请输入对外地址：域名IP:端口','toast.srvErr':'连不上服务器：','toast.invalid':'请输入 1–65535 的端口号','toast.noChange':'端口未变化','toast.needName':'请输入凭据名称','toast.needConfirm':'输入内容不匹配','toast.credDeleted':'凭据已删除','toast.credSaved':'凭据已保存：明文只显示这一次，请立即复制','toast.credUpdated':'凭据已更新','toast.credDisabled':'已停用','toast.credEnabled':'已启用','toast.identifyFirst':'请先点「识别指纹」','toast.trusted':'已信任该指纹','toast.trustFailed':'尚未信任证书；指纹','toast.genIn':'接入凭据已生成：明文只显示这一次，请立即复制','toast.expired':'已过期','toast.updatedTitle':'更新完成','toast.waitTimeout':'等待重启超时；请刷新页面或查看 data/server.log','toast.copyFail':'复制失败（浏览器限制），请手动选择复制','toast.fpFull':'完整指纹：','toast.savedAddition':'内容库已保存：','toast.filtered':'（HTML 字符/换行已过滤；超长已强制截断到','toast.auditPub':'检查点已发布到 DHT（防回滚签名记录）','toast.auditPubFail':'发布失败：','toast.tlsSaved':'TLS 配置已保存（需重启生效）','toast.tlsRegened':'已重新生成自签证书（旧指纹作废，客户端需重新固定）','toast.pubIp':'公网 IP：','toast.portEnableFail':'端口启用失败（被占用；可到「端口」页强制启用）','toast.portEnabled':'端口已启用','toast.paused':'已暂停','toast.resumed':'已恢复','toast.autoPaused':'自动兜底已暂停（仍有其它生效地址）','toast.autoResumed':'自动兜底已恢复','toast.updateStarted':'已开始更新，服务器正在重启…','toast.updateFailed':'更新失败：','toast.needVersion':'请输入','toast.badHost':'非法域名/IP（含空格）','toast.needCred':'请填写对方的被扩网凭据','toast.needAddr':'该凭据不含地址；请填写地址，或让对方重新生成新版（含地址）凭证','toast.persistFail':'保存失败（磁盘不可写）',
+'empty.noCreds':'还没有凭据。点「生成凭据」新建。','empty.noPeers':'还没有对端。配置锚点后本机会引导入网；无锚点时只监听、等待被引导。','empty.noPorts':'没有端口。点「添加新的端口」。','empty.noBlacklist':'黑名单为空。','empty.noExpand':'还没有扩网地址。填名称 + 对方的被扩网凭据 + 地址（新版凭证不带地址）。','empty.noLogs':'（空）',
+'toast.saved':'设置已保存','toast.savedCred':'内容库已保存','toast.updated':'已是最新','toast.updating':'更新正在重启中，请稍候刷新页面','toast.fail':'操作失败：','toast.copied':'已复制','toast.copiedGuide':'已复制引导地址：','toast.fmtErr':'格式应为 域名或IP:端口','toast.needFp':'请输入要查询的指纹','toast.notFound':'未查到：','toast.found':'查到了','toast.notOwn':'未能识别为本实例','toast.portAdded':'端口已添加','toast.portRemoved':'端口已删除','toast.portOpDone':'端口操作完成','toast.entryChanged':'管理入口已改为','toast.nextUse':'下次访问','toast.anchorAdded':'锚点已添加并生效','toast.anchorRemoved':'锚点已移除','toast.anchorNeed':'请输入锚点 host 或 host:port','toast.advAdded':'对外地址已添加','toast.advUpdated':'对外地址状态已更新','toast.advRemoved':'对外地址已删除','toast.advEdited':'对外地址已修改，等待重新验证','toast.advNeed':'请输入对外地址：域名IP:端口','toast.srvErr':'连不上服务器：','toast.invalid':'请输入 1–65535 的端口号','toast.noChange':'端口未变化','toast.needName':'请输入凭据名称','toast.needConfirm':'输入内容不匹配','toast.credDeleted':'凭据已删除','toast.credSaved':'凭据已保存：明文只显示这一次，请立即复制','toast.credUpdated':'凭据已更新','toast.credDisabled':'已停用','toast.credEnabled':'已启用','toast.identifyFirst':'请先点「识别指纹」','toast.trusted':'已信任该指纹','toast.trustFailed':'尚未信任证书；指纹','toast.genIn':'接入凭据已生成：明文只显示这一次，请立即复制','toast.expired':'已过期','toast.updatedTitle':'更新完成','toast.waitTimeout':'等待重启超时；请刷新页面或查看 data/server.log','toast.copyFail':'复制失败（浏览器限制），请手动选择复制','toast.fpFull':'完整指纹：','toast.savedAddition':'内容库已保存：','toast.filtered':'（HTML 字符/换行已过滤；超长已强制截断到','toast.auditPub':'检查点已发布到 DHT（防回滚签名记录）','toast.auditPubFail':'发布失败：','toast.tlsSaved':'TLS 配置已保存（需重启生效）','toast.tlsRegened':'已重新生成自签证书（旧指纹作废，客户端需重新固定）','toast.pubIp':'公网 IP：','toast.portEnableFail':'端口启用失败（被占用；可到「端口」页强制启用）','toast.portEnabled':'端口已启用','toast.paused':'已暂停','toast.resumed':'已恢复','toast.autoPaused':'自动兜底已暂停（仍有其它生效地址）','toast.autoResumed':'自动兜底已恢复','toast.updateStarted':'已开始更新，服务器正在重启…','toast.updateFailed':'更新失败：','toast.needVersion':'请输入','toast.badHost':'非法域名/IP（含空格）','toast.needCred':'请填写对方的被扩网凭据','toast.needAddr':'该凭据不含地址；请填写对方的地址（新版凭证不带地址；旧版 fwnexp_v2_ 自动解析）','toast.persistFail':'保存失败（磁盘不可写）',
 'warn.stopNote':'停止服务器？内存队列中的消息会丢失（TTL 30 秒）。','warn.deleteCred':'删除凭据？使用它的设备将立即无法连接。','warn.delAddr':'删除对外地址','warn.delAnchor':'移除锚点','warn.forcePort':'强制启用端口','warn.killProc':'会结束占用该端口的进程！','warn.delPort':'删除端口','warn.credPortFail':'引用它的凭据将立即失效。','warn.map':'申请端口映射会修改路由器状态。继续？','warn.unmap':'取消本机申请的 NAT-PMP 映射？','warn.secClear':'清空全部黑名单（需确认）？','warn.tlsRegen':'重新生成自签证书？旧指纹作废，客户端需重新固定。','warn.trustFp':'核对指纹一致后点确定信任：','warn.confirmTrust':'与对方管理页核对一致后才信任。','warn.updateNote':'内存队列还有','warn.updateNote2':'条消息，重启会丢失（TTL 30 秒）。仍要更新到','warn.updateNote3':'下载','warn.updateNote4':'、替换程序并重启服务器？data/ 不会被改动。','warn.updateQueue':'队列非空：仍要强制安装？（重启会丢队列）','warn.entryChange':'管理入口端口将改为','warn.entryChange2':'，下次访问用新端口。继续？',
 'upd.state.new':'有新版本','upd.state.latest':'已是最新','upd.state.none':'尚未检查','upd.msg.installing':'正在下载/校验…','upd.msg.staged':'已下载，等待重启','upd.msg.stagedDone':'更新完成，正在完成重启交接…','upd.msg.available':'发现 v','upd.msg.canInstall':'，可以下载并重启','upd.msg.latest':'已是最新','upd.msg.none':'尚未检查','upd.notesEmpty':'（这次发布没有说明）','upd.notesNone':'尚未检查更新。','upd.single':'单文件（可自动替换）','upd.source':'源码（不可自动替换）','upd.err':'错误：','upd.dl':'正在下载/校验…','upd.dlWait':'已下载，等待重启',
 'sec.24h':'24h 窗口','sec.blacklist':'黑名单','sec.origins':'固定来源','sec.tls':'TLS 指纹','sec.on':'已启用','sec.off':'未启用','sec.reason.replay':'重复 msgId','sec.reason.old':'超窗重放','sec.reason.black':'已拉黑','sec.detail.1':'重放窗口：','sec.detail.2':'黑名单：','sec.clearAll':'清空全部黑名单',
@@ -608,12 +612,12 @@ const I18N = {
 'ports.title':'Port management','ports.tcp':'TCP (business)','ports.udp':'UDP (DHT)','ports.add':'Add new port',
 'cred.new':'New credential','cred.name':'Name','cred.host':'Endpoint host/IP (optional, default public IP)','cred.port':'Endpoint port (optional, default 59599)','cred.rate':'Requests per minute','cred.byteRate':'MB per minute','cred.daily':'Daily requests','cred.dailyBytes':'Daily MB','cred.monthly':'Monthly requests','cred.monthlyBytes':'Monthly MB','cred.total':'Total requests','cred.totalBytes':'Total MB','cred.yearly':'Yearly MB','cred.addition':'Addition (session prompt) mode','cred.weights':'Weights (optional: 1:100,3:50; empty = all equal)',
 'del.title':'Delete credential','del.desc':'Devices using it lose access immediately and it cannot be restored. Type the credential name','btn.deletePerm':'Delete permanently','token.title':'Credential generated','token.hint':'Plaintext shown only once; save it into WArmy server settings now.','inCred.title':'Manage inbound credential','inGen.title':'Generate inbound credential','inG.name':'Name (max 40 chars; auto if empty)','inG.host':'Host/IP (default = probed public IP)','inG.port':'Port (default 58588)','inG.days':'Validity days (0 = forever)','inGen.gen':'Generate','full.title':'Full value','full.desc':'',
-'ph.name':'e.g. Home PC','ph.host':'Auto-probed public IP','ph.inherit':'Inherit global','ph.cred':'Generated on their F-relay page (address embedded)','ph.weight':'1:100,3:50',
+'ph.name':'e.g. Home PC','ph.host':'Auto-probed public IP','ph.inherit':'Inherit global','ph.cred':'Generated on their F-relay page; new format has no address, fill it here','ph.weight':'1:100,3:50',
 'card.node':'Node','card.fp':'Fingerprint','card.nodeId':'Node ID','card.peers':'Peers','card.lastPub':'Last publish','card.yindao':'Bootstrap','card.current':'Current version','card.latest':'Latest version','card.updState':'Update state','card.auto':'Auto policy','card.queue':'Local queue','card.lastCheck':'Last check','card.online':'Online','card.offline':'Offline','card.enabled':'Enabled','card.disabled':'Disabled','card.listening':'Listening','card.paused':'Paused','card.error':'Error',
 'st.unknown':'unknown','st.forwarded':'forwarded','st.offline':'offline','st.rejected':'rejected','st.delivered':'delivered','st.queued':'queued','st.active':'active','st.valid':'valid',
 'btn.open':'Open','btn.test':'Test','btn.identify':'Identify fingerprint','btn.trust':'Trust','btn.remove':'Remove','btn.toggle':'Disable','btn.enable':'Enable','btn.pause':'Pause','btn.resume':'Resume','btn.force':'Force enable','btn.edit':'Edit','btn.stop':'Stop','btn.start':'Start','btn.download':'Download & restart','btn.install':'Install',
 'tbl.name':'Name','tbl.status':'Status','tbl.actions':'Actions','tbl.port':'Port','tbl.protocol':'Protocol','tbl.creds':'Credentials','tbl.lastSeen':'Last seen','tbl.address':'Address','tbl.fp':'Fingerprint','tbl.nodeId':'Node ID','tbl.hits':'Hits','tbl.reason':'Reason','tbl.firstAt':'First','tbl.lastAt':'Last','tbl.scope':'Scope','tbl.requests':'Requests','tbl.bytes':'Bytes','tbl.success':'Success','tbl.rejected':'Rejected','tbl.today':'Today','tbl.month':'Month','tbl.total':'Total','tbl.result':'Last result','tbl.usage':'Usage','tbl.expire':'Expiry','tbl.masked':'ID (middle+tail)',
-'empty.noCreds':'No credentials yet. Click Generate credential.','empty.noPeers':'No peers yet. Configure an anchor to join; without anchors this node only listens.','empty.noPorts':'No ports. Click Add new port.','empty.noBlacklist':'Blacklist is empty.','empty.noExpand':'No expand peers yet. Add their inbound credential (address embedded).','empty.noLogs':'（empty）',
+'empty.noCreds':'No credentials yet. Click Generate credential.','empty.noPeers':'No peers yet. Configure an anchor to join; without anchors this node only listens.','empty.noPorts':'No ports. Click Add new port.','empty.noBlacklist':'Blacklist is empty.','empty.noExpand':'No expand peers yet. Add their inbound credential and address.','empty.noLogs':'（empty）',
 'toast.saved':'Settings saved','toast.savedCred':'Library saved','toast.updated':'Already latest','toast.updating':'Update restarting, refresh shortly','toast.fail':'Failed: ','toast.copied':'Copied','toast.copiedGuide':'Guide address copied: ','toast.fmtErr':'Format: host-or-IP:port','toast.needFp':'Enter a fingerprint to query','toast.notFound':'Not found: ','toast.found':'Found','toast.notOwn':'Not recognized as this instance','toast.portAdded':'Port added','toast.portRemoved':'Port removed','toast.portOpDone':'Port operation done','toast.entryChanged':'Admin entry changed to','toast.nextUse':'next visit','toast.anchorAdded':'Anchor added','toast.anchorRemoved':'Anchor removed','toast.anchorNeed':'Enter anchor host or host:port','toast.advAdded':'External address added','toast.advUpdated':'External address updated','toast.advRemoved':'External address removed','toast.advEdited':'External address modified, re-validating','toast.advNeed':'Enter address as domain-or-IP:port','toast.srvErr':'Cannot reach server: ','toast.invalid':'Enter port 1–65535','toast.noChange':'Port unchanged','toast.needName':'Enter a credential name','toast.needConfirm':'Input does not match','toast.credDeleted':'Credential deleted','toast.credSaved':'Credential saved: plaintext shown once, copy now','toast.credUpdated':'Credential updated','toast.credDisabled':'Disabled','toast.credEnabled':'Enabled','toast.identifyFirst':'Identify the fingerprint first','toast.trusted':'Fingerprint trusted','toast.trustFailed':'Cert not trusted yet; fingerprint','toast.genIn':'Inbound credential generated: shown once, copy now','toast.expired':'Expired','toast.updatedTitle':'Update complete','toast.waitTimeout':'Restart wait timed out; refresh or check data/server.log','toast.copyFail':'Copy failed (browser restriction), select manually','toast.fpFull':'Full fingerprint: ','toast.savedAddition':'Library saved: ','toast.filtered':'（HTML/filtered; overlong truncated to','toast.auditPub':'Checkpoint published to DHT (anti-rollback)','toast.auditPubFail':'Publish failed: ','toast.tlsSaved':'TLS saved (restart required)','toast.tlsRegened':'Self-signed cert regenerated (old fingerprint invalid)','toast.pubIp':'Public IP: ','toast.portEnableFail':'Port enable failed (occupied; force-enable on Ports page)','toast.portEnabled':'Port enabled','toast.paused':'Paused','toast.resumed':'Resumed','toast.autoPaused':'Auto fallback paused (other addresses active)','toast.autoResumed':'Auto fallback resumed','toast.updateStarted':'Update started, server restarting…','toast.updateFailed':'Update failed: ','toast.needVersion':'Enter ','toast.badHost':'Invalid host/IP (spaces)','toast.needCred':'Enter their inbound expand credential','toast.needAddr':'Credential has no address; fill one or ask them to regenerate','toast.persistFail':'Save failed (disk not writable)',
 'warn.stopNote':'Stop the server? Queued messages are lost (TTL 30s).','warn.deleteCred':'Delete credential? Its devices lose access immediately.','warn.delAddr':'Delete external address','warn.delAnchor':'Remove anchor','warn.forcePort':'Force-enable port','warn.killProc':'This kills the process occupying the port!','warn.delPort':'Delete port','warn.credPortFail':'Credentials referencing it fail immediately.','warn.map':'Requesting port mapping modifies router state. Continue?','warn.unmap':'Remove the NAT-PMP mapping?','warn.secClear':'Clear the whole blacklist?','warn.tlsRegen':'Regenerate the self-signed cert? Old fingerprint becomes invalid.','warn.trustFp':'Verify the fingerprint matches, then confirm: ','warn.confirmTrust':'Trust only after verifying with their admin page.','warn.updateNote':'Queue has','warn.updateNote2':'messages, lost on restart (TTL 30s). Update to','warn.updateNote3':'Download','warn.updateNote4':', replace and restart? data/ is untouched.','warn.updateQueue':'Queue not empty: force install anyway? (queue lost)','warn.entryChange':'Admin entry port will change to','warn.entryChange2':', next visit uses the new port. Continue?',
 'upd.state.new':'Update available','upd.state.latest':'Up to date','upd.state.none':'Not checked','upd.msg.installing':'Downloading/verifying…','upd.msg.staged':'Downloaded, waiting to restart','upd.msg.stagedDone':'Update applied, finalizing restart…','upd.msg.available':'Found v','upd.msg.canInstall':', you can download & restart','upd.msg.latest':'Up to date','upd.msg.none':'Not checked','upd.notesEmpty':'（no notes for this release）','upd.notesNone':'Not checked yet.','upd.single':'Single-file (auto-replaceable)','upd.source':'Source (check only)','upd.err':'Error: ','upd.dl':'Downloading/verifying…','upd.dlWait':'Downloaded, waiting to restart',
@@ -1738,7 +1742,7 @@ function copyForAI() {
     `- 公网 IP：${info.pubIp}`,
     '',
     '【关键概念】',
-    '- 凭据：中继 token（只存 sha256，明文只显示一次）；被扩网 fwnexp_v2_ 凭据自带地址端口；凭据端口不在监听集时自动添加',
+    '- 凭据：中继 token（只存 sha256，明文只显示一次）；被扩网新版凭证不带地址（对方添加扩网时需另填地址，旧版 fwnexp_v2_ 自动解析）；凭据端口不在监听集时自动添加',
     '- TLS：默认自签 + 指纹固定；扩网需「识别指纹 → 信任」',
     '- DHT 强制开启不可关闭；发现 ≠ 授权，投递走凭据 + 指纹；默认锚点 UDP 443/62666',
     '- 附加内容：纯文字 ≤120 字节/条，哈希链审计',
@@ -1983,7 +1987,7 @@ function renderExpand() {
       const st = p.stats;
       const ok = st.total.delivered || 0;
       const fail = (st.total.rejected || 0) + (st.total.offline || 0);
-      return `<tr><td>${esc(p.name)}<div class="cell-sub">${_t('st.addrFromCred')}</div></td>` +
+      return `<tr><td>${esc(p.name)}<div class="cell-sub">${esc(p.host)}:${p.port || '—'} · ${p.addrFrom === 'credential' ? _t('st.addrFromCred') : _t('st.manual')}</div></td>` +
         `<td>${tlsTag(p)}<div class="cell-sub">${p.tls && p.tls.fingerprint ? clipFull(p.tls.fingerprint, 16) : '—'}</div></td>` +
         `<td>${p.enabled ? _t('card.enabled') : _t('card.disabled')}</td>` +
         `<td>${exPeerUsage(st)}</td><td>${num(st.month.requests)} 次<div class="cell-sub">${fmtBytes(st.month.bytes)}</div></td><td>${num(st.total.requests)} 次<div class="cell-sub">${fmtBytes(st.total.bytes)}</div></td>` +
@@ -1994,7 +1998,7 @@ function renderExpand() {
         (p.tls && p.tls.mode === 'pin' && !p.trusted ? `<button class="sm good" data-ex-act="trust" data-id="${esc(p.id)}">信任</button>` : '') +
         `<button class="sm" data-ex-act="toggle" data-id="${esc(p.id)}">${p.enabled ? _t('card.disabled') : _t('card.enabled')}</button>` +
         `<button class="sm danger" data-ex-act="remove" data-id="${esc(p.id)}">移除</button></div></td></tr>`;
-    }).join('') || `<tr><td colspan="10" class="empty">还没有扩网地址。把对方的「被扩网凭据」加进来（凭证自带地址）。</td></tr>`);
+    }).join('') || `<tr><td colspan="10" class="empty">还没有扩网地址。填名称 + 对方的被扩网凭据 + 地址（新版凭证不带地址）。</td></tr>`);
 
   const inb = E.inbound;
   $('#exInCards').innerHTML = exCards(E.stats.inbound);
@@ -2151,17 +2155,28 @@ async function loadExpand() {
 async function addExpandPeer() {
   const msg = $('#exMsg');
   try {
-    const address = $('#exAddr').value.trim();
     const credential = $('#exCred').value.trim();
     if (!credential) throw new Error(_t('toast.needCred'));
-    if (!address && !credential.startsWith('fwnexp_v2_')) throw new Error(_t('toast.needAddr'));
+    const hostRaw = $('#exHost').value.trim();
+    const portRaw = $('#exPort').value.trim();
+    const isV6 = (h) => h.includes(':') && (h.includes('::') || h.split(':').length > 2);
+    let host = '', port = 0;
+    if (hostRaw) {
+      if (/[\s/?#]/.test(hostRaw) || (hostRaw.includes(':') && !isV6(hostRaw))) {
+        throw new Error('对方地址域名/IP 不能含空格/斜杠/问号/井号；不要在这里写端口（端口填到端口输入框），IPv6 地址除外');
+      }
+      host = hostRaw;
+      const p = Number(portRaw);
+      if (!Number.isInteger(p) || p < 1 || p > 65535) throw new Error(_t('toast.invalid'));
+      port = p;
+    }
     const name = $('#exName').value.trim();
     const mode = $('#exTls').value;
     const fp = $('#exFp').value.trim();
     if (mode === 'pin' && fp && !/^[0-9a-fA-F]{64}$/.test(fp)) throw new Error('证书指纹必须是 64 位十六进制');
-    const r = await api('/api/admin/expand-outbound', { name, address, credential, tls: { mode, fingerprint: fp } });
+    const r = await api('/api/admin/expand-outbound', { name, credential, host, port, tls: { mode, fingerprint: fp } });
     const item = r.item || {};
-    $('#exName').value = ''; $('#exAddr').value = ''; $('#exCred').value = ''; $('#exFp').value = '';
+    $('#exName').value = ''; $('#exHost').value = ''; $('#exPort').value = ''; $('#exCred').value = ''; $('#exFp').value = '';
     const fromCred = item.addrFrom === 'credential' ? `地址已从凭证解析：${item.host}:${item.port}；` : '';
     msg.textContent = fromCred + (fp ? '已添加' : '已添加；请点「识别指纹」并核对后信任');
     toast(fromCred + (fp ? '已添加扩网地址' : '已添加；未信任前不会发送凭据'));
@@ -2201,7 +2216,8 @@ function readInGenLimits() {
 async function saveInGen() {
   try {
     const host = $('#inGHost').value.trim();
-    if (/[\s/?#]/.test(host)) throw new Error('域名或 IP 不能含空格/斜杠/问号/井号');
+    const isV6 = host.includes(':') && (host.includes('::') || host.split(':').length > 2);
+    if (/[\s/?#]/.test(host) || (host.includes(':') && !isV6)) throw new Error('域名或 IP 不能含空格/斜杠/问号/井号；不要在这里写端口（端口请填到端口输入框），IPv6 地址除外');
     const portRaw = $('#inGPort').value.trim();
     let port = null;
     if (portRaw !== '') {
@@ -2233,7 +2249,7 @@ async function saveInGen() {
         warn.hidden = true;
       }
     }
-    toast('已生成；请立即复制给对方');
+    toast('已生成；请把凭据连同地址（域名/IP + 端口）一起发给对方');
     await loadExpand();
   } catch (e) { toast(e.message, true); }
 }
@@ -2243,6 +2259,8 @@ function openInCred(c) {
   editingIn = c;
   $('#inCredModalTitle').textContent = _t('inCred.title');
   $('#inFName').value = c.name;
+  $('#inFHost').value = c.host || '';
+  $('#inFPort').value = c.port ? String(c.port) : '';
   const l = c.limits || {};
   const f = (v) => (v === null || v === undefined ? '' : v);
   $('#inFRate').value = f(l.ratePerMin);
@@ -2263,11 +2281,26 @@ async function saveInCred() {
   try {
     const name = $('#inFName').value.trim();
     if (!name) throw new Error('请填写名称');
+    const hostRaw = $('#inFHost').value.trim();
+    const portRaw = $('#inFPort').value.trim();
+    const isV6 = (h) => h.includes(':') && (h.includes('::') || h.split(':').length > 2);
+    let host, port;
+    if (hostRaw) {
+      if (/[\s/?#]/.test(hostRaw) || (hostRaw.includes(':') && !isV6(hostRaw))) {
+        throw new Error('域名/IP 不能含空格/斜杠/问号/井号；不要在这里写端口（端口填到端口输入框），IPv6 地址除外');
+      }
+      host = hostRaw;
+    }
+    if (portRaw) {
+      const p = Number(portRaw);
+      if (!Number.isInteger(p) || p < 1 || p > 65535) throw new Error('端口必须是 1–65535 的整数');
+      port = p;
+    }
     const limits = readLimits2('inF');
     const days = Number($('#inFDays').value);
     if (!Number.isInteger(days) || days < 0 || days > 36500) throw new Error('有效期必须是 0–36500 的整数天');
     const expiresAt = days === 0 ? 0 : Date.now() + days * 86400000;
-    await api('/api/admin/expand-inbound-update', { id: editingIn.id, name, limits, expiresAt });
+    await api('/api/admin/expand-inbound-update', { id: editingIn.id, name, limits, expiresAt, ...(host !== undefined ? { host } : {}), ...(port !== undefined ? { port } : {}) });
     toast('已保存');
     $('#inCredModal').classList.remove('open');
     await loadExpand();
@@ -2344,7 +2377,8 @@ async function saveCred() {
     if (!name) throw new Error('请填写名称');
     const limits = readLimits();
     const host = $('#fHost').value.trim();
-    if (/[\s/?#]/.test(host)) throw new Error('端点域名或 IP 不能含空格/斜杠/问号/井号');
+    const isV6 = host.includes(':') && (host.includes('::') || host.split(':').length > 2);
+    if (/[\s/?#]/.test(host) || (host.includes(':') && !isV6)) throw new Error('端点域名或 IP 不能含空格/斜杠/问号/井号；不要在这里写端口（端口请填到端口输入框），IPv6 地址除外');
     const portRaw = $('#fPort').value.trim();
     let port = null;
     if (portRaw !== '') {
@@ -2532,6 +2566,11 @@ async function copyText(s) {
 
 $$('.tab').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
 $$('[data-close]').forEach((b) => b.addEventListener('click', () => { $('#' + b.dataset.close).classList.remove('open'); }));
+// R149：输入即限制——端口类输入框只允许数字；host 类输入框剔除空格/斜杠/问号/井号（冒号留给 IPv6，提交时校验）
+const digitsOnly = (el) => { el.addEventListener('input', () => { const v = el.value.replace(/[^0-9]/g, ''); if (v !== el.value) el.value = v; }); };
+const hostFilter = (el) => { el.addEventListener('input', () => { const v = el.value.replace(/[\s/?#]/g, ''); if (v !== el.value) el.value = v; }); };
+['fPort', 'inGPort', 'inFPort', 'exPort', 'inGRate', 'inGByteRate', 'inGDailyReq', 'inGDaily', 'inGMonthlyReq', 'inGMonthly', 'inGTotalReq', 'inGTotal', 'inGYearly', 'inGDays', 'fRate', 'fByteRate', 'fDailyReq', 'fDaily', 'fMonthlyReq', 'fMonthly', 'fTotalReq', 'fTotal', 'fYearly', 'inFRate', 'inFByteRate', 'inFDailyReq', 'inFDaily', 'inFMonthlyReq', 'inFMonthly', 'inFTotalReq', 'inFTotal', 'inFYearly', 'inFDays'].forEach((id) => { const el = $('#' + id); if (el) digitsOnly(el); });
+['fHost', 'inGHost', 'inFHost', 'exHost'].forEach((id) => { const el = $('#' + id); if (el) hostFilter(el); });
 $('#fullModalCopy').addEventListener('click', () => copyText(fullModalVal));
 $('#newCred').addEventListener('click', () => openCredModal(null));
 $('#refreshCreds').addEventListener('click', refresh);
