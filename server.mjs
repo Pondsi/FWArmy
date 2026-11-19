@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.20';
+export const VERSION = '0.7.21';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -2936,16 +2936,30 @@ export async function startServer(options = {}) {
     return await r.text();
   }
   async function fetchToFile(url, dest) {
-    const r = await fetchWithHops(url, {
-      headers: { 'user-agent': `FWArmy/${VERSION}` },
-      timeoutMs: 10 * 60_000,
-    });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    if (!r.body) {
-      fs.writeFileSync(dest, Buffer.from(await r.arrayBuffer()));
-      return;
+    // R152：下载失败自动重试 3 次（网络瞬断/GitHub CDN 抖动常见；指数退避 2s/4s）
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const r = await fetchWithHops(url, {
+          headers: { 'user-agent': `FWArmy/${VERSION}` },
+          timeoutMs: 10 * 60_000,
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        if (!r.body) {
+          fs.writeFileSync(dest, Buffer.from(await r.arrayBuffer()));
+          return;
+        }
+        await pipeline(Readable.fromWeb(r.body), fs.createWriteStream(dest));
+        return;
+      } catch (e) {
+        lastErr = e;
+        if (attempt < 3) {
+          log('WARN', `更新：下载第 ${attempt} 次失败（${String(e && e.message || e).slice(0, 120)}），${attempt * 2}s 后重试`);
+          await sleep(attempt * 2000);
+        }
+      }
     }
-    await pipeline(Readable.fromWeb(r.body), fs.createWriteStream(dest));
+    throw lastErr || new Error('download-failed');
   }
   function hashFile(file) {
     return new Promise((resolve, reject) => {

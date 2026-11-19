@@ -1834,10 +1834,14 @@ function renderUpdate() {
     [_t('card.queue'), String(U.queue || 0), '重启会丢失内存队列'],
     [_t('card.lastCheck'), U.lastCheck ? fmtTime(U.lastCheck) : '—', U.lastError ? _t('upd.err') + U.lastError : ''],
   ];
-  $('#updCards').innerHTML = cards.map(([k, v, s]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join('');
-  $('#updAuto').value = U.auto;
-  $('#updInterval').value = U.intervalHours;
-  $('#updInstall').disabled = !U.canInstall;
+  // R152：更新渲染全部元素判空——页面与服务器版本混搭/部分元素缺失时静默降级，不整页报错
+  const el = (id) => document.getElementById(id);
+  const setHtml = (id, h) => { const e = el(id); if (e) e.innerHTML = h; };
+  const setText = (id, t) => { const e = el(id); if (e) e.textContent = t; };
+  setHtml('updCards', cards.map(([k, v, s]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join(''));
+  const auto = el('updAuto'); if (auto) auto.value = U.auto;
+  const interval = el('updInterval'); if (interval) interval.value = U.intervalHours;
+  const install = el('updInstall'); if (install) install.disabled = !U.canInstall;
   let msg = '';
   if (U.installing) msg = _t('upd.msg.installing');
   else if (U.staged) {
@@ -1847,10 +1851,9 @@ function renderUpdate() {
   else if (U.updateAvailable) msg = _t('upd.msg.available') + l.version + _t('upd.msg.canInstall');
   else if (U.lastCheck) msg = _t('toast.updated');
   else msg = _t('upd.state.none');
-  $('#updMsg').textContent = msg;
-  $('#updNotes').textContent = (l.notes && String(l.notes).trim()) || (U.lastCheck ? _t('upd.notesEmpty') : _t('upd.notes'));
-  const link = $('#updLink');
-  // R140：元素可能因版本组合缺失——判空避免「读取更新状态失败」整页报错
+  setText('updMsg', msg);
+  setText('updNotes', (l.notes && String(l.notes).trim()) || (U.lastCheck ? _t('upd.notesEmpty') : _t('upd.notes')));
+  const link = el('updLink');
   if (link) {
     if (l.url && /^https:\/\/github\.com\/Pondsi\/FWArmy\/releases\//.test(l.url)) { link.hidden = false; link.href = l.url; }
     else { link.hidden = true; link.removeAttribute('href'); }
@@ -1867,15 +1870,17 @@ function renderUpdate() {
     ['上次安装', U.lastInstall ? (U.lastInstall.version + ' · ' + (U.lastInstall.ok ? _t('tbl.success') : '失败') + ' · ' + fmtTime(U.lastInstall.at) + (U.lastInstall.error ? (' · ' + U.lastInstall.error) : '')) : '—'],
     ['错误', U.lastError || '—'],
   ];
-  $('#updTable').innerHTML = '<tr><th>项目</th><th>值</th></tr>' +
-    rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('');
+  setHtml('updTable', '<tr><th>项目</th><th>值</th></tr>' +
+    rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join(''));
 }
 async function loadUpdate() {
   try {
     U = await api('/api/admin/update');
     renderUpdate();
   } catch (e) {
-    $('#updMsg').textContent = '读取更新状态失败：' + e.message;
+    const m = document.getElementById('updMsg');
+    if (m) m.textContent = '读取更新状态失败：' + e.message;
+    else toast('读取更新状态失败：' + e.message, true);
   }
 }
 /* ── 端口管理（R133：多业务端口；R135：TCP/UDP 区分、入口端口仅可更改、UDP 暂停保留配置）── */
@@ -2763,13 +2768,14 @@ $('#dhtQueryBtn').addEventListener('click', dhtQueryNow);
 $('#updCheck').addEventListener('click', async () => {
   const b = $('#updCheck');
   b.disabled = true;
-  $('#updMsg').textContent = '正在检查…';
+  const um = document.getElementById('updMsg');
+  if (um) um.textContent = '正在检查…';
   try {
     U = await api('/api/admin/update-check', {});
     renderUpdate();
     toast(U.updateAvailable ? (_t('upd.msg.available') + (U.latest && U.latest.version)) : _t('toast.updated'), false);
   } catch (e) {
-    $('#updMsg').textContent = '检查失败：' + e.message;
+    if (um) um.textContent = '检查失败：' + e.message;
     toast(e.message, true);
   } finally { b.disabled = false; }
 });
@@ -2781,7 +2787,8 @@ $('#updInstall').addEventListener('click', async () => {
   if (!confirm(note)) return;
   const b = $('#updInstall');
   b.disabled = true;
-  $('#updMsg').textContent = '开始下载并校验…';
+  const um = document.getElementById('updMsg');
+  if (um) um.textContent = '开始下载并校验…';
   try {
     await api('/api/admin/update-install', { force: U.queue > 0 });
     toast(_t('toast.updateStarted'));
