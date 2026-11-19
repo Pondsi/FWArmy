@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.23';
+export const VERSION = '0.7.24';
 
 /** R153：内置公用中继凭据——所有 FWArmy 出厂默认携带，明文显示在管理页（点击可查看完整/复制）；其余自创凭据仍只存 sha256 不可回看。 */
 const BUILTIN_CREDENTIALS = [
@@ -1070,22 +1070,43 @@ export async function startServer(options = {}) {
     const list = BUILTIN_NAMES[String(lang || '')] || BUILTIN_NAMES['zh-CN'];
     return list;
   }
-  /** 确保内置公用凭据存在（按首次创建时的语言生成名称，之后不因换语言改名）。 */
+  /** 确保内置公用凭据存在（按首次创建时的语言生成名称，之后不因换语言改名）。
+   * R154b：内置带端点（默认本机公网 IP:59599）与保守限速限量；已存在的旧内置条目补齐缺字段。 */
+  const BUILTIN_LIMITS = {
+    ratePerMin: 60, bytesPerMin: 10 * 1048576,       // 每分钟 60 次 / 10MB
+    dailyRequests: 5000, dailyBytes: 500 * 1048576,  // 每日 5000 次 / 500MB
+    monthlyRequests: 50000, monthlyBytes: 5 * 1073741824, // 每月 5 万次 / 5GB
+    totalRequests: null, totalBytes: null, yearlyBytes: 50 * 1073741824, // 总量不限；每年 50GB
+  };
   function ensureBuiltinCredentials(langHint) {
     let changed = false;
     const names = builtinNamesFor(langHint || cfg.lang);
+    let host = '';
+    try { host = activeExternalAddr().host; } catch { host = ''; }
     for (let i = 0; i < BUILTIN_CREDENTIALS.length; i++) {
       const b = BUILTIN_CREDENTIALS[i];
       const hash = sha(b.token);
-      if (hashIndex.has(hash)) continue;
+      const existing = hashIndex.get(hash);
+      if (existing) {
+        // R154b：升级兼容——已存在的内置条目补齐端点/限额（首次创建时可能没有这些字段）
+        if (!existing.host || !existing.port || !existing.limits) {
+          existing.host = existing.host || host;
+          existing.port = existing.port || CRED_DEFAULT_PORT;
+          existing.limits = existing.limits || { ...BUILTIN_LIMITS };
+          changed = true;
+          log('INFO', `内置公用凭据已补齐端点/限额：${existing.name} → ${existing.host}:${existing.port}`);
+        }
+        continue;
+      }
       const id = crypto.randomUUID();
       creds[id] = {
         id, name: names[i] || b.name, hash, hash8: hash.slice(0, 8),
         tail5: b.token.slice(-5), public: true, publicToken: b.token, // 内置公用：明文展示（点击可查看完整/复制）
-        createdAt: new Date().toISOString(), disabled: false, limits: null, lastUsed: 0,
+        host, port: CRED_DEFAULT_PORT, limits: { ...BUILTIN_LIMITS }, // R154b：端点（默认本机 IP:59599）+ 保守限额
+        createdAt: new Date().toISOString(), disabled: false, lastUsed: 0,
       };
       changed = true;
-      log('INFO', `内置公用凭据已添加：${names[i] || b.name}（语言 ${langHint || cfg.lang || 'zh-CN'}）`);
+      log('INFO', `内置公用凭据已添加：${names[i] || b.name}（语言 ${langHint || cfg.lang || 'zh-CN'}，端点 ${host || '自动'}:${CRED_DEFAULT_PORT}）`);
     }
     if (changed) { rebuildIndex(); saveCreds(); }
     return changed;
