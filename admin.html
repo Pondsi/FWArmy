@@ -150,6 +150,8 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <div class="toolbar">
       <button class="primary" id="newCred" title="生成新的中继凭据（WArmy 客户端用它连接本站；服务器只存 sha256，明文仅生成时显示一次；名称默认已填可直接保存）" data-i18n="btn.generate">生成凭据</button>
       <button id="refreshCreds" title="重新加载凭据列表" data-i18n="btn.refresh">刷新</button>
+      <button id="exportCfg" title="一键导出全部配置（.nm 包：凭证/限额/扩网/附加内容/全局/安全表）；不含 TLS 私钥与出网凭证明文">导出配置…</button>
+      <button id="importCfg" title="导入 .nm 配置包并替换当前全部配置（仅本机管理面可用；导入前建议先导出备份）">导入配置…</button>
       <span class="muted" id="credCount"></span>
     </div>
     <div class="tablewrap"><table id="credTable"></table></div>
@@ -1589,7 +1591,10 @@ function render() {
     `<tr>${_t('tbl.name')}${_t('tbl.masked')}${_t('tbl.port')}${_t('tbl.status')}${_t('tbl.requests')}${_t('tbl.lastUse')}${_t('tbl.actions')}</tr>` +
     (S.perCredential.map((c) =>
       `<tr><td>${esc(c.name)}<div class="cell-sub">${c.endpoint ? '端点 ' + esc(c.endpoint.host) + ':' + c.endpoint.port : '无端点'}</div></td>` +
-      `<td><code>${esc(c.masked || '—')}</code></td>` +
+      // R153：内置公用凭据明文显示（截断+点击弹窗看完整/复制）；自创凭据仍只显示标识（不可回看明文）
+      `<td>${c.public && c.publicToken
+        ? clipFull(c.publicToken, 20)
+        : `<code>${esc(c.masked || '—')}</code>`}</td>` +
       `<td>${c.endpoint
         ? `<code>${c.endpoint.port}</code> ${lp.includes(c.endpoint.port) ? _t('st.portOk') : '<span class="tag off">端口不可用</span>'}`
         : '<span class="muted">—</span>'}</td>` +
@@ -2587,6 +2592,40 @@ const hostFilter = (el) => { el.addEventListener('input', () => { const v = el.v
 $('#fullModalCopy').addEventListener('click', () => copyText(fullModalVal));
 $('#newCred').addEventListener('click', () => openCredModal(null));
 $('#refreshCreds').addEventListener('click', refresh);
+// R153：一键导出配置包（.nm）
+$('#exportCfg').addEventListener('click', async () => {
+  try {
+    const r = await api('/api/admin/export-config');
+    const pkg = r.package;
+    if (!pkg) throw new Error('服务器未返回配置包');
+    const blob = new Blob([JSON.stringify(pkg, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'fwarmy-config.nm';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast('配置包已导出（fwarmy-config.nm）：凭证/限额/扩网/附加内容/全局/安全表；不含 TLS 私钥');
+  } catch (e) { toast('导出失败：' + e.message, true); }
+});
+// R153：导入配置包（.nm）并替换
+$('#importCfg').addEventListener('click', async () => {
+  try {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = '.nm,.json,application/json';
+    inp.onchange = async () => {
+      const f = inp.files && inp.files[0];
+      if (!f) return;
+      const txt = await f.text();
+      let pkg;
+      try { pkg = JSON.parse(txt); } catch { toast('不是有效的 .nm 配置包（JSON 解析失败）', true); return; }
+      if (!confirm('导入配置包将替换当前全部配置（凭据/限额/扩网/附加内容/全局/安全表）。建议先点「导出配置」备份。继续？')) return;
+      const r = await api('/api/admin/import-config', { package: pkg });
+      toast(`配置包已导入：凭据 ${r.creds} 条 · 扩网 ${r.expand} 项 · 附加内容 ${r.addition} 条`);
+      await refresh(); await loadExpand();
+    };
+    inp.click();
+  } catch (e) { toast('导入失败：' + e.message, true); }
+});
 $('#exAdd').addEventListener('click', addExpandPeer);
 $('#exGen').addEventListener('click', openInGenModal);
 $('#saveInGen').addEventListener('click', saveInGen);

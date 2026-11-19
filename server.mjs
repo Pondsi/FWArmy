@@ -83,7 +83,13 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.21';
+export const VERSION = '0.7.22';
+
+/** R153：内置公用中继凭据——所有 FWArmy 出厂默认携带，明文显示在管理页（点击可查看完整/复制）；其余自创凭据仍只存 sha256 不可回看。 */
+const BUILTIN_CREDENTIALS = [
+  { name: '公用', token: 'KuEfbuByYXqyXARdlPyiFL1K_GXPy7PvAeJtUYdOLdM' },
+  { name: '公用1', token: 'wdSmhiYs_d89z3l5HU1kj5q2qqsQsKTCrJAngl5Bafc' },
+];
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -864,6 +870,7 @@ export async function startServer(options = {}) {
   if (options.host) opt.host = options.host;
   if (options.open !== undefined) opt.open = options.open;
   const DATA = resolveDataDir(options.data || opt.data);
+  const IMPORT_CRED_FILE = path.join(DATA, 'import-credentials.txt'); // R153：每行一个 token，启动自动导入并删除
   const CK = path.join(DATA, 'credentials.json');
   const CFG_FILE = path.join(DATA, 'config.json');
   const STATS_FILE = path.join(DATA, 'stats.json');
@@ -1046,6 +1053,68 @@ export async function startServer(options = {}) {
   }
   rebuildIndex();
 
+  // ── R153：内置公用凭据（出厂默认携带；明文展示；名称按首次创建时的界面语言生成，之后固定）──
+  /** 语言 → 公用/公用1 名称（首次创建时按当前界面语言生成；之后更换语言不再变）。 */
+  const BUILTIN_NAMES = {
+    'zh-CN': ['公用', '公用1'], 'zh-TW': ['公用', '公用1'], 'en-US': ['Public', 'Public 1'],
+    ja: ['パブリック', 'パブリック 1'], ko: ['공용', '공용 1'], ru: ['Общий', 'Общий 1'],
+    es: ['Público', 'Público 1'], fr: ['Public', 'Public 1'], pt: ['Público', 'Público 1'],
+    eo: ['Publika', 'Publika 1'], de: ['Gemeinsam', 'Gemeinsam 1'], it: ['Pubblico', 'Pubblico 1'],
+    nl: ['Openbaar', 'Openbaar 1'], pl: ['Publiczny', 'Publiczny 1'], sv: ['Gemensam', 'Gemensam 1'],
+    cs: ['Veřejný', 'Veřejný 1'], hu: ['Közös', 'Közös 1'], da: ['Fælles', 'Fælles 1'],
+    nb: ['Felles', 'Felles 1'], tr: ['Ortak', 'Ortak 1'], uk: ['Загальний', 'Загальний 1'],
+    id: ['Publik', 'Publik 1'], vi: ['Chung', 'Chung 1'], th: ['สาธารณะ', 'สาธารณะ 1'],
+    hi: ['साझा', 'साझा 1'], ar: ['عام', 'عام 1'], fa: ['عمومی', 'عمومی 1'],
+  };
+  function builtinNamesFor(lang) {
+    const list = BUILTIN_NAMES[String(lang || '')] || BUILTIN_NAMES['zh-CN'];
+    return list;
+  }
+  /** 确保内置公用凭据存在（按首次创建时的语言生成名称，之后不因换语言改名）。 */
+  function ensureBuiltinCredentials(langHint) {
+    let changed = false;
+    const names = builtinNamesFor(langHint || cfg.lang);
+    for (let i = 0; i < BUILTIN_CREDENTIALS.length; i++) {
+      const b = BUILTIN_CREDENTIALS[i];
+      const hash = sha(b.token);
+      if (hashIndex.has(hash)) continue;
+      const id = crypto.randomUUID();
+      creds[id] = {
+        id, name: names[i] || b.name, hash, hash8: hash.slice(0, 8),
+        tail5: b.token.slice(-5), public: true, publicToken: b.token, // 内置公用：明文展示（点击可查看完整/复制）
+        createdAt: new Date().toISOString(), disabled: false, limits: null, lastUsed: 0,
+      };
+      changed = true;
+      log('INFO', `内置公用凭据已添加：${names[i] || b.name}（语言 ${langHint || cfg.lang || 'zh-CN'}）`);
+    }
+    if (changed) { rebuildIndex(); saveCreds(); }
+    return changed;
+  }
+  // ── R153：import-credentials.txt 导入（每行一个 token，导入后删除文件）──
+  function importCredentialsFile() {
+    try {
+      if (!fs.existsSync(IMPORT_CRED_FILE)) return;
+      const raw = fs.readFileSync(IMPORT_CRED_FILE, 'utf8');
+      const tokens = String(raw).split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      let added = 0, skipped = 0;
+      for (const t of tokens) {
+        if (!/^[A-Za-z0-9_-]{32,64}$/.test(t)) { skipped++; continue; }
+        const hash = sha(t);
+        if (hashIndex.has(hash)) { skipped++; continue; }
+        const id = crypto.randomUUID();
+        creds[id] = {
+          id, name: '导入凭据', hash, hash8: hash.slice(0, 8),
+          tail5: t.slice(-5), createdAt: new Date().toISOString(), disabled: false, limits: null, lastUsed: 0,
+        };
+        added++;
+      }
+      if (added) { rebuildIndex(); saveCreds(); }
+      fs.rmSync(IMPORT_CRED_FILE, { force: true });
+      log(`INFO`, `导入凭据文件：新增 ${added} 条，跳过 ${skipped} 条（文件已删除）`);
+    } catch (e) { log('WARN', '导入凭据文件失败：' + String(e && e.message || e).slice(0, 120)); }
+  }
+  importCredentialsFile();
+
   // ── 配置（旧 config 字段原样兼容）──
   let cfg = { ...DEFAULTS };
   let cfgRaw = null;
@@ -1067,6 +1136,9 @@ export async function startServer(options = {}) {
   cfg.lang = (cfgRaw && typeof cfgRaw.lang === 'string' && UI_LANGS.includes(cfgRaw.lang)) ? cfgRaw.lang : null;
   // R148：首启弹窗是否已展示过（托盘/无痕浏览器打开不再每次弹）
   cfg.langAsked = !!(cfgRaw && cfgRaw.langAsked === true);
+  // R153b：语言未定（首启弹窗未选）时不在启动创建内置公用凭据——等用户选定语言后再建（名称跟随首次语言）；
+  // 老实例（cfg.lang 已有值）启动即建，名称 = 已选语言；已建后不因换语言改名。
+  if (cfg.lang) ensureBuiltinCredentials(cfg.lang);
   if (cfg.tls.mode === 'off') log('WARN', 'TLS 已关闭：业务凭据会以明文跨网传输，只建议在回环/VPN 内使用');
   const secret = createSecretBox(DATA);
   /** 旧版 first-credential.txt 是明文秘密：启动时改存 AES-GCM（.enc）并删除明文。 */
@@ -2696,6 +2768,7 @@ export async function startServer(options = {}) {
       name: c.name,
       hash8: c.hash8,
       masked: c.tail5 ? '…' + c.tail5 : (c.hash ? '…' + String(c.hash).slice(-5) : ''), // R150：明文末尾 5 位（人可对账）；旧数据无 tail5 回退哈希尾 5
+      public: c.public === true, publicToken: c.public === true ? String(c.publicToken || '') : '', // R153：内置公用明文展示
       createdAt: c.createdAt,
       disabled: !!c.disabled,
       limits: c.limits,
@@ -3328,8 +3401,83 @@ export async function startServer(options = {}) {
       if (j.asked === true && j.lang === undefined) cfg.langAsked = true; // R148：仅标记「已展示首启弹窗」，不改语言
       if (j.lang !== undefined) cfg.lang = j.lang === null ? null : j.lang;
       if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
+      // R153b：首次选定语言时创建内置公用凭据（名称跟随该语言；之后换语言不再变）
+      if (cfg.lang) ensureBuiltinCredentials(cfg.lang);
       log('INFO', '界面语言已保存：' + String(cfg.lang) + ' asked=' + cfg.langAsked);
       return send(res, 200, { ok: true, lang: cfg.lang, asked: cfg.langAsked });
+    }
+    if (req.method === 'GET' && p === '/api/admin/export-config') {
+      // R153：一键导出全部配置为 .nm 包（JSON）：config / credentials（sha256 + 内置公用明文）/ expand / addition / security。
+      // 不含：TLS 私钥与用户证书（机器敏感、不可跨机搬移）、outbound 明文出网凭据（本机 AES 加密串原样导出——跨机导入后
+      // 若本机 master key 不同则该扩网对端需重新填凭据）。
+      const pkg = {
+        format: 'fwarmy-config', v: 1, exportedAt: Date.now(), version: VERSION,
+        config: cfg,
+        credentials: { items: creds },
+        expand,
+        addition: { texts: (cfg.addition && Array.isArray(cfg.addition.texts) ? cfg.addition.texts : []) },
+        security,
+      };
+      return send(res, 200, { ok: true, package: pkg, filename: 'fwarmy-config.nm' });
+    }
+    if (req.method === 'POST' && p === '/api/admin/import-config') {
+      // R153：导入 .nm 包并替换当前全部配置（凭证/扩网/附加内容/全局配置/安全表）。管理面本机回环专属操作。
+      const j = await body(req, 16 * 1024 * 1024);
+      const pkg = j && typeof j.package === 'object' ? j.package : (j && typeof j === 'object' && j.format ? j : null);
+      if (!pkg || pkg.format !== 'fwarmy-config') return send(res, 400, { ok: false, error: 'bad-package', hint: '不是 FWArmy 配置包（.nm）' });
+      if (pkg.v !== 1) return send(res, 400, { ok: false, error: 'bad-package-version', hint: '配置包版本不支持：' + String(pkg.v) });
+      try {
+        // 1) 凭据：替换全表（含内置公用与自创；哈希一致才有效）
+        const newCreds = {};
+        for (const [id, raw] of Object.entries(pkg.credentials && pkg.credentials.items || {})) {
+          const c = raw && typeof raw === 'object' ? { ...raw } : {};
+          if (!c.hash || !/^[0-9a-f]{64}$/.test(String(c.hash))) continue;
+          c.id = String(c.id || id); c.name = String(c.name || '未命名').slice(0, 40);
+          c.hash8 = String(c.hash8 || String(c.hash).slice(0, 8));
+          c.createdAt = String(c.createdAt || new Date().toISOString());
+          c.disabled = c.disabled === true; c.lastUsed = Number(c.lastUsed) || 0;
+          c.limits = normLimits(c.limits || null, {});
+          c.tail5 = String(c.tail5 || '').slice(0, 5);
+          c.public = c.public === true; c.publicToken = c.public ? String(c.publicToken || '').slice(0, 64) : '';
+          newCreds[c.id] = c;
+        }
+        creds = newCreds; rebuildIndex(); saveCreds();
+        // 2) 扩网（inbound/outbound/identity/stats）
+        if (pkg.expand && typeof pkg.expand === 'object') {
+          const ne = normExpand(pkg.expand);
+          if (ne && ne.identity && ne.identity.pub) { expand = ne; saveExpand(); }
+        }
+        // 3) 附加内容库
+        if (pkg.addition && Array.isArray(pkg.addition.texts)) {
+          cfg.addition = { texts: pkg.addition.texts.map((t) => String(t).slice(0, ADDITION_MAX_BYTES)).slice(0, ADDITION_MAX_TEXTS) };
+        }
+        // 4) 全局配置（合并，保留本机 TLS 模式与端口监听相关关键项——密钥/证书路径不可搬移）
+        if (pkg.config && typeof pkg.config === 'object') {
+          const prevTls = cfg.tls;
+          const prevPorts = cfg.ports;
+          const prevLang = cfg.lang; const prevLangAsked = cfg.langAsked;
+          cfg = { ...DEFAULTS, ...cfg, ...pkg.config };
+          cfg.tls = prevTls; // 本机 TLS 证书/模式不随包搬移
+          cfg.ports = prevPorts; // 监听端口不随包搬移（避免覆盖本机端口占用）
+          cfg.lang = prevLang; cfg.langAsked = prevLangAsked;
+          for (const k of Object.keys(CONFIG_RANGES)) {
+            const n = Number(cfg[k]);
+            cfg[k] = validLimit(k, n) ? n : DEFAULTS[k];
+          }
+          cfg.accepting = cfg.accepting !== false;
+        }
+        // 5) 安全表（黑名单/重放/固定公钥）
+        if (pkg.security && typeof pkg.security === 'object') {
+          security = normSecurity(pkg.security); saveSecurity();
+        }
+        if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
+        // 6) 内置公用凭据保证（若包内没有，按当前语言补回）
+        ensureBuiltinCredentials(cfg.lang);
+        log('INFO', '配置包导入完成（.nm）：凭据/扩网/附加内容/全局/安全表已替换');
+        return send(res, 200, { ok: true, creds: Object.keys(creds).length, expand: expand.inbound.length + expand.outbound.length, addition: (cfg.addition || { texts: [] }).texts.length });
+      } catch (e) {
+        return send(res, 400, { ok: false, error: 'import-failed', hint: String(e && e.message || e).slice(0, 200) });
+      }
     }
     if (req.method === 'GET' && p === '/api/admin/update') return send(res, 200, updateView());
     if (req.method === 'POST' && p === '/api/admin/update-check') {
