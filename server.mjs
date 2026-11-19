@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.18';
+export const VERSION = '0.7.19';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -120,8 +120,8 @@ const CRED_DEFAULT_PORT = 59599;
 const DEFAULT_PORTS = [8787, CRED_DEFAULT_PORT, EXPAND_DEFAULT_PORT];
 /** R142 的过渡默认（含 TCP 443/62666）：恰等于它的配置自动回退到 3 个默认端口（用户自定义过的端口列表不动）。 */
 const R142_DEFAULT_PORTS = [8787, CRED_DEFAULT_PORT, EXPAND_DEFAULT_PORT, 443, 62666];
-/** 内置引导锚点（R133 用户拍板：443 与 62666 双端口 × DHT/DHT2 两域名；R135w 追加 dht.numumu.com 双端口；原话 https://DHT.pondsi.com 等，剥协议取主机）。 */
-const DEFAULT_ANCHORS = ['DHT.pondsi.com', 'DHT.pondsi.com:62666', 'DHT2.pondsi.com', 'DHT2.pondsi.com:62666', 'dht.numumu.com', 'dht.numumu.com:62666'];
+/** 内置引导锚点（R151 用户拍板：dht/dht2.numumu.com × 443/62666 共 4 个；443 为默认端口可省略；剥协议取主机）。 */
+const DEFAULT_ANCHORS = ['dht.numumu.com', 'dht.numumu.com:62666', 'dht2.numumu.com', 'dht2.numumu.com:62666'];
 /** 管理页语言白名单（R138：与 admin.html LANGS 27 项一致；选择持久化到 config.json.lang）。 */
 const UI_LANGS = ['zh-CN', 'zh-TW', 'en-US', 'ja', 'ko', 'ru', 'es', 'fr', 'pt', 'eo', 'de', 'it', 'nl', 'pl', 'sv', 'cs', 'hu', 'da', 'nb', 'tr', 'uk', 'id', 'vi', 'th', 'hi', 'ar', 'fa'];
 /** 手动对外地址的验证周期：验证通过才用于宣告，失效自动回退自动推断。 */
@@ -1241,7 +1241,7 @@ export async function startServer(options = {}) {
       } catch { return ''; }
     };
     const [v4, v6] = await Promise.all([
-      once('https://api.ipify.org?format=json'),
+      once('https://api4.ipify.org?format=json'), // R151：纯 IPv4 专用端点（api.ipify.org 有 AAAA 记录，IPv6 优先出口会误返回 IPv6 → v4 字段丢失）
       once('https://api6.ipify.org?format=json'), // IPv6 专用端点；无 IPv6 出口时失败 → 显示「无」
     ]);
     const v4b = v4 || v6; // 只有 v6 时也让默认地址可用
