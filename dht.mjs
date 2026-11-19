@@ -122,9 +122,9 @@ export function gcmOpen(key, iv, ct, aad) {
 /** 解析 `host` / `host:port` / `[::1]:port`；不合法返回 null（不猜、不静默兜底） */
 
 /**
- * R135d：域名解析为有序候选地址（IPv6 全部排在 IPv4 前）；IP 字面量原样返回单个；
- * 解析失败返回 []（调用方快速失败，绝不对域名发包——dgram 对域名 send 会触发 socket error 置空）。
- * 调用方逐候选尝试：IPv6 不可达（超时/拒绝）自动回退 IPv4。
+ * R155：域名解析为有序候选地址（IPv4 全部排在 IPv6 前——用户拍板 IPv4 优先，覆盖 R135d 的 IPv6 优先）；
+ * IP 字面量原样返回单个；解析失败返回 []（调用方快速失败，绝不对域名发包——dgram 对域名 send 会触发 socket error 置空）。
+ * 调用方逐候选尝试：IPv4 不可达（超时/拒绝）自动回退 IPv6。
  */
 export function resolveHosts(host) {
   const h = String(host || '');
@@ -134,7 +134,7 @@ export function resolveHosts(host) {
       if (err || !Array.isArray(addrs) || !addrs.length) return resolve([]);
       const out = [];
       const seen = new Set();
-      for (const fam of [6, 4]) {
+      for (const fam of [4, 6]) {
         for (const a of addrs) {
           if (a.family === fam && !seen.has(a.address)) { seen.add(a.address); out.push(a.address); }
         }

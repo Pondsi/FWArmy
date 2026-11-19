@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.24';
+export const VERSION = '0.7.25';
 
 /** R153：内置公用中继凭据——所有 FWArmy 出厂默认携带，明文显示在管理页（点击可查看完整/复制）；其余自创凭据仍只存 sha256 不可回看。 */
 const BUILTIN_CREDENTIALS = [
@@ -1813,13 +1813,13 @@ export async function startServer(options = {}) {
   let dhtRetryDelayMs = cfg.dht.retryBaseMs;
   let dhtState = { lastPublishAt: 0, lastPublishSeq: 0, lastStoredOn: [], lastError: '', lastYindao: null, selfPublishes: 0 };
   const didLastPub = new Map(); // did → 上次代发布定位记录的时间
-  /** 自动推断 IP：探测到的公网 IP（ipify）优先（R135：IPv6 优先，无 IPv6 才用 IPv4），其次本机非回环 IPv6 > IPv4 > 回环（R139：移除 STUN/NAT-PMP 优先级）。 */
+  /** 自动推断 IP：探测到的公网 IP（ipify）优先（R155：IPv4 优先，无 IPv4 才用 IPv6——用户拍板覆盖 R135 的 IPv6 优先），其次本机非回环 IPv4 > IPv6 > 回环（R139：移除 STUN/NAT-PMP 优先级）。 */
   function autoAdvIp() {
-    if (lastPub && (lastPub.ipv6 || lastPub.ipv4)) return lastPub.ipv6 || lastPub.ipv4;
+    if (lastPub && (lastPub.ipv4 || lastPub.ipv6)) return lastPub.ipv4 || lastPub.ipv6;
     for (const a of localAddresses()) {
-      if (!a.internal && a.family === 'IPv6' && !/^fe80:/i.test(a.address) && !a.address.includes('%')) return a.address;
+      if (!a.internal && a.family === 'IPv4' && !/^fe80:/i.test(a.address) && !a.address.includes('%')) return a.address;
     }
-    for (const a of localAddresses()) if (!a.internal && a.family === 'IPv4') return a.address;
+    for (const a of localAddresses()) if (!a.internal && a.family === 'IPv6') return a.address;
     return '127.0.0.1';
   }
   /**
@@ -1837,12 +1837,12 @@ export async function startServer(options = {}) {
     const cp = Array.isArray(cfg.ports) ? [...cfg.ports] : [];
     return cp.slice(0, 2).length ? cp.slice(0, 2) : [59599];
   }
-  /** R135：自动兜底地址维度 = 探测到的公网 IP（IPv6 优先，无 IPv6 用 IPv4；ipify 全失败时用推断 IP），最多 2 维 × 业务端口。 */
+  /** R135：自动兜底地址维度 = 探测到的公网 IP（R155：IPv4 优先，无 IPv4 用 IPv6；ipify 全失败时用推断 IP），最多 2 维 × 业务端口。 */
   function autoAddrHosts() {
-    if (lastPub && (lastPub.ipv6 || lastPub.ipv4)) {
+    if (lastPub && (lastPub.ipv4 || lastPub.ipv6)) {
       const out = [];
-      if (lastPub.ipv6) out.push({ host: lastPub.ipv6, family: 'IPv6' });
       if (lastPub.ipv4) out.push({ host: lastPub.ipv4, family: 'IPv4' });
+      if (lastPub.ipv6) out.push({ host: lastPub.ipv6, family: 'IPv6' });
       return out;
     }
     const ip = autoAdvIp();
@@ -4035,7 +4035,7 @@ export async function startServer(options = {}) {
         const hit = mine.some((x) => ips.includes(x));
         dnsCheck = { status: !ips.length ? 'no-record' : (hit ? 'match' : 'mismatch'), ips };
       }
-      const hosts = domain ? [domain] : [...new Set([pub.ipv6 || pub.ipv4, pub.ipv4].filter(Boolean))];
+      const hosts = domain ? [domain] : [...new Set([pub.ipv4 || pub.ipv6, pub.ipv6].filter(Boolean))]; // R155：IPv4 优先
       const addrs = hosts.flatMap((h) => udpPorts.map((port) => ({
         host: h, port,
         kind: domain ? 'domain' : (h.includes(':') ? 'ipv6' : 'ipv4'),
