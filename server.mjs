@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.17';
+export const VERSION = '0.7.18';
 export const PRODUCT = 'FWArmy';
 
 const TTL_MS = 30_000;
@@ -614,11 +614,13 @@ function normInbound(raw) {
   const hash = String(raw.hash || raw.tokenHash || '');
   if (!/^[0-9a-f]{64}$/.test(hash)) return null;
   const port = Number(raw.port);
+  const tail5 = String(raw.tail5 || '').slice(0, 5);
   return {
     id: String(raw.id || crypto.randomUUID()),
     name: String(raw.name || '接入凭据').slice(0, 40),
     hash,
-    masked: '…' + hash.slice(30, 35) + '…' + hash.slice(-5), // 持久化不带，重启后从哈希重算（最中间 5 个 + 末尾 5 个）
+    tail5, // R150：明文末尾 5 位（人可对账）；旧数据无则回退哈希尾 5
+    masked: tail5 ? '…' + tail5 : ('…' + hash.slice(30, 35) + '…' + hash.slice(-5)),
     port: Number.isInteger(port) && port >= 1 && port <= 65535 ? port : 0,
     addr: String(raw.addr || '').slice(0, 253),
     createdAt: Number(raw.createdAt) || 0,
@@ -1351,7 +1353,7 @@ export async function startServer(options = {}) {
     for (const [k, s] of Object.entries(expand.stats.perSource)) perSource[k] = sideView(s);
     const inboundStats = sideView(expand.stats.inbound);
     const creds = expand.inbound.map((c) => ({
-      id: c.id, name: c.name, masked: c.masked, addr: c.addr || '', host: c.host || '', createdAt: c.createdAt, lastAt: c.lastAt,
+      id: c.id, name: c.name, masked: c.tail5 ? '…' + c.tail5 : (c.masked || '—'), addr: c.addr || '', host: c.host || '', createdAt: c.createdAt, lastAt: c.lastAt,
       lastResult: c.lastResult, disabled: c.disabled, limits: c.limits || null, expiresAt: c.expiresAt || 0,
       port: c.port || 0, portOk: listeningPorts().includes(Number(c.port) || 0), // R133：凭据端口须在监听集合
       effective: eff(c),
@@ -1399,16 +1401,28 @@ export async function startServer(options = {}) {
     if (!Number.isInteger(port) || port < 1 || port > 65535) port = EXPAND_DEFAULT_PORT;
     const token = b64u(crypto.randomBytes(32));
     const hash = sha(token);
+    const tail5 = token.slice(-5); // R150：标识列显示明文末尾 5 位（人可对账；≈30bit 熵 + 来源限速，无实质风险）
     const item = {
-      id: crypto.randomUUID(), name: String(name || '').trim().slice(0, 40) || ('接入凭据 ' + (expand.inbound.length + 1)),
-      hash, masked: '…' + hash.slice(30, 35) + '…' + hash.slice(-5), // 前缀无意义：只显示最中间 5 个 + 末尾 5 个（R132）
+      id: crypto.randomUUID(), name: uniqueInboundName(name), tail5,
+      hash, masked: '…' + tail5, // 前缀无意义：只显示末尾 5 个（R150；R132 曾用哈希中段，人无法核对）
       host, port, addr: host + ':' + port, createdAt: now(), lastAt: 0, lastResult: '', disabled: false,
       limits: limits || null, expiresAt: Number(expiresAt) || 0, // R129：可管理（改名/流量/速度/有效期）；R135p：生成时即可设置
     };
     expand.inbound.push(item);
     saveExpand();
-    // 明文只返回这一次；expand.json 只有 sha256。
+    // 明文只返回这一次；expand.json 只有 sha256 + tail5。
     return { token, item };
+  }
+  /** R150：名称必须唯一（人类只靠名称区分凭据）——重名拒绝；默认名自动避让。 */
+  function uniqueInboundName(name) {
+    const raw = String(name || '').trim().slice(0, 40);
+    const taken = new Set(expand.inbound.map((c) => c.name));
+    if (raw && taken.has(raw)) throw new Error('name-conflict');
+    if (raw) return raw;
+    for (let i = expand.inbound.length + 1; ; i++) {
+      const cand = '接入凭据 ' + i;
+      if (!taken.has(cand)) return cand;
+    }
   }
   function expandCred(req) {
     const t = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
@@ -2681,7 +2695,7 @@ export async function startServer(options = {}) {
       id: c.id,
       name: c.name,
       hash8: c.hash8,
-      masked: c.hash ? '…' + String(c.hash).slice(30, 35) + '…' + String(c.hash).slice(-5) : '', // R134：与 F中继一致（最中间 5 + 末尾 5）
+      masked: c.tail5 ? '…' + c.tail5 : (c.hash ? '…' + String(c.hash).slice(-5) : ''), // R150：明文末尾 5 位（人可对账）；旧数据无 tail5 回退哈希尾 5
       createdAt: c.createdAt,
       disabled: !!c.disabled,
       limits: c.limits,
@@ -3364,7 +3378,15 @@ export async function startServer(options = {}) {
           if (!ep.ok) return send(res, 401, { ok: false, error: 'credential-port-unavailable', hint: ep.error || '' });
         }
       }
-      const { token, item } = generateInboundToken(j.name, j.port, j.host, limits, expiresAt);
+      let generated;
+      try { generated = generateInboundToken(j.name, j.port, j.host, limits, expiresAt); }
+      catch (e) {
+        if (String(e && e.message) === 'name-conflict') {
+          return send(res, 400, { ok: false, error: 'name-conflict', hint: '已存在同名凭据；名称必须唯一，请换一个名称' });
+        }
+        throw e;
+      }
+      const { token, item } = generated;
       log('INFO', `被扩网：已生成新的接入凭据 #${expand.inbound.length}（地址 ${item.addr}，只显示一次）`);
       return send(res, 200, { ok: true, token, item: { id: item.id, name: item.name, masked: item.masked }, inbound: expandView().inbound });
     }
@@ -3375,6 +3397,9 @@ export async function startServer(options = {}) {
       if (j.name !== undefined) {
         const name = String(j.name || '').trim().slice(0, 40);
         if (!name) return send(res, 400, { ok: false, error: 'bad-name' });
+        if (expand.inbound.some((x) => x.id !== item.id && x.name === name)) {
+          return send(res, 400, { ok: false, error: 'name-conflict', hint: '已存在同名凭据；名称必须唯一，请换一个名称' });
+        }
         item.name = name;
       }
       if (j.disabled !== undefined) {
@@ -3858,8 +3883,13 @@ export async function startServer(options = {}) {
       }
       const token = b64u(crypto.randomBytes(32));
       const id = crypto.randomUUID();
+      // R150：名称必须唯一（人类只靠名称区分凭据）——重名拒绝
+      if (Object.values(creds).some((c) => c.name === name)) {
+        return send(res, 400, { ok: false, error: 'name-conflict', hint: '已存在同名凭据；名称必须唯一，请换一个名称' });
+      }
       creds[id] = {
         id, name, hash: sha(token), hash8: sha(token).slice(0, 8),
+        tail5: token.slice(-5), // R150：标识列显示明文末尾 5 位（人可对账；≈30bit 熵 + 来源限速，无实质风险）
         createdAt: new Date().toISOString(), disabled: false, limits, lastUsed: 0,
         host, port: host ? port : 0,
         addition: normCredAddition(j.addition), // R135g：凭证级附加内容配置（关/随机/顺序/按比例）
@@ -3874,6 +3904,9 @@ export async function startServer(options = {}) {
       if (!c) return send(res, 404, { ok: false, error: 'not-found' });
       const name = j.name === undefined ? c.name : String(j.name || '').trim().slice(0, 40);
       if (!name) return send(res, 400, { ok: false, error: 'bad-name' });
+      if (j.name !== undefined && Object.values(creds).some((x) => x.id !== c.id && x.name === name)) {
+        return send(res, 400, { ok: false, error: 'name-conflict', hint: '已存在同名凭据；名称必须唯一，请换一个名称' });
+      }
       if (j.disabled !== undefined && typeof j.disabled !== 'boolean') return send(res, 400, { ok: false, error: 'bad-disabled' });
       const limits = parseLimits(j.limits, c.limits);
       // 全部字段通过后一次提交，非法限额不能顺带改名/停用。
