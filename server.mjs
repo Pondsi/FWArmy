@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.22';
+export const VERSION = '0.7.23';
 
 /** R153：内置公用中继凭据——所有 FWArmy 出厂默认携带，明文显示在管理页（点击可查看完整/复制）；其余自创凭据仍只存 sha256 不可回看。 */
 const BUILTIN_CREDENTIALS = [
@@ -1303,19 +1303,51 @@ export async function startServer(options = {}) {
 
   /** 公网 IP 探测缓存（R131：启动自动探测 + 30 分钟定时 + 手动刷新；顶部常驻显示 IPv4/IPv6）。 */
   let lastPub = { ipv4: '', ipv6: '', at: 0, via: 'none' };
+  /** R153b：强制 IPv4 出口请求（dns 解析 A 记录后向 IPv4 IP 发 HTTPS，SNI 保持域名）——
+   * 机器有 IPv6 出口时普通 fetch 会走 IPv6，导致「IPv4 探测」实际拿的是 IPv6 或失败显示【无】。 */
+  function httpsGetFixedFamily(host, path, family, timeoutMs = 4000) {
+    return new Promise((resolve) => {
+      dns.lookup(host, { family }, (err, addr) => {
+        if (err || !addr) return resolve('');
+        const fn = family === 6 ? https : https;
+        const opts = {
+          host: String(addr), port: 443, path, method: 'GET',
+          headers: { host, 'user-agent': `FWArmy/${VERSION}` },
+          servername: host, timeout: timeoutMs,
+        };
+        const req = fn.request(opts, (res) => {
+          const bu = [];
+          res.on('data', (c) => bu.push(c));
+          res.on('end', () => resolve(Buffer.concat(bu).toString('utf8')));
+        });
+        req.on('error', () => resolve(''));
+        req.on('timeout', () => { req.destroy(); resolve(''); });
+        req.end();
+      });
+    });
+  }
+  const IPV4_ENDPOINTS = [
+    ['api4.ipify.org', '/?format=json'], // 纯 IPv4 端点
+    ['ipv4.icanhazip.com', '/'],         // 纯文本
+    ['api.ipify.org', '/?format=json'],  // 双栈端点（强制 IPv4 出口后可靠）
+  ];
   async function probePublicIp() {
-    const once = async (url) => {
+    // IPv4：强制 IPv4 出口 + 多端点回退（任一成功即停）
+    let v4 = '';
+    for (const [host, path] of IPV4_ENDPOINTS) {
       try {
-        const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
-        const j = await r.json();
-        const ip = String(j.ip || '').trim();
-        return /^[0-9A-Fa-f.:]+$/.test(ip) ? ip : '';
-      } catch { return ''; }
-    };
-    const [v4, v6] = await Promise.all([
-      once('https://api4.ipify.org?format=json'), // R151：纯 IPv4 专用端点（api.ipify.org 有 AAAA 记录，IPv6 优先出口会误返回 IPv6 → v4 字段丢失）
-      once('https://api6.ipify.org?format=json'), // IPv6 专用端点；无 IPv6 出口时失败 → 显示「无」
-    ]);
+        const txt = await httpsGetFixedFamily(host, path, 4);
+        const ip = (txt.includes('{') ? String((JSON.parse(txt) || {}).ip || '') : txt).trim();
+        if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) { v4 = ip; break; }
+      } catch { /* 下一端点 */ }
+    }
+    // IPv6：专用端点（api6 无 AAAA 干扰问题；强制 IPv6 出口，无 v6 出口时失败 → 显示「无」）
+    let v6 = '';
+    try {
+      const txt = await httpsGetFixedFamily('api6.ipify.org', '/?format=json', 6);
+      const ip = String((JSON.parse(txt) || {}).ip || '').trim();
+      if (/^[0-9A-Fa-f:]+$/.test(ip) && ip.includes(':')) v6 = ip;
+    } catch { /* 无 IPv6 */ }
     const v4b = v4 || v6; // 只有 v6 时也让默认地址可用
     lastPub = { ipv4: v4, ipv6: v6, at: Date.now(), via: v4 || v6 ? 'ipify' : 'none' };
     log('INFO', `[fwarmy] 公网 IP 自动探测：IPv4=${v4 || '无'} IPv6=${v6 || '无'}`);
@@ -2800,6 +2832,10 @@ export async function startServer(options = {}) {
     return Object.values(creds).sort((a, b) => (a.createdAt === b.createdAt ? 0 : a.createdAt < b.createdAt ? 1 : -1));
   }
   function buildStats(u) {
+    // R153b：兜底——内置公用凭据惰性确保。仅在「语言已选定」或「首启弹窗已展示（含跳过）」后创建：
+    // 名称按创建时刻语言（cfg.lang || zh-CN），创建后不因换语言改名。首启弹窗未展示前不创建（等用户选定语言，
+    // 名称跟随所选语言）。
+    if (cfg.lang || cfg.langAsked) ensureBuiltinCredentials(cfg.lang || 'zh-CN');
     const now = Date.now();
     const all = Object.values(creds);
     const page = adminPage(u);

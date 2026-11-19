@@ -149,9 +149,8 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <h2 title="日 / 月 / 总次数与流量，分钟限速及年流量；次数 = 有效凭据的业务请求（含拒绝/失败），流量 = 实际入队与取走的信封字节之和" data-i18n="ov.creds">凭据与用量</h2>
     <div class="toolbar">
       <button class="primary" id="newCred" title="生成新的中继凭据（WArmy 客户端用它连接本站；服务器只存 sha256，明文仅生成时显示一次；名称默认已填可直接保存）" data-i18n="btn.generate">生成凭据</button>
+      <span class="muted" id="relayFp" title="本站 TLS 指纹（sha256）：WArmy 客户端固定指纹时核对；点击可复制"></span>
       <button id="refreshCreds" title="重新加载凭据列表" data-i18n="btn.refresh">刷新</button>
-      <button id="exportCfg" title="一键导出全部配置（.nm 包：凭证/限额/扩网/附加内容/全局/安全表）；不含 TLS 私钥与出网凭证明文">导出配置…</button>
-      <button id="importCfg" title="导入 .nm 配置包并替换当前全部配置（仅本机管理面可用；导入前建议先导出备份）">导入配置…</button>
       <span class="muted" id="credCount"></span>
     </div>
     <div class="tablewrap"><table id="credTable"></table></div>
@@ -359,6 +358,8 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
   <span>FWArmy · <span id="langNow"></span> ·</span>
   <select id="langSel" title="语言 / Language / 言語" style="max-width:200px"></select>
   <button class="sm" id="langModalOpen" title="语言 / Language / 言語">🌐</button>
+  <button class="sm" id="exportCfg" title="一键导出全部配置（.nm 包：中继/F中继/扩网/附加内容/限额/全局/安全表）；不含 TLS 私钥与出网凭证明文">导出配置…</button>
+  <button class="sm" id="importCfg" title="导入 .nm 配置包并替换当前全部配置（仅本机管理面可用；导入前建议先导出备份）">导入配置…</button>
   <span data-i18n="foot.note">WArmy专属服务器，和 WArmy 主应用分开安装。数据目录：</span><code id="dataDir">—</code>。暂停期间内存消息仍按 30 秒 TTL 过期；退出进程会清空队列，需手动重启。
 </div>
 </div>
@@ -539,7 +540,12 @@ function setLang(code, persist = true) {
   if ($('#langModal')) $('#langModal').classList.remove('open');
   // R138：服务端持久化——换端口/换浏览器/程序重启都记住，不再重复弹首启窗
   if (persist) {
-    try { api('/api/admin/lang', { lang: code }).catch(() => {}); } catch { /* 本地模式/离线时仅浏览器记忆 */ }
+    try {
+      api('/api/admin/lang', { lang: code }).then(() => {
+        // R153：选语言后服务端会创建内置公用凭据（名称按此时语言）——刷新列表让它们显示
+        refresh();
+      }).catch(() => {});
+    } catch { /* 本地模式/离线时仅浏览器记忆 */ }
   }
 }
 function renderLangPicker(target) {
@@ -1577,6 +1583,13 @@ function render() {
     ['未授权尝试', num(S.unauthorized), '不归属任何凭据'],
   ].map(([k, v, s]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join('');
 
+  // R153：中继页「生成凭据」右侧显示本站 TLS 指纹（WArmy 客户端固定指纹时核对）
+  const rf = $('#relayFp');
+  if (rf) {
+    const fp = S.tls && S.tls.fingerprint;
+    rf.innerHTML = fp ? `指纹 ${clipFull(fp, 16)}` : '指纹 —';
+  }
+
   $('#totalTable').innerHTML =
     `<tr>${_t('tbl.range')}${_t('tbl.requests')}${_t('tbl.up')}${_t('tbl.down')}${_t('tbl.sum')}${_t('tbl.relayed')}${_t('tbl.delivered')}${_t('tbl.rejected')}${_t('tbl.offline')}</tr>` +
     [[_t('tbl.today'), t.today], [_t('tbl.month'), t.month], ['今年', t.year], [_t('tbl.total'), t]].map(([k, b]) =>
@@ -1852,6 +1865,13 @@ function renderUpdate() {
   else if (U.staged) {
     // R135z：更新已应用（版本已最新）时不再显示「等待重启」——交接中给更准确的文案
     msg = (!U.updateAvailable && U.lastInstall && U.lastInstall.ok) ? _t('upd.msg.stagedDone') : _t('upd.msg.staged');
+  }
+  else if (U.lastError) {
+    // R153b：更新失败原因直接显示在「检测更新」右侧（网络问题给诊断提示）
+    const why = /fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|network/i.test(U.lastError)
+      ? '（网络问题：检查本机能否访问 GitHub 与 assets CDN，防火墙/代理是否拦截）'
+      : '';
+    msg = `更新失败：${U.lastError}${why}`;
   }
   else if (U.updateAvailable) msg = _t('upd.msg.available') + l.version + _t('upd.msg.canInstall');
   else if (U.lastCheck) msg = _t('toast.updated');
@@ -2850,6 +2870,14 @@ $('#updInstall').addEventListener('click', async () => {
     else if (m === 'update-pending-restart') toast(_t('toast.updating'));
     else toast(_t('toast.updateFailed') + m, true);
     b.disabled = false;
+    const um = document.getElementById('updMsg');
+    // R153b：失败原因显示在「检测更新」右侧（含网络诊断提示）
+    if (um) {
+      const why = /fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|network/i.test(m)
+        ? '（网络问题：检查本机能否访问 GitHub 与 assets CDN，防火墙/代理是否拦截）'
+        : '';
+      um.textContent = `更新失败：${m}${why}`;
+    }
     await loadUpdate();
   }
 });
