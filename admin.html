@@ -140,6 +140,12 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <div class="tablewrap"><table id="totalTable"></table></div>
   </div>
   <div class="panel">
+    <h2 title="每条消息必须有 msgId；同一 msgId 24h 内最多放行 2 次，第 3 次/超 24h 丢弃并拉黑 30 天；中间节点改写 msgId 会验签失败" data-i18n="sec.title">消息安全</h2>
+    <div class="cards" id="secCards"></div>
+    <div class="tablewrap"><table id="secTable"></table></div>
+    <div class="toolbar" data-i18n="sec.gc"><button id="secGc" title="清理过期的重放窗口与黑名单条目">清理过期条目</button><button class="danger sm" id="secClear" title="清空全部黑名单（需确认）" data-i18n="sec.clear">清空黑名单…</button></div>
+  </div>
+  <div class="panel">
     <h2 title="日 / 月 / 总次数与流量，分钟限速及年流量；次数 = 有效凭据的业务请求（含拒绝/失败），流量 = 实际入队与取走的信封字节之和" data-i18n="ov.creds">凭据与用量</h2>
     <div class="toolbar">
       <button class="primary" id="newCred" title="生成新的中继凭据（WArmy 客户端用它连接本站；服务器只存 sha256，明文仅生成时显示一次；名称默认已填可直接保存）" data-i18n="btn.generate">生成凭据</button>
@@ -202,12 +208,6 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
     <div class="hint" id="tlsHint">当前指纹：—</div>
   </div>
   <div class="panel">
-    <h2 title="每条消息必须有 msgId；同一 msgId 24h 内最多放行 2 次，第 3 次/超 24h 丢弃并拉黑 30 天；中间节点改写 msgId 会验签失败" data-i18n="sec.title">消息安全</h2>
-    <div class="cards" id="secCards"></div>
-    <div class="tablewrap"><table id="secTable"></table></div>
-    <div class="toolbar" data-i18n="sec.gc"><button id="secGc" title="清理过期的重放窗口与黑名单条目">清理过期条目</button><button class="danger sm" id="secClear" title="清空全部黑名单（需确认）" data-i18n="sec.clear">清空黑名单…</button></div>
-  </div>
-  <div class="panel">
     <h2 title="管理页只接受本机回环直连；业务面需凭据 + Ed25519 签名；消息只留内存 30 秒不落盘；凭据不明文落盘（详情见帮助文档）" data-i18n="sec.boundary">安全边界</h2>
     <div class="foot">
       本机管理：管理页只接受本机回环直连（127.0.0.1 / ::1），Host 必须是回环名，拒绝跨站请求；管理写操作必须是 JSON。
@@ -248,6 +248,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
 <section id="tab-frelay">
   <div class="panel">
     <h2 title="生成被扩网凭据，让别的 FWArmy 把送不到的消息转给你投递；新版凭证不含地址，对方添加时需另填你的域名/IP + 端口" data-i18n="ex.in">F中继 · 别人连接我</h2>
+    <div class="hint" id="exInFp" title="本站 TLS 证书指纹（sha256）：对方在「扩网」页添加本站并固定指纹时核对此值；点击可复制"></div>
     <div class="toolbar">
       <button class="primary" id="exGen" title="生成被扩网凭据：弹窗填写名称/域名IP/端口/限额/有效期；新版凭证不再包含地址，对方添加扩网时需另填地址；明文只显示这一次" data-i18n="ex.gen">生成接入凭据</button>
       <span class="muted" id="exInState" data-i18n="ex.inState.loading">加载中…</span>
@@ -1979,6 +1980,13 @@ function tlsTag(p) {
 }
 function renderExpand() {
   if (!E) return;
+  const fpEl = $('#exInFp');
+  if (fpEl) {
+    const fp = E.tls && E.tls.fingerprint;
+    fpEl.innerHTML = fp
+      ? `本站 TLS 指纹（sha256）：${clipFull(fp, 24)} —— 对方在「扩网」页添加本站并固定指纹时核对`
+      : '本站 TLS 指纹：—（TLS 未启用）';
+  }
   $('#exOutCards').innerHTML = exCards(E.stats.outbound);
   $('#exOutTotals').innerHTML = exTotalsTable(E.stats.outbound);
   $('#exOutTable').innerHTML =
