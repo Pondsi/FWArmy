@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.26';
+export const VERSION = '0.7.27';
 
 /** R153：内置公用中继凭据——所有 FWArmy 出厂默认携带，明文显示在管理页（点击可查看完整/复制）；其余自创凭据仍只存 sha256 不可回看。 */
 const BUILTIN_CREDENTIALS = [
@@ -1083,6 +1083,10 @@ export async function startServer(options = {}) {
     const names = builtinNamesFor(langHint || cfg.lang);
     let host = '';
     try { host = activeExternalAddr().host; } catch { host = ''; }
+    // R157：判断地址是否本机网卡地址（创建时探测未完成会填本地 IP，探测完成后修正为公网）
+    const isLocalAddr = (h) => {
+      try { return localAddresses().some((a) => String(a.address).toLowerCase() === String(h || '').toLowerCase()); } catch { return false; }
+    };
     for (let i = 0; i < BUILTIN_CREDENTIALS.length; i++) {
       const b = BUILTIN_CREDENTIALS[i];
       const hash = sha(b.token);
@@ -1095,6 +1099,12 @@ export async function startServer(options = {}) {
           existing.limits = existing.limits || { ...BUILTIN_LIMITS };
           changed = true;
           log('INFO', `内置公用凭据已补齐端点/限额：${existing.name} → ${existing.host}:${existing.port}`);
+        } else if (existing.host && isLocalAddr(existing.host) && host && !isLocalAddr(host)) {
+          // R157：端点修正——创建时公网探测未完成填了本机网卡 IP；探测完成后自动刷成公网 IP
+          const old = existing.host;
+          existing.host = host;
+          changed = true;
+          log('INFO', `内置公用凭据端点已修正：${existing.name} ${old} → ${host}（探测完成后自动刷新）`);
         }
         continue;
       }
@@ -1380,6 +1390,9 @@ export async function startServer(options = {}) {
     }
     const v4b = v4 || v6; // 只有 v6 时也让默认地址可用
     lastPub = { ipv4: v4, ipv6: v6, at: Date.now(), via: v4 || v6 ? 'ipify' : 'none' };
+    // R157：探测完成后立即刷新对外地址缓存——否则 activeExternalAddr/内置凭据端点
+    // 会一直用探测前生成的本机网卡 IP（addrSelfHeal 5 分钟才同步一次，太晚）
+    try { syncAddrStates(); } catch { /* noop */ }
     log('INFO', `[fwarmy] 公网 IP 自动探测：IPv4=${v4 || '无'} IPv6=${v6 || '无'}`);
     return { ...lastPub, defaultHost: v4b };
   }

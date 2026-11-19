@@ -104,7 +104,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
   <div class="hright">
     <div class="pubip" id="pubIpBar" title="本机探测到的公网 IP（IPv6 优先）。点击重新探测">
       <span class="ico" id="pubIpIco">⟳</span>
-      <span id="pubIpText" data-i18n="pubip.detecting">公网 IP：检测中…</span>
+      <span id="pubIpText"></span><!-- R157：无 data-i18n——renderPubIp 全权负责文本；applyI18n 会替换首文本节点导致「检测中…」混入显示 -->
     </div>
     <div class="hrow">
       <div class="pills"><div class="pills" id="pills"></div><button id="powerBtn" class="good" disabled data-i18n="power.loading">加载状态…</button></div>
