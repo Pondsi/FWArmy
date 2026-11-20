@@ -114,7 +114,7 @@ const docs = [
   'docs/INSTALL-3-PLATFORMS.md',
   'docs/USAGE-3-PLATFORMS.md',
   'docs/SERVER-RELAY.md',
-  'AI-USE-GUIDE.md', // R144：给 AI 的完整使用说明（管理页「复制给 AI」按钮引用）
+  '说明.md', // 中文使用手册（安装/配置/管理/FAQ）
 ];
 const byPlatform = {
   'win-x64': ['FWArmy.exe', 'start.bat', 'stop.bat', 'fwarmy-headless.bat', 'fwarmy-console.bat', 'fwarmy-tray.ps1', 'set-folder-icon.bat', 'help.html'],
