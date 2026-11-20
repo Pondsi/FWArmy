@@ -1,8 +1,8 @@
-# WArmy Relay
+# FWArmy
 
 **A self-hosted message relay for WArmy — single file, zero dependencies, private by default.**
 
-WArmy Relay is the optional server component of [WArmy](https://github.com/Pondsi/WArmy). It carries messages between WArmy clients when direct connectivity is not possible: clients register their presence, and the server holds short-lived queues and forwards messages to whoever is online.
+FWArmy is the optional server component of [WArmy](https://github.com/Pondsi/WArmy). It carries messages between WArmy clients when direct connectivity is not possible: clients register their presence, and the server holds short-lived queues and forwards messages to whoever is online.
 
 It is a **relay and rendezvous point — not a storage service**. Message content lives in memory for at most 30 seconds and is never written to disk. The only things persisted are credential hashes, counters, configuration, and message-identity hashes.
 
@@ -15,7 +15,7 @@ It is a **relay and rendezvous point — not a storage service**. Message conten
 
 ## Why it exists
 
-WArmy is a local-first workspace — but friends and colleagues are not always on the same LAN. WArmy Relay is the **opt-in** networking piece:
+WArmy is a local-first workspace — but friends and colleagues are not always on the same LAN. FWArmy is the **opt-in** networking piece:
 
 - **You host it, you own it.** Run it on an always-on machine at home or on a small cloud box. No third-party relay is involved in your conversations.
 - **Privacy is the default.** No analytics, no telemetry, no accounts, no cloud dependency. Only the data you host exists.
@@ -39,7 +39,7 @@ A portable archive is also available for every release if you prefer to run it w
 ![Admin console — credentials, usage, ports, expansion, updates, 27 UI languages](assets/readme-admin.png)
 
 ```
-  WArmy A ── register / heartbeat / poll ──►  WArmy Relay  ◄── relay (queue + forward) ── WArmy B
+  WArmy A ── register / heartbeat / poll ──►  FWArmy  ◄── relay (queue + forward) ── WArmy B
 ```
 
 ## Requirements
