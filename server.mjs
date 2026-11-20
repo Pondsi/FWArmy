@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.31';
+export const VERSION = '0.7.32';
 
 /** R153：内置公用中继凭据——所有 FWArmy 出厂默认携带，明文显示在管理页（点击可查看完整/复制）；其余自创凭据仍只存 sha256 不可回看。 */
 const BUILTIN_CREDENTIALS = [
@@ -199,7 +199,23 @@ function parseLimits(raw = {}, current = {}) {
 }
 const ED_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 const X_PREFIX = Buffer.from('302a300506032b656e032100', 'hex');
-const edPub = (b64) => crypto.createPublicKey({ key: Buffer.concat([ED_PREFIX, Buffer.from(String(b64), 'base64')]), format: 'der', type: 'spki' });
+/** R162：Ed25519 公钥对象缓存——poll/register/heartbeat/来源验签每请求 createPublicKey 解析公钥，
+ * 高频轮询下是热路径；公钥是公开数据、KeyObject 不可变，缓存无安全影响；上限淘汰最旧防内存无界。 */
+const ED_PUB_CACHE = new Map();
+const ED_PUB_CACHE_MAX = 50_000;
+const edPub = (b64) => {
+  const k = String(b64 || '');
+  let o = ED_PUB_CACHE.get(k);
+  if (!o) {
+    o = crypto.createPublicKey({ key: Buffer.concat([ED_PREFIX, Buffer.from(k, 'base64')]), format: 'der', type: 'spki' });
+    if (ED_PUB_CACHE.size >= ED_PUB_CACHE_MAX) {
+      const oldest = ED_PUB_CACHE.keys().next().value;
+      if (oldest !== undefined) ED_PUB_CACHE.delete(oldest);
+    }
+    ED_PUB_CACHE.set(k, o);
+  }
+  return o;
+};
 const xPub = (b64) => crypto.createPublicKey({ key: Buffer.concat([X_PREFIX, Buffer.from(String(b64), 'base64')]), format: 'der', type: 'spki' });
 const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 /** Buffer/字符串 → sha256 hex（哈希链审计用）。 */
@@ -377,31 +393,33 @@ function certFingerprint(pem) {
 /* ── 固定指纹的 HTTPS 客户端（先握手验指纹，再发任何字节/凭据）───── */
 /**
  * 不用全局 fetch：自签模式必须“指纹吻合后才发送 Authorization”。
+ * R162：off/verify/inspect 走 http(s).request + keepAlive agent 池（复用 TCP+TLS 连接）；
+ * **pin 模式走 rawHttpPin（每次新连接，TLS 握手后校验指纹再发送）**——实测 Node 在
+ * rejectUnauthorized=false 时完全不调用 checkServerIdentity，若 pin 也用 agent 池会复用连接跳过校验（安全回归）。
  * 返回 {status, headers, text, json, fingerprint, secure, ms}。
  */
+const OUTBOUND_AGENTS = new Map(); // key → { agent, fingerprint }
+const OUTBOUND_AGENT_MAX = 32;
+const OUTBOUND_CA_CACHE = new Map(); // caFile 路径 → Buffer | null
+function outboundAgentKey(o) {
+  const t = o.tls || {};
+  return `${t.mode || 'off'}|${Number(o.port) || 80}|${String(o.host)}|${t.servername || ''}|${t.caFile || ''}`;
+}
 async function rawHttpRequest(o) {
+  const mode = o.tls && o.tls.mode ? o.tls.mode : 'off';
+  if (mode === 'pin') return rawHttpPin(o);
+  return rawHttpPool(o);
+}
+/** pin 模式：每次新连接——TLS 握手完成、指纹吻合后才发送任何字节（含 Authorization）。 */
+async function rawHttpPin(o) {
   const t0 = Date.now();
   const host = String(o.host || '');
   const port = Number(o.port) || 80;
   const timeoutMs = Math.max(100, Number(o.timeoutMs) || UPSTREAM_TIMEOUT_MS);
   const body = Buffer.from(String(o.body ?? ''), 'utf8');
   const headers = { host: `${host.includes(':') ? `[${host}]` : host}:${port}`, 'content-type': 'application/json', 'content-length': String(body.length), connection: 'close', ...(o.headers || {}) };
-  const mode = o.tls && o.tls.mode ? o.tls.mode : 'off';
-  let socket;
+  const want = String(o.tls.fingerprint || '').toLowerCase();
   let fingerprint = '';
-  const secure = mode !== 'off';
-  if (secure) {
-    const opt = {
-      host, port, minVersion: 'TLSv1.2',
-      rejectUnauthorized: mode === 'verify',
-      servername: isIp(host) ? undefined : host,
-    };
-    if (o.tls && o.tls.caFile) { try { opt.ca = fs.readFileSync(o.tls.caFile); } catch { /* 无 CA 文件按系统 CA */ } }
-    if (o.tls && o.tls.servername) opt.servername = String(o.tls.servername);
-    socket = tls.connect(opt);
-  } else {
-    socket = net.connect({ host, port });
-  }
   return await new Promise((resolve, reject) => {
     let done = false;
     const finish = (err, val) => {
@@ -412,17 +430,23 @@ async function rawHttpRequest(o) {
       if (err) reject(err); else resolve(val);
     };
     const timer = setTimeout(() => finish(new Error('timeout')), timeoutMs);
+    const opt = {
+      host, port, minVersion: 'TLSv1.2', rejectUnauthorized: false,
+      servername: (o.tls && o.tls.servername) || (isIp(host) ? undefined : host),
+    };
+    if (o.tls && o.tls.caFile) {
+      let ca = OUTBOUND_CA_CACHE.get(o.tls.caFile);
+      if (ca === undefined) { try { ca = fs.readFileSync(o.tls.caFile); } catch { ca = null; } OUTBOUND_CA_CACHE.set(o.tls.caFile, ca); }
+      if (ca) opt.ca = ca;
+    }
+    const socket = tls.connect(opt);
     socket.once('error', (e) => finish(e));
-    if (!secure) socket.once('connect', sendRequest);
-    else socket.once('secureConnect', () => {
+    socket.once('secureConnect', () => {
       try {
         const peer = socket.getPeerCertificate();
         fingerprint = peer && peer.raw ? crypto.createHash('sha256').update(peer.raw).digest('hex') : '';
-        if (mode === 'pin') {
-          const want = String(o.tls.fingerprint || '').toLowerCase();
-          if (!want) return finish(new Error('fingerprint-required'));
-          if (fingerprint !== want) return finish(new Error('fingerprint-mismatch'));
-        }
+        if (!want) return finish(new Error('fingerprint-required'));
+        if (fingerprint !== want) return finish(new Error('fingerprint-mismatch'));
       } catch (e) { return finish(e); }
       sendRequest();
     });
@@ -455,9 +479,75 @@ async function rawHttpRequest(o) {
         const text = buf.toString('utf8');
         let json = null;
         try { json = JSON.parse(text); } catch { /* 非 JSON */ }
-        finish(null, { status, headers: hdrs, text, json, fingerprint, secure, ms: Date.now() - t0 });
+        finish(null, { status, headers: hdrs, text, json, fingerprint, secure: true, ms: Date.now() - t0 });
       });
     }
+  });
+}
+/** off/verify/inspect 模式：http(s).request + keepAlive agent 池（Node 系统 CA 校验，复用安全）。 */
+async function rawHttpPool(o) {
+  const t0 = Date.now();
+  const host = String(o.host || '');
+  const port = Number(o.port) || 80;
+  const timeoutMs = Math.max(100, Number(o.timeoutMs) || UPSTREAM_TIMEOUT_MS);
+  const body = Buffer.from(String(o.body ?? ''), 'utf8');
+  const headers = { host: `${host.includes(':') ? `[${host}]` : host}:${port}`, 'content-type': 'application/json', 'content-length': String(body.length), ...(o.headers || {}) };
+  const mode = o.tls && o.tls.mode ? o.tls.mode : 'off';
+  const secure = mode !== 'off';
+  const key = outboundAgentKey(o);
+  let ent = OUTBOUND_AGENTS.get(key);
+  if (!ent) {
+    const agentOpts = { keepAlive: true, maxSockets: 8, maxTotalSockets: 64, keepAliveMsecs: 2000 };
+    const agent = secure ? new https.Agent(agentOpts) : new http.Agent(agentOpts);
+    if (OUTBOUND_AGENTS.size >= OUTBOUND_AGENT_MAX) {
+      const k0 = OUTBOUND_AGENTS.keys().next().value;
+      if (k0 !== undefined) OUTBOUND_AGENTS.delete(k0);
+    }
+    ent = { agent, fingerprint: '' };
+    OUTBOUND_AGENTS.set(key, ent);
+  }
+  const lib = secure ? https : http;
+  return await new Promise((resolve, reject) => {
+    let fp = ent.fingerprint;
+    const reqOpts = {
+      host, port, method: o.method || 'GET', path: o.path || '/', headers, agent: ent.agent, timeout: timeoutMs,
+    };
+    if (secure) {
+      reqOpts.minVersion = 'TLSv1.2';
+      reqOpts.rejectUnauthorized = mode === 'verify';
+      reqOpts.servername = (o.tls && o.tls.servername) || (isIp(host) ? undefined : host);
+      if (o.tls && o.tls.caFile) {
+        let ca = OUTBOUND_CA_CACHE.get(o.tls.caFile);
+        if (ca === undefined) { try { ca = fs.readFileSync(o.tls.caFile); } catch { ca = null; } OUTBOUND_CA_CACHE.set(o.tls.caFile, ca); }
+        if (ca) reqOpts.ca = ca;
+      }
+    }
+    const req = lib.request(reqOpts, (res) => {
+      const bu = []; let n = 0;
+      res.on('data', (d) => {
+        n += d.length;
+        if (n > 512 * 1024) { req.destroy(new Error('response-too-large')); return; }
+        bu.push(d);
+      });
+      res.on('end', () => {
+        ent.fingerprint = fp || ent.fingerprint;
+        const text = Buffer.concat(bu).toString('utf8');
+        let json = null;
+        try { json = JSON.parse(text); } catch { /* 非 JSON */ }
+        resolve({ status: res.statusCode, headers: res.headers, text, json, fingerprint: fp, secure, ms: Date.now() - t0 });
+      });
+    });
+    if (secure) {
+      req.on('socket', (sock) => {
+        if (sock && sock.encrypted) sock.once('secureConnect', () => {
+          try { fp = crypto.createHash('sha256').update(sock.getPeerCertificate().raw).digest('hex'); } catch { /* noop */ }
+        });
+      });
+    }
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', (e) => reject(e));
+    if (body.length) req.write(body);
+    req.end();
   });
 }
 function dechunk(buf) {
@@ -1236,6 +1326,30 @@ export async function startServer(options = {}) {
     if (c.__legacyRequests || c.__legacyBytes) { delete c.__legacyRequests; delete c.__legacyBytes; legacyCleared = true; }
   }
   if (legacyCleared) saveCreds();
+  /** R162：全局统计聚合（增量维护 O(1)/请求）——record 时同步累加，buildStats 直接读，
+   * 100k 凭据表不再每次全量遍历聚合（首次重算 ~170ms → ~10ms）；启动/每小时校准重建自动修复漂移。 */
+  let aggTotals = { total: emptyAgg(), days: {}, months: {}, years: {} };
+  function aggAddInto(bucket, add) {
+    for (const k of Object.keys(add)) bucket[k] += Number(add[k]) || 0;
+  }
+  function aggTotalsAdd(add, date) {
+    aggAddInto(aggTotals.total, add);
+    const dk = dayKey(date), mk = monthKey(date), yk = yearKey(date);
+    aggAddInto(aggTotals.days[dk] || (aggTotals.days[dk] = emptyAgg()), add);
+    aggAddInto(aggTotals.months[mk] || (aggTotals.months[mk] = emptyAgg()), add);
+    aggAddInto(aggTotals.years[yk] || (aggTotals.years[yk] = emptyAgg()), add);
+  }
+  function aggTotalsRebuild() {
+    const t = { total: emptyAgg(), days: {}, months: {}, years: {} };
+    for (const s of Object.values(stats.credentials)) {
+      aggAddInto(t.total, s.total);
+      for (const [k, b] of Object.entries(s.days)) aggAddInto(t.days[k] || (t.days[k] = emptyAgg()), b);
+      for (const [k, b] of Object.entries(s.months)) aggAddInto(t.months[k] || (t.months[k] = emptyAgg()), b);
+      for (const [k, b] of Object.entries(s.years)) aggAddInto(t.years[k] || (t.years[k] = emptyAgg()), b);
+    }
+    aggTotals = t;
+  }
+  aggTotalsRebuild(); // 启动校准（含 legacy 迁移后的值）
   let statsDirty = false;
   let statsTimer = null;
   function flushStats(force = false) {
@@ -1258,6 +1372,7 @@ export async function startServer(options = {}) {
     for (const s of Object.values(stats.credentials)) {
       pruneMap(s.days, 400); pruneMap(s.months, 36); pruneMap(s.years, 10);
     }
+    aggTotalsRebuild(); // R162：每小时校准（清理聚合中的超期桶 + 自动修复增量漂移）
     markStatsDirty();
   }
   const pruneStatsTimer = setInterval(() => { try { pruneStatsBuckets(); } catch { /* noop */ } }, 3600_000);
@@ -2458,27 +2573,32 @@ export async function startServer(options = {}) {
   }
 
   // ── 最近 60 秒速度（内存窗口，不落盘）──
-  const inboundRecent = new Map(); // 被扩网凭据 id → Map(sec → {r,b})
+  const inboundRecent = new Map(); // 被扩网凭据 id → { newest, sum:{r,b}, buckets:Map(sec→{r,b}) }（R162 O(1) 滑动和）
+  function advanceInboundWindow(m, sec) {
+    for (let s = m.newest + 1; s <= sec; s++) {
+      const old = m.buckets.get(s - 60);
+      if (old) { m.sum.r -= old.r; m.sum.b -= old.b; m.buckets.delete(s - 60); }
+    }
+    m.newest = sec;
+  }
   function inboundRateCheck(id, bytes, at = Date.now()) {
     const sec = Math.floor(at / 1000);
     let m = inboundRecent.get(id);
-    if (!m) { m = new Map(); inboundRecent.set(id, m); }
-    let r = 0, b = 0;
-    for (const [s, v] of m) {
-      if (s <= sec - 60) m.delete(s); else { r += v.r; b += v.b; }
-    }
-    if (r + 1 > INBOUND_RATE_PER_MIN || b + bytes > INBOUND_BYTES_PER_MIN) return false;
-    const cur = m.get(sec) || { r: 0, b: 0 };
+    if (!m) { m = { newest: sec, sum: { r: 0, b: 0 }, buckets: new Map() }; inboundRecent.set(id, m); }
+    if (sec > m.newest) advanceInboundWindow(m, sec);
+    if (m.sum.r + 1 > INBOUND_RATE_PER_MIN || m.sum.b + bytes > INBOUND_BYTES_PER_MIN) return false;
+    const cur = m.buckets.get(sec) || { r: 0, b: 0 };
     cur.r++; cur.b += bytes;
-    m.set(sec, cur);
+    m.buckets.set(sec, cur);
+    m.sum.r++; m.sum.b += bytes;
     return true;
   }
   function inboundSpeedFor(id, at = Date.now()) {
     const sec = Math.floor(at / 1000);
-    let r = 0, b = 0;
     const m = inboundRecent.get(id);
-    if (m) for (const [s, v] of m) if (s > sec - 60) { r += v.r; b += v.b; }
-    return { reqPerMin: r, bytesPerMin: b };
+    if (!m) return { reqPerMin: 0, bytesPerMin: 0 };
+    if (sec > m.newest) advanceInboundWindow(m, sec);
+    return { reqPerMin: m.sum.r, bytesPerMin: m.sum.b };
   }
   /** 被扩网凭据限额（R129）：速度/日/月/总次数与流量，缺省继承全局默认；只核预算不预扣（同 gate）。 */
   function inboundGate(c, costBytes = 0, at = Date.now()) {
@@ -2498,16 +2618,22 @@ export async function startServer(options = {}) {
     return { ok: true };
   }
   // 无凭据（未配对）来源按 IP 限速：直接丢弃 + 限速（防滥用 §9.1/§9.2）。
-  const unauthRecent = new Map(); // ip → Map(sec → n)
+  const unauthRecent = new Map(); // ip → { newest, sum, buckets:Map(sec→n) }（R162 O(1)）
   function unauthRateOk(ip, at = Date.now()) {
     if (!ip) return false;
     const sec = Math.floor(at / 1000);
     let m = unauthRecent.get(ip);
-    if (!m) { m = new Map(); unauthRecent.set(ip, m); }
-    let n = 0;
-    for (const [s, v] of m) { if (s <= sec - 60) m.delete(s); else n += v; }
-    if (n + 1 > UNAUTH_RATE_PER_MIN) return false;
-    m.set(sec, (m.get(sec) || 0) + 1);
+    if (!m) { m = { newest: sec, sum: 0, buckets: new Map() }; unauthRecent.set(ip, m); }
+    if (sec > m.newest) {
+      for (let s = m.newest + 1; s <= sec; s++) {
+        const old = m.buckets.get(s - 60);
+        if (old) { m.sum -= old; m.buckets.delete(s - 60); }
+      }
+      m.newest = sec;
+    }
+    if (m.sum + 1 > UNAUTH_RATE_PER_MIN) return false;
+    m.buckets.set(sec, (m.buckets.get(sec) || 0) + 1);
+    m.sum += 1;
     return true;
   }
   const recent = new Map(); // cid → Map(sec → {r,b})
@@ -2551,8 +2677,12 @@ export async function startServer(options = {}) {
       if (!m.buckets.size) recent.delete(cid);
     }
     for (const [cid, m] of inboundRecent) {
-      for (const sec of m.keys()) if (sec < cutoff) m.delete(sec);
-      if (!m.size) inboundRecent.delete(cid);
+      for (const [sec, v] of m.buckets) if (sec < cutoff) { m.sum.r -= v.r; m.sum.b -= v.b; m.buckets.delete(sec); }
+      if (!m.buckets.size) inboundRecent.delete(cid);
+    }
+    for (const [ip, m] of unauthRecent) {
+      for (const [sec, n] of m.buckets) if (sec < cutoff) { m.sum -= n; m.buckets.delete(sec); }
+      if (!m.buckets.size) unauthRecent.delete(ip);
     }
   }, 15_000);
   pruneTimer.unref();
@@ -2583,6 +2713,7 @@ export async function startServer(options = {}) {
     s.lastUsed = now;
     c.lastUsed = now;
     speedAdd(c.id, req, add.bytesIn + add.bytesOut, now);
+    aggTotalsAdd(add, date); // R162：全局聚合增量维护（O(1)）
     markStatsDirty();
   }
 
@@ -2946,6 +3077,22 @@ export async function startServer(options = {}) {
     res.end(b);
   }
   async function body(req, max = 1024 * 1024) {
+    // R162：content-length 已知时预分配单缓冲直写（免分块数组 + Buffer.concat 二次拷贝）；声明与实收不一致拒绝
+    const clen = Number(req.headers['content-length']);
+    if (Number.isInteger(clen) && clen > 0 && clen <= max) {
+      const buf = Buffer.allocUnsafe(clen);
+      let off = 0;
+      for await (const c of req) {
+        if (off + c.length > clen) throw new Error('too-large');
+        c.copy(buf, off);
+        off += c.length;
+      }
+      if (off !== clen) throw new Error('too-large');
+      let j;
+      try { j = JSON.parse(buf.toString('utf8') || '{}'); } catch { throw new Error('bad-json'); }
+      if (!j || typeof j !== 'object' || Array.isArray(j)) throw new Error('bad-json-object');
+      return j;
+    }
     const bu = []; let n = 0;
     for await (const c of req) { n += c.length; if (n > max) throw new Error('too-large'); bu.push(c); }
     let j;
@@ -3056,13 +3203,14 @@ export async function startServer(options = {}) {
     const now = Date.now();
     const all = Object.values(creds);
     const list = credsNewestFirst().slice(page.offset, page.offset + page.limit).map(viewCred);
-    const st = Object.values(stats.credentials);
-    const total = aggTotal(st.map((s) => s.total));
-    const today = aggTotal(st.map((s) => s.days[dayKey()]));
-    const month = aggTotal(st.map((s) => s.months[monthKey()]));
-    const year = aggTotal(st.map((s) => s.years[yearKey()]));
+    // R162：totals 直接读增量聚合（O(1)），不再遍历 100k 凭据
+    const total = aggTotals.total;
+    const today = aggTotals.days[dayKey()] || emptyAgg();
+    const month = aggTotals.months[monthKey()] || emptyAgg();
+    const year = aggTotals.years[yearKey()] || emptyAgg();
     const withBytes = (b) => ({ ...b, bytes: (b.bytesIn || 0) + (b.bytesOut || 0) });
-    const peak = Math.max(stats.peakPerMin, ...st.map((s) => s.peakPerMin || 0));
+    // 全局峰值 = 所有凭据计数之和的峰值，恒 ≥ 任何单凭据峰值 → 直接读 stats.peakPerMin（O(1)）
+    const peak = stats.peakPerMin;
     const out = {
       ok: true,
       server: 'fwarmy-relay',
@@ -4721,9 +4869,20 @@ export async function startServer(options = {}) {
       }
     });
   }
+  // R162：TLS 会话票据密钥持久化——重启后客户端仍可恢复会话（免完整握手）；删除 tls/ticket-keys 即重置（无损）
+  const TICKET_FILE = path.join(TLS_DIR, 'ticket-keys');
+  let ticketKeys = null;
+  try {
+    const raw = fs.readFileSync(TICKET_FILE);
+    if (raw && raw.length === 48) ticketKeys = raw;
+  } catch { /* 首次生成 */ }
+  if (!ticketKeys) {
+    ticketKeys = crypto.randomBytes(48);
+    try { fs.mkdirSync(TLS_DIR, { recursive: true }); fs.writeFileSync(TICKET_FILE, ticketKeys, { mode: 0o600 }); } catch { /* 写失败用内存随机（重启后客户端重新握手，功能无损） */ }
+  }
   const httpSrv = http.createServer(requestListener);
   const httpsSrv = tlsInfo
-    ? https.createServer({ key: tlsInfo.keyPem, cert: tlsInfo.certPem, minVersion: 'TLSv1.2' }, requestListener)
+    ? https.createServer({ key: tlsInfo.keyPem, cert: tlsInfo.certPem, minVersion: 'TLSv1.2', ticketKeys, sessionTimeout: 3600 }, requestListener)
     : null;
   // R135f：keep-alive 超时调大（Node 默认 5s 与管理页 5s 轮询撞车 → 连接刚被关闭就被复用 → ECONNRESET → 管理页「端口读取失败: Failed to fetch」）
   for (const s of [httpSrv, httpsSrv]) {
@@ -4737,6 +4896,9 @@ export async function startServer(options = {}) {
    * 而公网来源的明文会在请求层被 426 拒绝。注意 resume 必须放到 nextTick，
    * 否则 TLS server 还没挂好监听就被恢复流动，握手会超时。
    */
+  /** R162：显式跟踪分流器 accept 的全部连接——Node 的 server.closeAllConnections 覆盖不到「注入」连接，
+   * 否则 keep-alive 连接在 close() 后仍活着，同数据目录重启会被 probe 误判「已有实例在运行」。 */
+  const liveConns = new Set();
   function makeSrv() {
     const srv = net.createServer((socket) => {
       socket.on('error', () => { /* 连接级错误不影响服务 */ });
@@ -4749,6 +4911,7 @@ export async function startServer(options = {}) {
         process.nextTick(() => { try { socket.resume(); } catch { /* noop */ } });
       });
     });
+    srv.on('connection', (s) => { liveConns.add(s); s.once('close', () => liveConns.delete(s)); });
     guardServer(srv);
     return srv;
   }
@@ -5012,6 +5175,8 @@ export async function startServer(options = {}) {
       if (st.srv) { try { st.srv.close(fin); } catch { fin(); } } else fin();
       setTimeout(fin, 1500).unref();
     })));
+    for (const s of liveConns) { try { s.destroy(); } catch { /* noop */ } }
+    liveConns.clear();
     try { if (logStream) { logStream.end(); logStream = null; } } catch { /* noop */ }
   }
   function shutdown(reason) {
