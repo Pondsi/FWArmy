@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.29';
+export const VERSION = '0.7.30';
 
 /** R153：内置公用中继凭据——所有 FWArmy 出厂默认携带，明文显示在管理页（点击可查看完整/复制）；其余自创凭据仍只存 sha256 不可回看。 */
 const BUILTIN_CREDENTIALS = [
@@ -861,6 +861,19 @@ export function renderTable(headers, rows, aligns = []) {
   return [line(headers), widths.map((w) => '-'.repeat(w)).join('  '), ...rows.map(line)].join('\n');
 }
 
+/** R160：IPv4/IPv6 字面量校验与文本提取（公网 IP 探测用；模块级便于门禁单测）。 */
+export const isV4 = (s) => { const p = String(s).split('.'); return p.length === 4 && p.every((x) => x !== '' && !isNaN(Number(x)) && Number(x) >= 0 && Number(x) <= 255); };
+export const isV6 = (s) => /^[0-9a-fA-F:]+$/.test(String(s)) && String(s).includes(':') && !isV4(s);
+export function extractIpFromText(txt, family) {
+  const s = String(txt || '');
+  if (family === 4) {
+    const m = s.match(/(\d{1,3}(?:\.\d{1,3}){3})/);
+    return m && isV4(m[1]) ? m[1] : '';
+  }
+  const m = s.match(/([0-9a-fA-F]{1,4}:){2,}[0-9a-fA-F]{1,4}/);
+  return m && isV6(m[0]) ? m[0] : '';
+}
+
 /**
  * @param {{argv?: string[], data?: string, port?: number, host?: string, open?: boolean}} options
  */
@@ -1334,19 +1347,18 @@ export async function startServer(options = {}) {
 
   /** 公网 IP 探测缓存（R131：启动自动探测 + 30 分钟定时 + 手动刷新；顶部常驻显示 IPv4/IPv6）。 */
   let lastPub = { ipv4: '', ipv6: '', at: 0, via: 'none' };
-  /** R153b：强制 IPv4 出口请求（dns 解析 A 记录后向 IPv4 IP 发 HTTPS，SNI 保持域名）——
+  /** R153b：强制指定 family 出口请求（dns 解析该族记录后向对应 IP 发 HTTPS，SNI 保持域名）——
    * 机器有 IPv6 出口时普通 fetch 会走 IPv6，导致「IPv4 探测」实际拿的是 IPv6 或失败显示【无】。 */
   function httpsGetFixedFamily(host, path, family, timeoutMs = 4000) {
     return new Promise((resolve) => {
       dns.lookup(host, { family }, (err, addr) => {
         if (err || !addr) return resolve('');
-        const fn = family === 6 ? https : https;
         const opts = {
-          host: String(addr), port: 443, path, method: 'GET',
+          host: String(addr), port: 443, path, method: 'GET', agent: false,
           headers: { host, 'user-agent': `FWArmy/${VERSION}` },
           servername: host, timeout: timeoutMs,
         };
-        const req = fn.request(opts, (res) => {
+        const req = https.request(opts, (res) => {
           const bu = [];
           res.on('data', (c) => bu.push(c));
           res.on('end', () => resolve(Buffer.concat(bu).toString('utf8')));
@@ -1357,58 +1369,162 @@ export async function startServer(options = {}) {
       });
     });
   }
-  const IPV4_ENDPOINTS = [
-    ['api4.ipify.org', '/?format=json'], // 纯 IPv4 端点
-    ['ipv4.icanhazip.com', '/'],         // 纯文本
-    ['api.ipify.org', '/?format=json'],  // 双栈端点（强制 IPv4 出口后可靠）
-  ];
-  const IPV6_ENDPOINTS = [
-    ['api6.ipify.org', '/?format=json'], // 纯 IPv6 端点
-    ['ipv6.icanhazip.com', '/'],         // 纯文本
-  ];
-  /** R158：单端点探测——强制 family 直连与系统栈 fetch 并行竞速（任一成功即用）。
-   * 原实现串行（直连 4s 超时后才 fetch 回退 4s）：慢速 IPv6 路径（隧道/NAT64）两次都超时 → v6 显示【无】。
-   * R159：严格按 family 过滤返回 IP——双栈机器上 fetch 系统栈可能走错 family（连 api4 却经 IPv6 返回 v6），
-   * 旧逻辑未校验 family 导致「双栈时只显示 v6、v4 显示无」。 */
-  async function probeOne(host, path, family, parseJson) {
-    const isV4 = (s) => { const p = String(s).split('.'); return p.length === 4 && p.every((x) => x !== '' && !isNaN(Number(x)) && Number(x) >= 0 && Number(x) <= 255); };
-    const isV6 = (s) => /^[0-9a-fA-F:]+$/.test(String(s)) && String(s).includes(':') && !isV4(s);
-    const results = await Promise.all([
-      httpsGetFixedFamily(host, path, family, 5000),
-      fetch(`https://${host}${path}`, { signal: AbortSignal.timeout(5000) }).then((r) => r.text()).catch(() => ''),
-    ]);
-    for (const txt of results) {
-      if (!String(txt || '').trim()) continue;
-      let ip = '';
-      if (parseJson) {
-        try { ip = String((JSON.parse(txt) || {}).ip || '').trim(); } catch { continue; }
-      } else ip = txt.trim();
-      if (!ip) continue;
-      // R159：严格 family 过滤——返回 IP 的 family 必须与请求一致（防双栈走错出口污染另一族）
-      if (family === 4 && isV4(ip)) return ip;
-      if (family === 6 && isV6(ip)) return ip;
+  /** R160：系统栈 HTTPS 兜底（替代 fetch）——https.request agent:false 不留连接池（进程可干净退出），
+   * 对纯 A/纯 AAAA 域名系统栈解析只能走对应族，行为与 fetch 一致但可控。 */
+  function httpsGetSystemStack(host, path, timeoutMs = 5000) {
+    return new Promise((resolve) => {
+      const opts = {
+        host, port: 443, path, method: 'GET', agent: false, timeout: timeoutMs,
+        headers: { host, 'user-agent': `FWArmy/${VERSION}`, connection: 'close' },
+      };
+      const req = https.request(opts, (res) => {
+        const bu = [];
+        res.on('data', (c) => bu.push(c));
+        res.on('end', () => resolve(Buffer.concat(bu).toString('utf8')));
+      });
+      req.on('error', () => resolve(''));
+      req.on('timeout', () => { req.destroy(); resolve(''); });
+      req.end();
+    });
+  }
+  /** R160：手写 DNS 报文查询（零依赖）。myip.opendns.com 的 A/AAAA 记录即「该 family 出口地址」
+   *（OpenDNS 特有服务）；dgram socket 创建时固定协议族，双栈机器上出口必然走对应 family，
+   * 这是 HTTPS 端点全灭（境外服务被阻断/直连超时）时的保底路径（public-ip 同款方案）。 */
+  function udpDnsQuery(family, server, name, wantType, timeoutMs = 4000) {
+    return new Promise((resolve) => {
+      let done = false;
+      const sock = dgram.createSocket(family === 4 ? 'udp4' : 'udp6');
+      const finish = (v) => {
+        if (done) return; done = true; clearTimeout(timer);
+        try { sock.close(); } catch { /* noop */ } resolve(v);
+      };
+      const timer = setTimeout(() => finish(''), timeoutMs);
+      if (timer.unref) timer.unref();
+      const q = Buffer.alloc(12 + name.length + 6);
+      q.writeUInt16BE(Date.now() & 0xffff, 0); q.writeUInt16BE(0x0100, 2); q.writeUInt16BE(1, 4); q.writeUInt16BE(0, 6);
+      let off = 12;
+      for (const label of name.split('.')) { q[off++] = label.length; q.write(label, off, 'ascii'); off += label.length; }
+      q[off++] = 0;
+      q.writeUInt16BE(wantType, off); q.writeUInt16BE(1, off + 2);
+      sock.on('message', (msg) => {
+        if (done) return;
+        let ans = '';
+        try { ans = parseDnsAnswers(msg, wantType); } catch { /* noop */ }
+        finish(ans);
+      });
+      sock.on('error', () => finish(''));
+      sock.send(q, 53, server, (e) => { if (e) finish(''); });
+    });
+  }
+  function parseDnsAnswers(buf, wantType) {
+    let off = 12;
+    while (off < buf.length && buf[off] !== 0) off += buf[off] + 1; // question name（未压缩）
+    off += 5; // 结尾 0 + QTYPE + QCLASS
+    const ancount = buf.readUInt16BE(6);
+    const res = [];
+    for (let i = 0; i < ancount && off + 10 <= buf.length; i++) {
+      if ((buf[off] & 0xc0) === 0xc0) off += 2; else { while (off < buf.length && buf[off] !== 0) off += buf[off] + 1; off += 1; }
+      const type = buf.readUInt16BE(off);
+      const rdlen = buf.readUInt16BE(off + 8);
+      off += 10;
+      if (type === wantType && rdlen === (wantType === 1 ? 4 : 16) && off + rdlen <= buf.length) {
+        if (wantType === 1) res.push(`${buf[off]}.${buf[off + 1]}.${buf[off + 2]}.${buf[off + 3]}`);
+        else { const p = []; for (let j = 0; j < 16; j += 2) p.push(buf.toString('hex', off + j, off + j + 2)); res.push(p.join(':')); }
+      }
+      off += rdlen;
+    }
+    return res.join(',');
+  }
+  async function udpProbePublicIp(family) {
+    const cfg = family === 4
+      ? [['208.67.222.222', 'myip.opendns.com', 1], ['208.67.220.220', 'myip.opendns.com', 1],
+         ['208.67.222.220', 'myip.opendns.com', 1], ['208.67.220.222', 'myip.opendns.com', 1]]
+      : [['2620:0:ccc::2', 'myip.opendns.com', 28], ['2620:0:ccd::2', 'myip.opendns.com', 28]];
+    for (const [server, name, type] of cfg) {
+      const raw = await udpDnsQuery(family, server, name, type);
+      const ip = String(raw).split(',').find((x) => (family === 4 ? isV4(x) : isV6(x))) || '';
+      if (ip) return ip;
     }
     return '';
   }
+  /** R160：端点表。fetch 兜底只对「纯 A/纯 AAAA」域名开启——此类域名无对族记录，系统栈 fetch 也只能走对应族；
+   * 双栈域名（api.ipify.org/myip.ipip.net/icanhazip.com）关掉 fetch（系统栈可能走错族返回被过滤，白等超时），
+   * 只走强制 family 直连。ipify 直连优先（本机实测最稳），ipip 中文文本经 extractIpFromText 提取。 */
+  const IPV4_ENDPOINTS = [
+    { host: 'api4.ipify.org', path: '/?format=json', json: true, fetch: true },
+    { host: 'ipv4.icanhazip.com', path: '/', json: false, fetch: true },
+    { host: 'api.ipify.org', path: '/?format=json', json: true, fetch: false },
+    { host: 'myip.ipip.net', path: '/', json: false, fetch: false },
+  ];
+  const IPV6_ENDPOINTS = [
+    { host: 'api6.ipify.org', path: '/?format=json', json: true, fetch: true },
+    { host: 'ipv6.icanhazip.com', path: '/', json: false, fetch: true },
+    { host: 'icanhazip.com', path: '/', json: false, fetch: false },
+  ];
+  /** R158：单端点探测——强制 family 直连与系统栈 https（agent:false）并行竞速（任一成功即用）。
+   * R159：严格按 family 过滤返回 IP——系统栈可能走错 family（连 api4 却经 IPv6 返回 v6），旧逻辑未校验导致
+   * 「双栈时只显示 v6、v4 显示无」。R160：双栈域名不再启用系统栈兜底；逐端点记录结果与耗时。 */
+  async function probeOne(ep, family) {
+    const { host, path, json: parseJson, fetch: useFetch } = ep;
+    const t0 = Date.now();
+    const pick = (txt) => {
+      if (!String(txt || '').trim()) return '';
+      let ip = '';
+      if (parseJson) { try { ip = String((JSON.parse(txt) || {}).ip || '').trim(); } catch { ip = ''; } }
+      if (!ip) ip = extractIpFromText(txt, family);
+      return (family === 4 && isV4(ip)) || (family === 6 && isV6(ip)) ? ip : '';
+    };
+    const results = await Promise.all([
+      httpsGetFixedFamily(host, path, family, 5000)
+        .then((txt) => ({ src: 'direct', txt, ms: Date.now() - t0 }))
+        .catch(() => ({ src: 'direct', txt: '', ms: Date.now() - t0 })),
+      useFetch
+        ? httpsGetSystemStack(host, path, 5000)
+          .then((txt) => ({ src: 'fetch', txt, ms: Date.now() - t0 }))
+          .catch(() => ({ src: 'fetch', txt: '', ms: Date.now() - t0 }))
+        : Promise.resolve(null),
+    ]);
+    for (const r of results) {
+      if (!r) continue;
+      const ip = pick(r.txt);
+      if (ip) {
+        log('INFO', `[fwarmy] 公网 IP 探测 ${family === 4 ? 'IPv4' : 'IPv6'} ${host}：${r.src}=${ip}（${r.ms}ms）`);
+        return ip;
+      }
+    }
+    log('INFO', `[fwarmy] 公网 IP 探测 ${family === 4 ? 'IPv4' : 'IPv6'} ${host}：未命中（${results.filter(Boolean).map((r) => `${r.src}=${r.ms}ms`).join(' / ')}）`);
+    return '';
+  }
   async function probePublicIp() {
-    // IPv4：多端点并行竞速（强制 IPv4 出口 + 系统栈），任一成功即停
-    let v4 = '';
-    for (const [host, path] of IPV4_ENDPOINTS) {
-      const ip = await probeOne(host, path, 4, true);
-      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) { v4 = ip; break; }
+    // R160 测试钩子：跳过 HTTPS 只走 UDP 兜底（verify 用，验证 socket 固定 family 的全链路）
+    if (process.env.FWARMY_PROBE_FORCE_UDP === '1') {
+      const f4 = await udpProbePublicIp(4);
+      const f6 = await udpProbePublicIp(6);
+      lastPub = { ipv4: isV4(f4) ? f4 : '', ipv6: isV6(f6) ? f6 : '', at: Date.now(), via: f4 ? 'udp' : (f6 ? 'udp' : 'none') };
+      try { syncAddrStates(); } catch { /* noop */ }
+      log('INFO', `[fwarmy] 公网 IP 自动探测（强制 UDP）：IPv4=${lastPub.ipv4 || '无'} IPv6=${lastPub.ipv6 || '无'}`);
+      return { ...lastPub, defaultHost: lastPub.ipv4 || lastPub.ipv6 };
     }
-    // IPv6：多端点并行竞速（强制 IPv6 出口 + 系统栈），任一成功即停
-    let v6 = '';
-    for (const [host, path] of IPV6_ENDPOINTS) {
-      const ip = await probeOne(host, path, 6, path.includes('format=json'));
-      if (/^[0-9A-Fa-f:]+$/.test(ip) && ip.includes(':') && !/^\d+\.\d+\.\d+\.\d+$/.test(ip)) { v6 = ip; break; }
+    // IPv4：纯 A 域名（直连+fetch 竞速）优先 → 双栈域名仅直连 → UDP4 DNS 兜底
+    let v4 = '', v4via = 'https';
+    for (const ep of IPV4_ENDPOINTS) {
+      const ip = await probeOne(ep, 4);
+      if (isV4(ip)) { v4 = ip; break; }
     }
+    if (!v4) { v4 = await udpProbePublicIp(4); if (isV4(v4)) v4via = 'udp'; }
+    // IPv6：纯 AAAA 域名优先 → 双栈域名仅直连 → UDP6 DNS 兜底（国内多数网络 UDP6 不通，仅作保底）
+    let v6 = '', v6via = 'https';
+    for (const ep of IPV6_ENDPOINTS) {
+      const ip = await probeOne(ep, 6);
+      if (isV6(ip)) { v6 = ip; break; }
+    }
+    if (!v6) { v6 = await udpProbePublicIp(6); if (isV6(v6)) v6via = 'udp'; }
     const v4b = v4 || v6; // 只有 v6 时也让默认地址可用
-    lastPub = { ipv4: v4, ipv6: v6, at: Date.now(), via: v4 || v6 ? 'ipify' : 'none' };
+    lastPub = { ipv4: v4, ipv6: v6, at: Date.now(), via: v4 || v6 ? (v4via === 'udp' || v6via === 'udp' ? 'udp+https' : 'https') : 'none' };
     // R157：探测完成后立即刷新对外地址缓存——否则 activeExternalAddr/内置凭据端点
     // 会一直用探测前生成的本机网卡 IP（addrSelfHeal 5 分钟才同步一次，太晚）
     try { syncAddrStates(); } catch { /* noop */ }
-    log('INFO', `[fwarmy] 公网 IP 自动探测：IPv4=${v4 || '无'} IPv6=${v6 || '无'}`);
+    log('INFO', `[fwarmy] 公网 IP 自动探测：IPv4=${v4 || '无'}（${v4via}） IPv6=${v6 || '无'}（${v6via}）`);
     return { ...lastPub, defaultHost: v4b };
   }
   try {

@@ -397,7 +397,9 @@ export class DhtJieDian {
         // R135h：绑定期错误致命（端口占用）；运行期网络错误（ICMP 拒绝/瞬态）不杀死节点——
         // UDP 无连接，后续发包独立成败；此前「socket 置空」会让公网锚点 ICMP 拒绝直接杀掉整个 DHT 节点。
         if (!boundOk) {
+          // R160：绑定期失败必须关闭 socket——否则端口被占时每个失败尝试都泄漏一个句柄（门禁进程无法退出）
           if (this.socket === sock) this.socket = null;
+          try { sock.close(); } catch { /* noop */ }
           reject(e);
         } else {
           this.stats.dgramErrors = (this.stats.dgramErrors || 0) + 1;
