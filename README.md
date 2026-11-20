@@ -66,6 +66,7 @@ The built-in web console (27 UI languages) covers:
 - **Expansion** — connect several relays into a network; messages find their way between servers.
 - **Status** — public IP (IPv4/IPv6), online users, queued messages, throughput, uptime.
 - **Updates** — check and install new versions with a progress bar.
+- **Auto restart** — schedule periodic restarts (interval in hours, up to 100,000 h) with an optional exact next-restart time; after each restart the next time is recomputed from the interval.
 - **Export / import** — back up or move the whole configuration as a single file.
 
 Ports page (English UI):

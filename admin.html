@@ -25,6 +25,7 @@ header{display:flex;align-items:center;justify-content:space-between;gap:16px;fl
 .pill.warn{color:var(--warn);border-color:#5a4414}
 .pill.bad{color:var(--danger);border-color:#5c2626}
 .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:16px 0 18px;overflow:auto}
+.ar{display:flex;align-items:center;gap:8px;margin-left:auto;padding:2px 0 10px;flex-wrap:wrap;flex-shrink:0}
 .tab{background:none;border:0;color:var(--muted);padding:10px 14px;cursor:pointer;font:inherit;border-bottom:2px solid transparent;white-space:nowrap}
 .tab.active{color:var(--text);border-bottom-color:var(--accent)}
 section{display:none}section.active{display:block}
@@ -133,6 +134,14 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
   <button class="tab" data-tab="logs" data-i18n="tab.logs" title="运行日志（最近 200 行，不含消息/凭据明文）">日志</button>
   <button class="tab" data-tab="update" data-i18n="tab.update" title="自动更新：检查/下载/重启（单文件运行时才可安装）">更新</button>
   <button class="tab" data-tab="ports" data-i18n="tab.ports" title="端口管理：多业务监听端口（TCP/UDP）、暂停/删除/强制启用、管理入口更改">端口</button>
+  <div class="ar" id="arBar" data-i18n-title="ar.title" title="自动重启定时器：到点自动重启服务器；重启后按间隔时间自动算出下次重启时间">
+    <label class="f" style="flex-direction:row;align-items:center;gap:6px;white-space:nowrap"><input type="checkbox" id="arEnabled"> <span data-i18n="ar.enable">自动重启</span></label>
+    <label class="f" style="white-space:nowrap" data-i18n="ar.interval">间隔（小时）<input id="arInterval" type="number" min="0.1" max="100000" step="0.1" style="width:86px" title="1–100000 小时"></label>
+    <span class="muted" id="arApprox" style="white-space:nowrap"></span>
+    <label class="f" style="white-space:nowrap" data-i18n="ar.next">下次重启时间<input id="arNext" type="datetime-local" step="60" style="width:176px" title="24 小时制，精准到分"></label>
+    <button class="primary sm" id="arSave" data-i18n="btn.save">保存</button>
+    <span class="muted" id="arState" style="white-space:nowrap"></span>
+  </div>
 </div>
 
 <section id="tab-overview" class="active">
@@ -593,6 +602,7 @@ const I18N = {
 'ai.copy':'复制给 AI','tray.ok':'托盘：已注册（新图标默认在任务栏「^」溢出区，请展开查看）','tray.noSession':'托盘：不可用（无交互桌面会话——需在 RDP 登录的桌面运行）','tray.duplicate':'托盘：重复实例已退出','tray.error':'托盘：启动失败（{e}）','tray.stopped':'托盘：已随主进程退出','tray.unknown':'托盘：未启动',
 'usage.perMin':'次/分','usage.perDay':'次','add.count':'{a} / {b} 条 · 单条 ≤ {c} 字节','add.auditPub':'立即发布检查点','add.audit.loading':'审计链：加载中…','btn.exportCfg':'导出配置…','btn.importCfg':'导入配置…',
 'sec.emptyBlacklist':'黑名单为空。','btn.cancel':'取消','btn.save':'保存',
+'ar.title':'自动重启定时器：到点自动重启服务器；重启后按间隔时间自动算出下次重启时间','ar.enable':'自动重启','ar.interval':'间隔（小时）','ar.next':'下次重启时间','ar.approx':'≈ 约 {d} 天','ar.state':'下次重启时间：{t}（距离现在约 {d} 天）','ar.disabled':'自动重启未启用','ar.needNext':'请选择下次重启时间（24 小时制，精准到分）',
 'firstrun.title':'旧版遗留凭据待保存','firstrun.desc':'把它填进 WArmy 客户端的「服务器凭据」即可。明文只在本机显示；保存后请点下面的按钮，服务器会删除明文引导文件。','firstrun.ack':'我已保存，删除明文',
 'ov.usage':'用量汇总','ov.creds':'凭据与用量','add.title':'附加内容（会话提示消息）','add.save':'保存内容库','add.count.loading':'加载中…','cfg.global':'全局默认','cfg.ratePerMin':'每分钟次数（不可不限）','cfg.bytesPerMin':'每分钟流量（MB，不可不限）','cfg.dailyReq':'每日次数（0=不限）','cfg.dailyBytes':'每日流量（MB，0=不限）','cfg.monthlyReq':'每月次数（0=不限）','cfg.monthlyBytes':'每月流量（MB，0=不限）','cfg.totalReq':'总次数（0=不限）','cfg.totalBytes':'总流量（MB，0=不限）','cfg.yearlyBytes':'每年流量（MB，0=不限）','cfg.env':'单信封上限（KB）','cfg.queue':'每收件人队列上限','cfg.ttl':'在线 TTL（秒）','cfg.accept':'接受新投递','btn.saveCfg':'保存设置','btn.reprobeIp':'重新探测公网 IP',
 'tls.title':'TLS / 证书','tls.selfsigned':'自签证书 + 指纹固定（默认）','tls.usercert':'用户证书（CA 校验证书链）','tls.off':'关闭 TLS（危险）','tls.certPath':'用户证书 cert 路径','tls.keyPath':'用户私钥 key 路径','tls.hosts':'自签证书额外主机名（逗号分隔）','tls.plain':'允许非回环明文','tls.save':'保存（需重启）','tls.regen':'重新生成自签证书…','tls.hint':'当前指纹：',
@@ -633,6 +643,7 @@ const I18N = {
 'ai.copy':'Copy for AI','tray.ok':'Tray: registered (new icon may be in the taskbar ^ overflow)','tray.noSession':'Tray: unavailable (no interactive desktop session)','tray.duplicate':'Tray: duplicate instance exited','tray.error':'Tray: failed to start ({e})','tray.stopped':'Tray: exited with main process','tray.unknown':'Tray: not started',
 'usage.perMin':'req/min','usage.perDay':'req','add.count':'{a} / {b} · ≤ {c} bytes each','add.auditPub':'Publish checkpoint now','add.audit.loading':'Audit chain: loading…','btn.exportCfg':'Export config…','btn.importCfg':'Import config…',
 'sec.emptyBlacklist':'Blacklist is empty.','btn.cancel':'Cancel','btn.save':'Save',
+'ar.title':'Auto-restart timer: restarts the server at the scheduled time; the next time is recomputed from the interval after each restart','ar.enable':'Auto restart','ar.interval':'Interval (hours)','ar.next':'Next restart time','ar.approx':'≈ {d} days','ar.state':'Next restart: {t} (≈{d} days from now)','ar.disabled':'Auto restart disabled','ar.needNext':'Pick a next restart time (24-hour, to the minute)',
 'firstrun.title':'Legacy credential pending','firstrun.desc':'Paste it into WArmy client server settings. Plaintext shows only here; after saving click the button below and the server deletes the plaintext file.','firstrun.ack':'Saved - delete plaintext',
 'ov.usage':'Usage summary','ov.creds':'Credentials & usage','add.title':'Addition (session prompt messages)','add.save':'Save library','add.count.loading':'Loading…','cfg.global':'Global defaults','cfg.ratePerMin':'Per-minute requests (must be >0)','cfg.bytesPerMin':'Per-minute MB (must be >0)','cfg.dailyReq':'Daily requests (0=unlimited)','cfg.dailyBytes':'Daily MB (0=unlimited)','cfg.monthlyReq':'Monthly requests (0=unlimited)','cfg.monthlyBytes':'Monthly MB (0=unlimited)','cfg.totalReq':'Total requests (0=unlimited)','cfg.totalBytes':'Total MB (0=unlimited)','cfg.yearlyBytes':'Yearly MB (0=unlimited)','cfg.env':'Envelope max (KB)','cfg.queue':'Queue per recipient','cfg.ttl':'Online TTL (seconds)','cfg.accept':'Accept new deliveries','btn.saveCfg':'Save settings','btn.reprobeIp':'Re-probe public IP',
 'tls.title':'TLS / Certificate','tls.selfsigned':'Self-signed + fingerprint pinning (default)','tls.usercert':'User certificate (CA chain)','tls.off':'Disable TLS (dangerous)','tls.certPath':'User cert path','tls.keyPath':'User private key path','tls.hosts':'Extra hostnames for self-signed cert (comma separated)','tls.plain':'Allow plaintext from non-loopback','tls.save':'Save (restart required)','tls.regen':'Regenerate self-signed cert…','tls.hint':'Current fingerprint:',
@@ -1837,6 +1848,11 @@ async function refresh() {
     if ((!S.publicIp || !S.publicIp.at) && !pubIpLoading) void refreshPublicIp(false);
     SEC = await api('/api/admin/security').catch(() => null);
     render();
+    // R165：自动重启定时器状态（间隔/下次时间/距离几天）
+    try {
+      const ar = await api('/api/admin/autorestart').catch(() => null);
+      if (ar && ar.autorestart) renderAutoRestart(ar.autorestart);
+    } catch { /* 旧版本无此接口则跳过 */ }
     // R146：托盘状态（health 带 tray 字段，来自 fwarmy-tray.ps1 写入的 tray-state.json）
     try {
       const h = await fetch('/api/health', { cache: 'no-store' }).then((r) => r.json()).catch(() => null);
@@ -1848,6 +1864,72 @@ async function refresh() {
   }
   finally { refreshInFlight = false; }
 }
+/* ── R165：自动重启定时器 ── */
+let AR = null;
+function localInputValue(ms) {
+  const d = new Date(Number(ms) || 0);
+  if (Number.isNaN(d.getTime()) || !ms) return '';
+  const p = (x) => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function arApproxText(hours) {
+  const d = Number(hours) / 24;
+  const s = d >= 10 ? Math.round(d) : +(d).toFixed(1);
+  return _t('ar.approx').replace('{d}', s);
+}
+function renderAutoRestart(ar) {
+  AR = ar;
+  const on = $('#arEnabled'), iv = $('#arInterval'), nx = $('#arNext');
+  if (!on || !iv || !nx) return;
+  if (!arDirty) {
+    on.checked = !!ar.enabled;
+    iv.value = ar.intervalHours;
+    nx.value = localInputValue(ar.nextAt);
+  }
+  const ap = $('#arApprox');
+  if (ap) ap.textContent = arApproxText(ar.intervalHours);
+  const st = $('#arState');
+  if (!st) return;
+  if (!ar.enabled) { st.textContent = _t('ar.disabled'); st.style.color = ''; return; }
+  const remain = (ar.nextAt || 0) - Date.now();
+  st.style.color = remain > 0 && remain <= 3600_000 ? 'var(--warn)' : '';
+  st.textContent = _t('ar.state')
+    .replace('{t}', localInputValue(ar.nextAt).replace('T', ' '))
+    .replace('{d}', remain > 0 ? (remain / 86400000 >= 10 ? Math.round(remain / 86400000) : +(remain / 86400000).toFixed(1)) : '—');
+}
+let arDirty = false;
+function arMarkDirty() {
+  arDirty = true;
+  const iv = $('#arInterval');
+  if (iv) {
+    const n = Number(iv.value);
+    const ap = $('#arApprox');
+    if (ap && Number.isFinite(n) && n > 0 && n <= 100000) ap.textContent = arApproxText(n);
+  }
+}
+$('#arInterval')?.addEventListener('input', arMarkDirty);
+$('#arNext')?.addEventListener('input', arMarkDirty);
+$('#arEnabled')?.addEventListener('change', arMarkDirty);
+$('#arSave')?.addEventListener('click', async () => {
+  try {
+    const iv = Number($('#arInterval')?.value);
+    if (!Number.isFinite(iv) || iv <= 0 || iv > 100000) { toast(_t('toast.invalid') + ' 1–100000', true); return; }
+    const enabled = !!$('#arEnabled')?.checked;
+    let nextAt = 0;
+    if (enabled) {
+      const raw = $('#arNext')?.value || '';
+      if (raw) {
+        const ms = new Date(raw).getTime();
+        if (!Number.isFinite(ms) || ms <= Date.now()) { toast(_t('toast.invalid') + ' ' + _t('ar.needNext'), true); return; }
+        nextAt = ms;
+      }
+    }
+    await api('/api/admin/autorestart', { enabled, intervalHours: iv, nextAt });
+    arDirty = false;
+    toast(_t('toast.saved'));
+    await refresh();
+  } catch (e) { toast(e.message, true); }
+});
 /** R146：托盘状态显示（ok=已注册·默认在溢出区；no-interactive-session=无桌面会话；error=失败原因）。 */
 function renderTrayState(t) {
   const el = $('#trayState');

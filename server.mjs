@@ -169,6 +169,8 @@ const DEFAULTS = {
   ports: DEFAULT_PORTS, // R133 多业务端口：默认监听 59599（中继）+ 58588（扩网）；不再自动顺延
   // R135g 附加内容库（会话提示消息）：最多 1000 条纯文字；每条中继凭据可绑定模式（关/随机/顺序/按比例）
   addition: { texts: [] },
+  // 自动重启定时器：到点自动重启进程；重启后按 intervalHours 重算下次时间（nextAt = epoch ms，0=未设置）
+  autorestart: { enabled: false, intervalHours: 24, nextAt: 0 },
 };
 const CONFIG_RANGES = {
   ratePerMin: [1, 1_000_000],
@@ -1266,6 +1268,14 @@ export async function startServer(options = {}) {
   cfg.accepting = cfg.accepting !== false;
   cfg.tls = normTlsCfg(cfgRaw && cfgRaw.tls);
   cfg.dht = normDhtCfg(cfgRaw && cfgRaw.dht);
+  // 自动重启配置规范化（intervalHours 1–100000 小时；nextAt 非未来时间戳清零）
+  const arRaw = (cfgRaw && cfgRaw.autorestart) || {};
+  const arH = Number(arRaw.intervalHours);
+  cfg.autorestart = {
+    enabled: !!arRaw.enabled,
+    intervalHours: Number.isFinite(arH) && arH > 0 && arH <= 100000 ? arH : 24,
+    nextAt: Number.isFinite(Number(arRaw.nextAt)) && Number(arRaw.nextAt) > 0 ? Number(arRaw.nextAt) : 0,
+  };
   // R142 曾把 TCP 443/62666 加入默认业务端口；R147 用户拍板移除——配置恰等于 R142 迁移结果时自动回退到 3 个默认端口
   if (JSON.stringify(cfg.ports) === JSON.stringify(R142_DEFAULT_PORTS)) cfg.ports = [...DEFAULT_PORTS];
   cfg.ports = normPorts(cfg.ports);
@@ -3817,6 +3827,69 @@ export async function startServer(options = {}) {
     }
   }
 
+  /* ── 自动重启定时器（R165）：到点重启自身；重启后按 intervalHours 重算下次 ── */
+  let autoRestartTimer = null;
+  function autorestartView() {
+    const ar = cfg.autorestart;
+    return { enabled: !!ar.enabled, intervalHours: ar.intervalHours, nextAt: ar.nextAt || 0, approxDays: ar.intervalHours / 24 };
+  }
+  function scheduleAutoRestart() {
+    if (autoRestartTimer) { clearTimeout(autoRestartTimer); autoRestartTimer = null; }
+    const ar = cfg.autorestart;
+    if (!ar || !ar.enabled) return;
+    let wait = (ar.nextAt || 0) - Date.now();
+    if (wait <= 0) {
+      // 重启后 / 错过时间：按间隔从当前重算下次（用户设置的间隔驱动滚动）
+      ar.nextAt = Date.now() + ar.intervalHours * 3600_000;
+      if (!saveCfg()) log('WARN', '自动重启：写下次重启时间到 config.json 失败');
+      wait = ar.nextAt - Date.now();
+    }
+    autoRestartTimer = setTimeout(() => void doAutoRestart(), wait);
+    if (autoRestartTimer.unref) autoRestartTimer.unref();
+    log('INFO', `自动重启：已安排，下次重启时间 ${new Date(ar.nextAt).toLocaleString()}（${ar.intervalHours}h 间隔）`);
+  }
+  async function doAutoRestart() {
+    if (updateClosed || stopping || !cfg.autorestart || !cfg.autorestart.enabled) return;
+    log('INFO', '自动重启：到达计划时间，开始重启');
+    // 交接前先把下次时间按间隔算好（新进程启动时读取 config.json 就会是未来时间）
+    cfg.autorestart.nextAt = Date.now() + cfg.autorestart.intervalHours * 3600_000;
+    if (!saveCfg()) log('WARN', '自动重启：保存下次重启时间失败');
+    const args = ['--server', `--port=${actualPort || opt.port}`, `--host=${opt.host}`, `--data=${DATA}`, '--no-open'];
+    if (opt.quiet) args.push('--quiet');
+    if (opt.noTray) args.push('--no-tray');
+    if (opt.logFile) args.push(`--log-file=${opt.logFile}`);
+    const current = process.execPath;
+    try { await close(); } catch { /* noop */ }
+    sharedStateFrozen = true; // 旧进程不再写共享状态，交给新进程
+    releaseLock();
+    // SEA：直接重启 exe；源码：node server.mjs <参数>（SELF_FILE 为本文件绝对路径）
+    const launch = IS_SEA
+      ? { cmd: current, args }
+      : { cmd: current, args: [SELF_FILE || path.join(HERE, 'server.mjs'), ...args] };
+    const child = spawn(launch.cmd, launch.args, { detached: true, stdio: 'ignore', cwd: IS_SEA ? path.dirname(current) : HERE, windowsHide: true });
+    if (!child.pid) {
+      log('ERROR', '自动重启：spawn 失败');
+      autoRestartTimer = setTimeout(() => void doAutoRestart(), 60_000);
+      if (autoRestartTimer.unref) autoRestartTimer.unref();
+      return;
+    }
+    child.on('error', (e) => log('ERROR', '自动重启：新进程启动失败 ' + String(e && e.message || e).slice(0, 200)));
+    child.unref();
+    log('INFO', `自动重启：新进程已启动 pid=${child.pid}，等待健康检查`);
+    const expect = { version: VERSION, dataDirHash };
+    let healthy = false;
+    for (let i = 0; i < 120; i++) {
+      await sleep(250);
+      if (await probeLocalIdentity(actualPort || opt.port, expect)) { healthy = true; break; }
+    }
+    if (!healthy) {
+      log('ERROR', '自动重启：新进程健康检查未通过（保留当前进程继续运行）');
+      return;
+    }
+    log('INFO', '自动重启：新进程健康（产品/版本/数据目录核对通过），旧进程退出');
+    setTimeout(() => process.exit(0), 100);
+  }
+
   async function adminApi(req, res, u) {
     const p = u.pathname;
     if (req.method === 'GET' && p === '/api/admin/stats') return send(res, 200, buildStats(u));
@@ -3899,6 +3972,7 @@ export async function startServer(options = {}) {
           security = normSecurity(pkg.security); saveSecurity();
         }
         if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
+        scheduleAutoRestart(); // 导入包可能携带自动重启配置，重排定时器
         // 6) 内置公用凭据保证（若包内没有，按当前语言补回）
         ensureBuiltinCredentials(cfg.lang);
         log('INFO', '配置包导入完成（.nm）：凭据/扩网/附加内容/全局/安全表已替换');
@@ -3937,6 +4011,25 @@ export async function startServer(options = {}) {
       } catch (e) {
         return send(res, 400, { ok: false, error: String(e && e.message || e).slice(0, 200), update: updateView() });
       }
+    }
+    if (req.method === 'GET' && p === '/api/admin/autorestart') {
+      return send(res, 200, { ok: true, autorestart: autorestartView() });
+    }
+    if (req.method === 'POST' && p === '/api/admin/autorestart') {
+      const j = await body(req);
+      if (typeof j.enabled !== 'boolean') return send(res, 400, { ok: false, error: 'bad-ar-config', hint: 'enabled 必须是布尔值' });
+      const ih = Number(j.intervalHours);
+      if (!Number.isFinite(ih) || ih <= 0 || ih > 100000) return send(res, 400, { ok: false, error: 'bad-ar-interval', hint: '间隔时间需为 1–100000 小时' });
+      let nextAt = 0;
+      if (j.nextAt !== undefined && j.nextAt !== null && j.nextAt !== '' && Number(j.nextAt) !== 0) {
+        const n = Number(j.nextAt);
+        if (!Number.isFinite(n) || n <= Date.now()) return send(res, 400, { ok: false, error: 'bad-ar-next', hint: '下次重启时间必须是未来时间' });
+        nextAt = n;
+      }
+      cfg.autorestart = { enabled: j.enabled, intervalHours: ih, nextAt: j.enabled ? (nextAt || Date.now() + ih * 3600_000) : 0 };
+      if (!saveCfg()) return send(res, 500, { ok: false, error: 'save-failed' });
+      scheduleAutoRestart();
+      return send(res, 200, { ok: true, autorestart: autorestartView() });
     }
     if (req.method === 'GET' && p === '/api/admin/expand') return send(res, 200, expandView());
     if (req.method === 'POST' && p === '/api/admin/expand-inbound') {
@@ -5061,6 +5154,7 @@ export async function startServer(options = {}) {
     }, 15_000).unref();
   }
   scheduleUpdateCheck(60_000);
+  scheduleAutoRestart(); // 自动重启定时器（到点重启自身；配置启用且 nextAt 有效才安排）
   // 公网 IP 自动探测（R131）：启动即探测，之后每 30 分钟刷新；页面点击可手动刷新。
   void probePublicIp();
   setInterval(() => void probePublicIp(), 30 * 60_000).unref();
@@ -5154,6 +5248,7 @@ export async function startServer(options = {}) {
     removeProcessHandlers();
     if (updateTimer) { clearTimeout(updateTimer); updateTimer = null; }
     if (updateRetryTimer) { clearTimeout(updateRetryTimer); updateRetryTimer = null; }
+    if (autoRestartTimer) { clearTimeout(autoRestartTimer); autoRestartTimer = null; }
     clearInterval(statsInterval);
     clearInterval(pruneTimer);
     clearInterval(queueClean);
