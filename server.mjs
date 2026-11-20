@@ -1279,6 +1279,16 @@ export async function startServer(options = {}) {
   // R142 曾把 TCP 443/62666 加入默认业务端口；R147 用户拍板移除——配置恰等于 R142 迁移结果时自动回退到 3 个默认端口
   if (JSON.stringify(cfg.ports) === JSON.stringify(R142_DEFAULT_PORTS)) cfg.ports = [...DEFAULT_PORTS];
   cfg.ports = normPorts(cfg.ports);
+  // R166 自愈：旧版更新（applyUpdate 曾强制带 --port=8787，显式模式覆盖 cfg.ports 并落盘）会把
+  // 默认业务端口 59599/58588 从 config.json 抹掉——启动时自动补回缺失的默认业务端口（入口 8787 尊重"入口可改"语义）
+  {
+    const missingDefaults = DEFAULT_PORTS.filter((dp) => dp !== 8787 && !cfg.ports.includes(dp));
+    if (missingDefaults.length) {
+      cfg.ports = normPorts([...cfg.ports, ...missingDefaults]);
+      if (!saveCfg()) log('WARN', '端口自愈：补回默认端口后保存 config.json 失败');
+      log('WARN', `端口自愈：检测到默认端口缺失（${missingDefaults.join(', ')}，通常由旧版更新/--port 覆盖导致），已自动补回：${cfg.ports.join(', ')}`);
+    }
+  }
   // R138：语言选择服务端持久化——null 表示从未选择（前端据此决定首启弹窗）；换端口/换浏览器/重启都记住。
   cfg.lang = (cfgRaw && typeof cfgRaw.lang === 'string' && UI_LANGS.includes(cfgRaw.lang)) ? cfgRaw.lang : null;
   // R148：首启弹窗是否已展示过（托盘/无痕浏览器打开不再每次弹）
@@ -2021,11 +2031,12 @@ export async function startServer(options = {}) {
   function portsView() {
     const credsUse = (port) => Object.values(creds).filter((c) => (c.port || 0) === port).length
       + expand.inbound.filter((c) => (c.port || 0) === port).length;
-    const tcpItems = cfg.ports.map((port) => {
+    // R166：视图与实际监听一致——显式 --port 时只看该端口（cfg.ports 保持持久化配置，不被运行参数覆盖）
+    const tcpItems = viewPorts.map((port) => {
       const st = portStates.get(port) || { status: 'error', error: 'unknown' };
       return {
         port, protocol: 'tcp', status: st.status, error: st.error || '',
-        creds: credsUse(port), main: port === cfg.ports[0],
+        creds: credsUse(port), main: port === viewPorts[0],
       };
     });
     const udpItems = cfg.dht.udpPorts.map((port) => {
@@ -2042,7 +2053,7 @@ export async function startServer(options = {}) {
       ok: true,
       defaultCredPort: CRED_DEFAULT_PORT,
       defaultExpandPort: EXPAND_DEFAULT_PORT,
-      entryPort: cfg.ports[0],
+      entryPort: viewPorts[0],
       mainPort: boundPort || opt.port,
       items: [...tcpItems, ...udpItems],
     };
@@ -3728,7 +3739,10 @@ export async function startServer(options = {}) {
       log('WARN', '更新：找不到待替换文件，保留当前程序');
       return;
     }
-    const args = ['--server', `--port=${actualPort || opt.port}`, `--host=${opt.host}`, `--data=${DATA}`, '--no-open'];
+    // R166：更新重启沿用原启动方式——显式 --port 才带 --port（保持单端口语义）；默认配置模式不带，
+    // 否则新进程被 --port 钉成单端口，cfg.ports 里的默认端口（59599/58588）不再监听（默认端口丢失根因）
+    const args = ['--server', `--host=${opt.host}`, `--data=${DATA}`, '--no-open'];
+    if (opt.portExplicit) args.push(`--port=${actualPort || opt.port}`);
     if (opt.quiet) args.push('--quiet');
     if (opt.noTray) args.push('--no-tray'); // R135y：更新重启保留托盘开关
     if (opt.logFile) args.push(`--log-file=${opt.logFile}`);
@@ -3854,7 +3868,8 @@ export async function startServer(options = {}) {
     // 交接前先把下次时间按间隔算好（新进程启动时读取 config.json 就会是未来时间）
     cfg.autorestart.nextAt = Date.now() + cfg.autorestart.intervalHours * 3600_000;
     if (!saveCfg()) log('WARN', '自动重启：保存下次重启时间失败');
-    const args = ['--server', `--port=${actualPort || opt.port}`, `--host=${opt.host}`, `--data=${DATA}`, '--no-open'];
+    const args = ['--server', `--host=${opt.host}`, `--data=${DATA}`, '--no-open'];
+    if (opt.portExplicit) args.push(`--port=${actualPort || opt.port}`); // R166：同更新重启——显式才钉端口
     if (opt.quiet) args.push('--quiet');
     if (opt.noTray) args.push('--no-tray');
     if (opt.logFile) args.push(`--log-file=${opt.logFile}`);
@@ -4336,6 +4351,7 @@ export async function startServer(options = {}) {
       // R134：管理入口端口修改（移到列表首位并启用）
       if (action === 'entry') {
         cfg.ports = normPorts([port, ...cfg.ports.filter((x) => x !== port)]);
+        if (opt.portExplicit) viewPorts = [port, ...viewPorts.filter((x) => x !== port)];
         if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
         const r = await startPort(port);
         if (!r.ok && r.error === 'occupied') {
@@ -4349,6 +4365,7 @@ export async function startServer(options = {}) {
       if (action === 'add') {
         if (cfg.ports.includes(port)) return send(res, 400, { ok: false, error: 'port-exists' });
         cfg.ports = normPorts([...cfg.ports, port]);
+        if (opt.portExplicit && !viewPorts.includes(port)) viewPorts.push(port); // R166：显式模式视图跟随本次实际监听
         if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
         const r = await startPort(port);
         log('INFO', `端口管理：添加 ${port}（${r.ok ? '监听中' : r.error}）`);
@@ -4375,6 +4392,7 @@ export async function startServer(options = {}) {
         if (!cfg.ports.includes(port)) return send(res, 400, { ok: false, error: 'not-managed' });
         pausePort(port);
         cfg.ports = cfg.ports.filter((x) => x !== port);
+        if (opt.portExplicit) viewPorts = viewPorts.filter((x) => x !== port); // R166：显式模式视图同步移除
         if (!cfg.ports.length) cfg.ports = [...DEFAULT_PORTS];
         if (!saveCfg()) return send(res, 500, { ok: false, error: 'persist-failed' });
         log('INFO', `端口管理：删除 ${port}`);
@@ -5017,6 +5035,7 @@ export async function startServer(options = {}) {
     let added = false;
     if (!cfg.ports.includes(p)) {
       cfg.ports = normPorts([...cfg.ports, p]);
+      if (opt.portExplicit && !viewPorts.includes(p)) viewPorts.push(p); // R166：显式模式视图同步（凭据端口自动添加）
       if (!saveCfg()) return { ok: false, error: 'persist-failed' };
       added = true;
     }
@@ -5085,7 +5104,11 @@ export async function startServer(options = {}) {
   let port = opt.port;
   let boundPort = 0;
   const wantPorts = opt.portExplicit ? [opt.port] : cfg.ports;
-  if (opt.portExplicit) cfg.ports = [opt.port]; // 视图/状态与实际监听一致（不落盘，运行参数）
+  // R166：显式 --port 是运行参数，只影响本次监听与视图；不再覆盖 cfg.ports（否则后续 saveCfg 会把默认端口 59599/58588 从 config.json 抹掉——更新重启带 --port 导致默认端口丢失的根因）。
+  // viewPorts = 本次进程端口视图：显式模式从 [opt.port] 起，随端口管理操作（add/entry/remove/凭据端口自动加）同步；
+  // 默认模式直接引用 cfg.ports（持久化配置即视图）。
+  let viewPorts = opt.portExplicit ? [opt.port] : cfg.ports;
+  const syncViewPorts = () => { if (opt.portExplicit) viewPorts = [...new Set(viewPorts)]; };
   const finishIfOurs = async (p) => {
     const h = await probe(p);
     const sameOurs = h && (h.server === 'fwarmy-relay' || h.server === 'warmy-relay') && h.dataDirHash === dataDirHash;
