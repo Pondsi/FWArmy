@@ -20,7 +20,7 @@ WArmy is a local-first workspace — but friends and colleagues are not always o
 - **You host it, you own it.** Run it on an always-on machine at home or on a small cloud box. No third-party relay is involved in your conversations.
 - **Privacy is the default.** No analytics, no telemetry, no accounts, no cloud dependency. Only the data you host exists.
 - **Nothing to install.** The release binary embeds its own runtime — no Node.js, no admin rights, no paid certificates, on Windows, macOS, and Linux.
-- **Secure by construction.** TLS with certificate-fingerprint pinning, per-credential rate limits and quotas, replay protection, message-level blacklisting, and origin-signature verification on forwarded messages.
+- **Secure by construction.** End-to-end encrypted message payloads, TLS with certificate-fingerprint pinning, per-credential rate limits and quotas, replay protection, message-level blacklisting, and origin-signature verification on forwarded messages.
 - **Honest about limits.** It relays what it is told, holds it briefly, and says clearly when something is offline or refused.
 
 ## Quick start
@@ -36,7 +36,7 @@ WArmy is a local-first workspace — but friends and colleagues are not always o
 
 A portable archive is also available for every release if you prefer to run it without an installer.
 
-![Admin console — credentials, usage, ports, expansion, updates, 27 UI languages](assets/readme-admin.png)
+![Admin console (English UI) — credentials, usage, ports, expansion, updates](assets/readme-admin.png)
 
 ```
   WArmy A ── register / heartbeat / poll ──►  FWArmy  ◄── relay (queue + forward) ── WArmy B
@@ -68,14 +68,23 @@ The built-in web console (27 UI languages) covers:
 - **Updates** — check and install new versions with a progress bar.
 - **Export / import** — back up or move the whole configuration as a single file.
 
+Ports page (English UI):
+
+![Port management (English UI)](assets/readme-ports-en.png)
+
 ## Security model
 
+- **End-to-end encrypted content.** WArmy clients encrypt message payloads before they ever reach the relay (X25519 + HKDF + AES-256-GCM envelopes). The server only handles an **opaque ciphertext** (`envelope`). It has no keys and **cannot read message content**. Even if the relay (or the path to it) is hijacked or compromised, the protected message body does not become readable — an attacker would only see metadata such as who talked to whom and when.
 - **Transport.** TLS with a self-signed certificate by default; clients pin the certificate fingerprint, so a swapped certificate is refused before any credential is sent.
-- **Authentication.** Bearer credentials; only their SHA-256 hashes are stored.
+- **Authentication.** Bearer credentials; only their SHA-256 hashes are stored. Credential plaintext is shown once at creation and never written to disk in clear text.
 - **Abuse control.** Rate limits, quotas, connection caps, request timeouts, and per-origin throttling for unauthenticated traffic.
 - **Replay protection.** A message identity may pass at most twice within 24 hours; a third occurrence is dropped and blacklisted by message identity. Blacklists survive restarts.
-- **Anti-forgery.** Forwarded messages carry an Ed25519 origin signature; tampering breaks the chain at the next hop.
+- **Anti-forgery.** Forwarded messages carry an Ed25519 origin signature over a canonical string that includes the envelope hash; tampering breaks the chain at the next hop.
+- **Short-lived memory only.** Queues live in process memory with a 30-second TTL and are never written to disk; logs omit message bodies and credential plaintext.
+- **Admin plane isolation.** The admin API accepts loopback only (IP + Host + Origin checks) and is not meant to be published to the internet.
+- **Discovery ≠ authorization.** DHT only helps locate peers; actual forwarding always requires configured mutual trust (expand credentials + pinned TLS fingerprints).
 - **Plaintext guard.** Non-loopback plaintext HTTP is refused with a TLS-required response unless explicitly allowed.
+- **Secrets at rest.** Outbound expand credentials and identity private keys are encrypted on disk (AES-256-GCM) under the local secret key.
 
 ## Under the hood
 
@@ -87,7 +96,8 @@ The built-in web console (27 UI languages) covers:
 ## FAQ
 
 - **Do I need a public IP?** A reachable address is enough. Behind NAT, port forwarding or a cloud box both work.
-- **Is traffic encrypted?** Yes. TLS by default with certificate-fingerprint pinning; non-loopback plaintext is refused unless explicitly allowed.
+- **Is traffic encrypted?** Yes — two layers: client-side end-to-end encryption of message content, plus TLS with certificate-fingerprint pinning on the wire. Non-loopback plaintext is refused unless explicitly allowed.
+- **Can FWArmy see my messages?** No. WArmy encrypts payloads before sending; the relay only handles opaque ciphertext and has no keys. Even if the server is hijacked, message content is not exposed.
 - **Does it store my messages?** No. Content lives in memory for at most 30 seconds; nothing about message content is written to disk.
 - **How is this different from a hosted relay?** No third party is involved. You host the single file, you own the data directory, and nothing leaves your machine except what you send.
 - **What if a recipient is offline?** The sender gets an honest "offline" answer; nothing is silently queued on disk or retried later.

@@ -154,6 +154,11 @@ fs.mkdirSync(path.join(stage, 'assets'), { recursive: true });
 fs.copyFileSync(logo, path.join(stage, 'assets', 'logo.svg'));
 const ico = path.join(DIST, 'assets', 'fwarmy.ico');
 if (fs.existsSync(ico)) fs.copyFileSync(ico, path.join(stage, 'assets', 'fwarmy.ico'));
+// README/说明.md 引用的界面截图（英文/中文）
+for (const shot of ['readme-admin.png', 'readme-admin-zh.png', 'readme-ports-en.png', 'readme-ports-zh.png']) {
+  const sp = path.join(DIST, 'assets', shot);
+  if (fs.existsSync(sp)) fs.copyFileSync(sp, path.join(stage, 'assets', shot));
+}
 
 // 从最终二进制重新写一份准确的 BUILD-INFO（staging 内；数值与二进制一致）
 const rebuiltInfo = [

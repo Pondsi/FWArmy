@@ -112,7 +112,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
       <div class="pills"><div class="pills" id="pills"></div><button id="powerBtn" class="good" disabled data-i18n="power.loading">加载状态…</button></div>
       <div class="pubip" style="gap:6px" id="helpBar">
         <span id="trayState" title="系统托盘状态：图标显示于任务栏通知区域（Windows 7+ 新图标默认折叠在「^」溢出区）"></span>
-        <button class="sm" id="aiCopyBtn" title="复制本站使用引导给 AI（含完整说明文件路径），粘贴到任意 AI 对话即可">复制给 AI</button>
+        <button class="sm" id="aiCopyBtn" data-i18n="ai.copy" title="复制本站使用引导给 AI（含完整说明文件路径），粘贴到任意 AI 对话即可">复制给 AI</button>
         <button class="sm" id="helpBtn" data-i18n="btn.help" title="打开使用说明帮助文档（本地新窗口，含全部功能与常见问题）">帮助</button>
       </div>
     </div>
@@ -165,7 +165,7 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
       <button class="primary" id="addSave" title="保存内容库（非法条目自动过滤并提示数量）" data-i18n="add.save">保存内容库</button>
       <span class="muted" id="addCount"></span>
     </div>
-    <div class="hint" id="addAudit">审计链：加载中…</div>
+    <div class="hint" id="addAudit" data-i18n="add.audit.loading">审计链：加载中…</div>
   </div>
   <div class="panel" id="configPanel">
     <h2 title="只影响「留空继承」的凭据；保存立即生效，不重置已有用量" data-i18n="cfg.global">全局默认</h2>
@@ -364,8 +364,8 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
   <span>FWArmy · <span id="langNow"></span> ·</span>
   <select id="langSel" title="语言 / Language / 言語" style="max-width:200px"></select>
   <button class="sm" id="langModalOpen" title="语言 / Language / 言語">🌐</button>
-  <button class="sm" id="exportCfg" title="一键导出全部配置（.nm 包：中继/F中继/扩网/附加内容/限额/全局/安全表）；不含 TLS 私钥与出网凭证明文">导出配置…</button>
-  <button class="sm" id="importCfg" title="导入 .nm 配置包并替换当前全部配置（仅本机管理面可用；导入前建议先导出备份）">导入配置…</button>
+  <button class="sm" id="exportCfg" data-i18n="btn.exportCfg" title="一键导出全部配置（.nm 包：中继/F中继/扩网/附加内容/限额/全局/安全表）；不含 TLS 私钥与出网凭证明文">导出配置…</button>
+  <button class="sm" id="importCfg" data-i18n="btn.importCfg" title="导入 .nm 配置包并替换当前全部配置（仅本机管理面可用；导入前建议先导出备份）">导入配置…</button>
   <span data-i18n="foot.note">WArmy专属服务器，和 WArmy 主应用分开安装。数据目录：</span><code id="dataDir">—</code>。暂停期间内存消息仍按 30 秒 TTL 过期；退出进程会清空队列，需手动重启。
 </div>
 </div>
@@ -584,7 +584,15 @@ const I18N = {
 'zh-CN': {
 'app.tagline':'WArmy专属服务器','foot.note':'WArmy专属服务器，和 WArmy 主应用分开安装。数据目录：','lang.title':'选择语言 / Choose language','btn.ok':'确定','btn.cancel':'取消','btn.save':'保存','btn.add':'添加','btn.copy':'复制','btn.close':'关闭','btn.delete':'删除','btn.generate':'生成凭据','btn.refresh':'刷新','btn.help':'帮助',
 'tab.relay':'中继','tab.frelay':'F中继','tab.expand':'扩网','tab.dht':'DHT 组网','tab.logs':'日志','tab.update':'更新','tab.ports':'端口',
-'pubip.detecting':'公网 IP：检测中…','pubip.probing':'公网 IP：探测中…','power.loading':'加载状态…','power.running':'正在运行','power.stopped':'已停止',
+'pubip.detecting':'公网 IP：检测中…','pubip.probing':'公网 IP：探测中…','pubip.label':'公网 IP','pubip.none':'【无】','pubip.fail':'公网 IP：探测失败','power.loading':'加载状态…','power.running':'正在运行','power.stopped':'已停止',
+'pill.accepting':'接客中','pill.paused':'已暂停新投递','pill.online':'在线','pill.queue':'队列','pill.uptime':'运行','pill.update':'更新',
+'card.speed':'当前速度','card.perMin':'次/分','card.peak':'峰值（每分钟）','card.times':'次','card.year':'今年','card.updown':'上行 / 下行','card.unauth':'未授权尝试','card.unauth.sub':'不归属任何凭据',
+'fp.label':'指纹','fp.none':'指纹 —','cred.endpoint':'端点','cred.noEndpoint':'无端点','cred.portUnavailable':'端口不可用','btn.manage':'管理',
+'cred.count':'共 {n} 个 · 有效 {m} 个','pager.first':'« 首页','pager.prev':'‹ 上一页','pager.next':'下一页 ›','pager.last':'末页 »','pager.of':'第 {a} / {b} 页 · 每页 {c} 个',
+'sec.msgHash':'消息 ID 哈希','sec.seenMsg':'已见过的 messageId','sec.ed25519':'Ed25519 公钥',
+'ai.copy':'复制给 AI','tray.ok':'托盘：已注册（新图标默认在任务栏「^」溢出区，请展开查看）','tray.noSession':'托盘：不可用（无交互桌面会话——需在 RDP 登录的桌面运行）','tray.duplicate':'托盘：重复实例已退出','tray.error':'托盘：启动失败（{e}）','tray.stopped':'托盘：已随主进程退出','tray.unknown':'托盘：未启动',
+'usage.perMin':'次/分','usage.perDay':'次','add.count':'{a} / {b} 条 · 单条 ≤ {c} 字节','add.auditPub':'立即发布检查点','add.audit.loading':'审计链：加载中…','btn.exportCfg':'导出配置…','btn.importCfg':'导入配置…',
+'sec.emptyBlacklist':'黑名单为空。','btn.cancel':'取消','btn.save':'保存',
 'firstrun.title':'旧版遗留凭据待保存','firstrun.desc':'把它填进 WArmy 客户端的「服务器凭据」即可。明文只在本机显示；保存后请点下面的按钮，服务器会删除明文引导文件。','firstrun.ack':'我已保存，删除明文',
 'ov.usage':'用量汇总','ov.creds':'凭据与用量','add.title':'附加内容（会话提示消息）','add.save':'保存内容库','add.count.loading':'加载中…','cfg.global':'全局默认','cfg.ratePerMin':'每分钟次数（不可不限）','cfg.bytesPerMin':'每分钟流量（MB，不可不限）','cfg.dailyReq':'每日次数（0=不限）','cfg.dailyBytes':'每日流量（MB，0=不限）','cfg.monthlyReq':'每月次数（0=不限）','cfg.monthlyBytes':'每月流量（MB，0=不限）','cfg.totalReq':'总次数（0=不限）','cfg.totalBytes':'总流量（MB，0=不限）','cfg.yearlyBytes':'每年流量（MB，0=不限）','cfg.env':'单信封上限（KB）','cfg.queue':'每收件人队列上限','cfg.ttl':'在线 TTL（秒）','cfg.accept':'接受新投递','btn.saveCfg':'保存设置','btn.reprobeIp':'重新探测公网 IP',
 'tls.title':'TLS / 证书','tls.selfsigned':'自签证书 + 指纹固定（默认）','tls.usercert':'用户证书（CA 校验证书链）','tls.off':'关闭 TLS（危险）','tls.certPath':'用户证书 cert 路径','tls.keyPath':'用户私钥 key 路径','tls.hosts':'自签证书额外主机名（逗号分隔）','tls.plain':'允许非回环明文','tls.save':'保存（需重启）','tls.regen':'重新生成自签证书…','tls.hint':'当前指纹：',
@@ -610,11 +618,21 @@ const I18N = {
 'modal.ok':'我已保存','ph.fp':'sha256 十六进制，64 位','ph.env':'C:\\\\certs\\\\fullchain.pem','ph.key':'C:\\\\certs\\\\privkey.pem','ph.hostExtra':'relay.example.com','ph.advNew':'relay.example.com:58588 或 1.2.3.4:59599','ph.anchor':'host 或 host:port，如 1.2.3.4:443','ph.queryFp':'按指纹查询（base32，52 位）',
 'tbl.type':'类型','tbl.desc':'说明','tbl.lastUse':'最近使用','tbl.transport':'传输','tbl.lastTest':'最近测试','tbl.range':'范围','tbl.up':'上行','tbl.down':'下行','tbl.sum':'合计','tbl.relayed':'转发','tbl.delivered':'投递','tbl.offline':'离线','tbl.msgId':'消息 ID','tbl.origin':'来源','tbl.fail':'失败','tbl.lastAtTime':'最近时间','tbl.successFail':'成功/失败',
 'st.errDetail':'异常','st.portNotCfg':'端口未配置','st.portListening':'端口监听中','st.portPaused':'端口暂停','st.portError':'端口异常','st.portOk':'端口可用','st.pinned':'指纹固定','st.untrusted':'未信任','st.plaintext':'明文','st.caVerify':'CA 验证','st.autoFallback':'自动兜底','st.addrFromCred':'地址来自凭证','st.manual':'手动','st.entry':'入口','st.plainHttp':'明文 HTTP','st.leftDays':'剩','st.tlsPill':'TLS ',
+'btn.change':'更改','btn.pause':'暂停','btn.resume':'启用','btn.force':'强制启用','btn.remove':'删除',
+'ports.entryNote':'管理入口端口（不可暂停/删除，仅可更改）','ports.entryHint':'当前管理入口：{u}——更改后下次访问用新端口；旧端口继续作为普通业务端口监听。',
 },
 'en-US': {
 'app.tagline':'WArmy relay server','foot.note':'Dedicated relay server for WArmy, installed separately. Data:','lang.title':'Choose language','btn.ok':'OK','btn.cancel':'Cancel','btn.save':'Save','btn.add':'Add','btn.copy':'Copy','btn.close':'Close','btn.delete':'Delete','btn.generate':'Generate credential','btn.refresh':'Refresh','btn.help':'Help',
 'tab.relay':'Relay','tab.frelay':'F-relay','tab.expand':'Expand','tab.dht':'DHT network','tab.logs':'Logs','tab.update':'Update','tab.ports':'Ports',
-'pubip.detecting':'Public IP: detecting…','pubip.probing':'Public IP: probing…','power.loading':'Loading…','power.running':'Running','power.stopped':'Stopped',
+'pubip.detecting':'Public IP: detecting…','pubip.probing':'Public IP: probing…','pubip.label':'Public IP','pubip.none':'none','pubip.fail':'Public IP: probe failed','power.loading':'Loading…','power.running':'Running','power.stopped':'Stopped',
+'pill.accepting':'Accepting','pill.paused':'New deliveries paused','pill.online':'Online','pill.queue':'Queued','pill.uptime':'Uptime','pill.update':'Update',
+'card.speed':'Current rate','card.perMin':'req/min','card.peak':'Peak (per minute)','card.times':'req','card.year':'This year','card.updown':'Up / Down','card.unauth':'Unauthorized attempts','card.unauth.sub':'Not tied to any credential',
+'fp.label':'Fingerprint','fp.none':'Fingerprint —','cred.endpoint':'Endpoint','cred.noEndpoint':'No endpoint','cred.portUnavailable':'Port unavailable','btn.manage':'Manage',
+'cred.count':'{n} total · {m} enabled','pager.first':'« First','pager.prev':'‹ Prev','pager.next':'Next ›','pager.last':'Last »','pager.of':'Page {a} / {b} · {c} per page',
+'sec.msgHash':'Message ID hashes','sec.seenMsg':'Seen messageIds','sec.ed25519':'Ed25519 public keys',
+'ai.copy':'Copy for AI','tray.ok':'Tray: registered (new icon may be in the taskbar ^ overflow)','tray.noSession':'Tray: unavailable (no interactive desktop session)','tray.duplicate':'Tray: duplicate instance exited','tray.error':'Tray: failed to start ({e})','tray.stopped':'Tray: exited with main process','tray.unknown':'Tray: not started',
+'usage.perMin':'req/min','usage.perDay':'req','add.count':'{a} / {b} · ≤ {c} bytes each','add.auditPub':'Publish checkpoint now','add.audit.loading':'Audit chain: loading…','btn.exportCfg':'Export config…','btn.importCfg':'Import config…',
+'sec.emptyBlacklist':'Blacklist is empty.','btn.cancel':'Cancel','btn.save':'Save',
 'firstrun.title':'Legacy credential pending','firstrun.desc':'Paste it into WArmy client server settings. Plaintext shows only here; after saving click the button below and the server deletes the plaintext file.','firstrun.ack':'Saved - delete plaintext',
 'ov.usage':'Usage summary','ov.creds':'Credentials & usage','add.title':'Addition (session prompt messages)','add.save':'Save library','add.count.loading':'Loading…','cfg.global':'Global defaults','cfg.ratePerMin':'Per-minute requests (must be >0)','cfg.bytesPerMin':'Per-minute MB (must be >0)','cfg.dailyReq':'Daily requests (0=unlimited)','cfg.dailyBytes':'Daily MB (0=unlimited)','cfg.monthlyReq':'Monthly requests (0=unlimited)','cfg.monthlyBytes':'Monthly MB (0=unlimited)','cfg.totalReq':'Total requests (0=unlimited)','cfg.totalBytes':'Total MB (0=unlimited)','cfg.yearlyBytes':'Yearly MB (0=unlimited)','cfg.env':'Envelope max (KB)','cfg.queue':'Queue per recipient','cfg.ttl':'Online TTL (seconds)','cfg.accept':'Accept new deliveries','btn.saveCfg':'Save settings','btn.reprobeIp':'Re-probe public IP',
 'tls.title':'TLS / Certificate','tls.selfsigned':'Self-signed + fingerprint pinning (default)','tls.usercert':'User certificate (CA chain)','tls.off':'Disable TLS (dangerous)','tls.certPath':'User cert path','tls.keyPath':'User private key path','tls.hosts':'Extra hostnames for self-signed cert (comma separated)','tls.plain':'Allow plaintext from non-loopback','tls.save':'Save (restart required)','tls.regen':'Regenerate self-signed cert…','tls.hint':'Current fingerprint:',
@@ -640,6 +658,8 @@ const I18N = {
 'modal.ok':'I have saved','ph.fp':'sha256 hex, 64 chars','ph.env':'C:\\\\certs\\\\fullchain.pem','ph.key':'C:\\\\certs\\\\privkey.pem','ph.hostExtra':'relay.example.com','ph.advNew':'relay.example.com:58588 or 1.2.3.4:59599','ph.anchor':'host or host:port, e.g. 1.2.3.4:443','ph.queryFp':'Query by fingerprint (base32, 52)',
 'tbl.type':'Type','tbl.desc':'Notes','tbl.lastUse':'Last used','tbl.transport':'Transport','tbl.lastTest':'Last test','tbl.range':'Scope','tbl.up':'Up','tbl.down':'Down','tbl.sum':'Total','tbl.relayed':'Relayed','tbl.delivered':'Delivered','tbl.offline':'Offline','tbl.msgId':'Message ID','tbl.origin':'Origin','tbl.fail':'Failed','tbl.lastAtTime':'Last seen','tbl.successFail':'OK/Fail',
 'st.errDetail':'Error','st.portNotCfg':'Port not configured','st.portListening':'Port listening','st.portPaused':'Port paused','st.portError':'Port error','st.portOk':'Port OK','st.pinned':'Pinned','st.untrusted':'Untrusted','st.plaintext':'Plaintext','st.caVerify':'CA verified','st.autoFallback':'Auto fallback','st.addrFromCred':'Address from credential','st.manual':'Manual','st.entry':'Entry','st.plainHttp':'Plain HTTP','st.leftDays':'left','st.tlsPill':'TLS ',
+'btn.change':'Change','btn.pause':'Pause','btn.resume':'Enable','btn.force':'Force enable','btn.remove':'Delete',
+'ports.entryNote':'Admin entry port (cannot pause/delete; change number only)','ports.entryHint':'Current admin entry: {u} — next visit uses the new port; the old port keeps listening as a normal business port.',
 },
 'zh-TW': {
 'app.tagline':'WArmy專屬伺服器','foot.note':'WArmy專屬伺服器，與 WArmy 主應用分開安裝。資料目錄：','lang.title':'選擇語言 / Choose language','btn.ok':'確定','btn.cancel':'取消','btn.save':'儲存','btn.add':'新增','btn.copy':'複製','btn.close':'關閉','btn.delete':'刪除','btn.generate':'產生憑證','btn.refresh':'重新整理','btn.help':'說明',
@@ -1419,6 +1439,9 @@ const fmtBytes = (n) => {
 const fmtDur = (sec) => {
   sec = Math.max(0, Math.floor(Number(sec) || 0));
   const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  if (LANG === 'en-US') {
+    return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : m ? `${m}m ${s}s` : `${s}s`;
+  }
   return d ? `${d}天 ${h}时` : h ? `${h}时 ${m}分` : m ? `${m}分 ${s}秒` : `${s}秒`;
 };
 const fmtTime = (ms) => {
@@ -1487,8 +1510,8 @@ function loadDemoView() {
     try { fn(); } catch (e) { console.error('DEMO-RENDER-FAIL:', name, String(e && e.message || e)); }
   }
   $('#addTexts').value = '';
-  $('#addCount').textContent = `0 / ${ADD.max} 条 · 单条 ≤ ${ADD.maxBytes} 字节`;
-  $('#addAudit').innerHTML = '审计链：0 条（静态预览：未连接服务器）';
+  $('#addCount').textContent = _t('add.count').replace('{a}', 0).replace('{b}', ADD.max).replace('{c}', ADD.maxBytes);
+  $('#addAudit').innerHTML = LANG === 'en-US' ? 'Audit chain: 0 entries (static preview: not connected)' : '审计链：0 条（静态预览：未连接服务器）';
   $('#logBox').textContent = '（静态预览：未连接服务器，无日志）';
   $('#logFile').textContent = '—';
   $('#dataDir').textContent = '—（静态预览）';
@@ -1544,18 +1567,25 @@ document.addEventListener('click', (ev) => {
   switchTab(g.dataset.goto);
 });
 function usageCell(b) {
-  return `<div class="cell-main">${num(b.requests)} 次</div><div class="cell-sub">${fmtBytes(b.bytes)}</div>`;
+  return `<div class="cell-main">${num(b.requests)} ${_t('card.times')}</div><div class="cell-sub">${fmtBytes(b.bytes)}</div>`;
 }
 function limText(c) {
   const e = c.effective;
-  const rl = e.ratePerMin ? `${num(e.ratePerMin)}/分` : '不限';
-  const bl = e.bytesPerMin ? `${fmtBytes(e.bytesPerMin)}/分` : '不限';
-  const dl = e.dailyBytes ? fmtBytes(e.dailyBytes) : '不限';
-  const ml = e.monthlyBytes ? fmtBytes(e.monthlyBytes) : '不限';
-  const yl = e.yearlyBytes ? fmtBytes(e.yearlyBytes) : '不限';
-  const req = (k) => (e[k + 'Requests'] ? num(e[k + 'Requests']) + '次' : '不限');
-  const dt = e.totalBytes ? fmtBytes(e.totalBytes) : '不限';
-  return `<div class="cell-sub">速度 ${rl} · ${bl}</div><div class="cell-sub">日 ${req('daily')} / ${dl} · 月 ${req('monthly')} / ${ml}</div><div class="cell-sub">总 ${req('total')} / ${dt} · 年 ${yl}</div>`;
+  const unlimited = LANG === 'en-US' ? 'unlimited' : '不限';
+  const perMin = LANG === 'en-US' ? '/min' : '/分';
+  const day = LANG === 'en-US' ? 'Day' : '日';
+  const month = LANG === 'en-US' ? 'Month' : '月';
+  const totalL = LANG === 'en-US' ? 'Total' : '总';
+  const yearL = LANG === 'en-US' ? 'Year' : '年';
+  const rateL = LANG === 'en-US' ? 'Rate' : '速度';
+  const rl = e.ratePerMin ? `${num(e.ratePerMin)}${perMin}` : unlimited;
+  const bl = e.bytesPerMin ? `${fmtBytes(e.bytesPerMin)}${perMin}` : unlimited;
+  const dl = e.dailyBytes ? fmtBytes(e.dailyBytes) : unlimited;
+  const ml = e.monthlyBytes ? fmtBytes(e.monthlyBytes) : unlimited;
+  const yl = e.yearlyBytes ? fmtBytes(e.yearlyBytes) : unlimited;
+  const req = (k) => (e[k + 'Requests'] ? num(e[k + 'Requests']) + (LANG === 'en-US' ? '' : '次') : unlimited);
+  const dt = e.totalBytes ? fmtBytes(e.totalBytes) : unlimited;
+  return `<div class="cell-sub">${rateL} ${rl} · ${bl}</div><div class="cell-sub">${day} ${req('daily')} / ${dl} · ${month} ${req('monthly')} / ${ml}</div><div class="cell-sub">${totalL} ${req('total')} / ${dt} · ${yearL} ${yl}</div>`;
 }
 function render() {
   if (!S) return;
@@ -1566,12 +1596,12 @@ function render() {
     ? `<span class="pill ok" title="${esc(S.tls.fingerprint)}">TLS ${esc(S.tls.mode)}</span>`
     : `${_t('st.plainHttp')}`;
   $('#pills').innerHTML = tlsPill +
-    `<span class="pill ${S.accepting ? 'ok' : 'warn'}">${S.accepting ? '接客中' : '已暂停新投递'}</span>` +
-    `<span class="pill">在线 ${num(S.users)}</span>` +
-    `<span class="pill">队列 ${num(S.queued)}</span>` +
-    `<span class="pill">运行 ${fmtDur(S.uptimeSec)}</span>` +
+    `<span class="pill ${S.accepting ? 'ok' : 'warn'}">${S.accepting ? _t('pill.accepting') : _t('pill.paused')}</span>` +
+    `<span class="pill">${_t('pill.online')} ${num(S.users)}</span>` +
+    `<span class="pill">${_t('pill.queue')} ${num(S.queued)}</span>` +
+    `<span class="pill">${_t('pill.uptime')} ${fmtDur(S.uptimeSec)}</span>` +
     `<span class="pill">v${esc(S.version)}</span>` +
-    (S.update && S.update.available ? `<span class="pill warn">更新 ${esc(S.update.latest)}</span>` : '');
+    (S.update && S.update.available ? `<span class="pill warn">${_t('pill.update')} ${esc(S.update.latest)}</span>` : '');
   const tg = $('#powerBtn');
   tg.disabled = false;
   tg.textContent = _t('power.running');
@@ -1579,72 +1609,72 @@ function render() {
   tg.title = 'FWArmy 正在运行；点击停止服务器（停止后需双击 FWArmy.exe 重新启动）';
   powerBtnState = 'running';
   $('#cards').innerHTML = [
-    ['当前速度', `${num(t.speed.reqPerMin)} 次/分`, `${fmtBytes(t.speed.bytesPerMin)}/分`],
-    ['峰值（每分钟）', `${num(t.peakPerMin)} 次`, t.peakAt ? fmtTime(t.peakAt) : '—'],
-    [_t('tbl.today'), `${num(t.today.requests)} 次`, fmtBytes(t.today.bytes)],
-    [_t('tbl.month'), `${num(t.month.requests)} 次`, fmtBytes(t.month.bytes)],
-    ['今年', `${num(t.year.requests)} 次`, fmtBytes(t.year.bytes)],
-    [_t('tbl.total'), `${num(t.requests)} 次`, fmtBytes(t.bytes)],
-    ['上行 / 下行', fmtBytes(t.bytesIn), fmtBytes(t.bytesOut)],
-    ['未授权尝试', num(S.unauthorized), '不归属任何凭据'],
+    [_t('card.speed'), `${num(t.speed.reqPerMin)} ${_t('card.perMin')}`, `${fmtBytes(t.speed.bytesPerMin)}/min`],
+    [_t('card.peak'), `${num(t.peakPerMin)} ${_t('card.times')}`, t.peakAt ? fmtTime(t.peakAt) : '—'],
+    [_t('tbl.today'), `${num(t.today.requests)} ${_t('card.times')}`, fmtBytes(t.today.bytes)],
+    [_t('tbl.month'), `${num(t.month.requests)} ${_t('card.times')}`, fmtBytes(t.month.bytes)],
+    [_t('card.year'), `${num(t.year.requests)} ${_t('card.times')}`, fmtBytes(t.year.bytes)],
+    [_t('tbl.total'), `${num(t.requests)} ${_t('card.times')}`, fmtBytes(t.bytes)],
+    [_t('card.updown'), fmtBytes(t.bytesIn), fmtBytes(t.bytesOut)],
+    [_t('card.unauth'), num(S.unauthorized), _t('card.unauth.sub')],
   ].map(([k, v, s]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join('');
 
   // R153：中继页「生成凭据」右侧显示本站 TLS 指纹（WArmy 客户端固定指纹时核对）
   const rf = $('#relayFp');
   if (rf) {
     const fp = S.tls && S.tls.fingerprint;
-    rf.innerHTML = fp ? `指纹 ${clipFull(fp, 16)}` : '指纹 —';
+    rf.innerHTML = fp ? `${_t('fp.label')} ${clipFull(fp, 16)}` : _t('fp.none');
   }
 
   $('#totalTable').innerHTML =
     `<tr>${_t('tbl.range')}${_t('tbl.requests')}${_t('tbl.up')}${_t('tbl.down')}${_t('tbl.sum')}${_t('tbl.relayed')}${_t('tbl.delivered')}${_t('tbl.rejected')}${_t('tbl.offline')}</tr>` +
-    [[_t('tbl.today'), t.today], [_t('tbl.month'), t.month], ['今年', t.year], [_t('tbl.total'), t]].map(([k, b]) =>
+    [[_t('tbl.today'), t.today], [_t('tbl.month'), t.month], [_t('card.year'), t.year], [_t('tbl.total'), t]].map(([k, b]) =>
       `<tr><td>${k}</td><td class="num">${num(b.requests)}</td><td class="num">${fmtBytes(b.bytesIn)}</td><td class="num">${fmtBytes(b.bytesOut)}</td><td class="num">${fmtBytes(b.bytes)}</td><td class="num">${num(b.relayed)}</td><td class="num">${num(b.delivered)}</td><td class="num">${num(b.rejected)}</td><td class="num">${num(b.offline)}</td></tr>`).join('');
 
   const ov = S.perCredential.map((c) =>
-    `<tr><td>${esc(c.name)}</td><td>${c.disabled ? _t('card.disabled') : _t('st.valid')}</td><td class="num">${num(c.speed.reqPerMin)}/分<div class="cell-sub">${fmtBytes(c.speed.bytesPerMin)}/分</div></td><td>${usageCell(c.today)}</td><td>${usageCell(c.month)}</td><td>${usageCell(c.year)}</td><td>${usageCell(c.total)}</td><td class="num">${num(c.peakPerMin)}</td><td>${limText(c)}</td><td class="muted">${fmtTime(c.lastUsed)}</td></tr>`).join('');
+    `<tr><td>${esc(c.name)}</td><td>${c.disabled ? _t('card.disabled') : _t('st.valid')}</td><td class="num">${num(c.speed.reqPerMin)} ${_t('card.perMin')}<div class="cell-sub">${fmtBytes(c.speed.bytesPerMin)}/min</div></td><td>${usageCell(c.today)}</td><td>${usageCell(c.month)}</td><td>${usageCell(c.year)}</td><td>${usageCell(c.total)}</td><td class="num">${num(c.peakPerMin)}</td><td>${limText(c)}</td><td class="muted">${fmtTime(c.lastUsed)}</td></tr>`).join('');
 
   // R134：与 F中继相同的列表格式——名称 / 标识（中间+末尾）/ 端口 / 状态 / 请求 / 最近使用 / 操作
   const lp = S.listeningPorts || [];
   $('#credTable').innerHTML =
     `<tr>${_t('tbl.name')}${_t('tbl.masked')}${_t('tbl.port')}${_t('tbl.status')}${_t('tbl.requests')}${_t('tbl.lastUse')}${_t('tbl.actions')}</tr>` +
     (S.perCredential.map((c) =>
-      `<tr><td>${esc(c.name)}<div class="cell-sub">${c.endpoint ? '端点 ' + esc(c.endpoint.host) + ':' + c.endpoint.port : '无端点'}</div></td>` +
+      `<tr><td>${esc(c.name)}<div class="cell-sub">${c.endpoint ? _t('cred.endpoint') + ' ' + esc(c.endpoint.host) + ':' + c.endpoint.port : _t('cred.noEndpoint')}</div></td>` +
       // R153：内置公用凭据明文显示（截断+点击弹窗看完整/复制）；自创凭据仍只显示标识（不可回看明文）
       `<td>${c.public && c.publicToken
         ? clipFull(c.publicToken, 20)
         : `<code>${esc(c.masked || '—')}</code>`}</td>` +
       `<td>${c.endpoint
-        ? `<code>${c.endpoint.port}</code> ${lp.includes(c.endpoint.port) ? _t('st.portOk') : '<span class="tag off">端口不可用</span>'}`
+        ? `<code>${c.endpoint.port}</code> ${lp.includes(c.endpoint.port) ? _t('st.portOk') : `<span class="tag off">${_t('cred.portUnavailable')}</span>`}`
         : '<span class="muted">—</span>'}</td>` +
       `<td>${c.disabled ? _t('card.disabled') : _t('st.valid')}</td>` +
       `<td class="num">${num(c.total.requests)}</td>` +
       `<td class="muted">${fmtTime(c.lastUsed)}</td>` +
-      `<td><div class="toolbar" style="margin:0"><button class="sm" data-act="edit" data-id="${esc(c.id)}">管理</button>` +
+      `<td><div class="toolbar" style="margin:0"><button class="sm" data-act="edit" data-id="${esc(c.id)}">${_t('btn.manage')}</button>` +
       `<button class="sm" data-act="toggle" data-id="${esc(c.id)}">${c.disabled ? _t('card.enabled') : _t('card.disabled')}</button>` +
-      `<button class="sm danger" data-act="del" data-id="${esc(c.id)}">删除</button></div></td></tr>`).join('') || `<tr><td colspan="7" class="empty">还没有凭据。点“新建凭据”生成一个。</td></tr>`);
-  $('#credCount').textContent = `共 ${S.credTotal} 个 · 有效 ${S.credEnabled} 个`;
+      `<button class="sm danger" data-act="del" data-id="${esc(c.id)}">${_t('btn.delete')}</button></div></td></tr>`).join('') || `<tr><td colspan="7" class="empty">${_t('empty.noCreds')}</td></tr>`);
+  $('#credCount').textContent = _t('cred.count').replace('{n}', S.credTotal).replace('{m}', S.credEnabled);
   const credPages = Math.max(1, Math.ceil((S.credTotal || 0) / CRED_PAGE_SIZE));
   $('#credPager').innerHTML = (S.credTotal || 0) > CRED_PAGE_SIZE
-    ? `<button class="sm" data-act="page" data-to="0" ${credPage === 0 ? 'disabled' : ''}>« 首页</button>` +
-      `<button class="sm" data-act="page" data-to="${credPage - 1}" ${credPage === 0 ? 'disabled' : ''}>‹ 上一页</button>` +
-      `<span class="muted">第 ${Math.min(credPage + 1, credPages)} / ${credPages} 页 · 每页 ${CRED_PAGE_SIZE} 个</span>` +
-      `<button class="sm" data-act="page" data-to="${credPage + 1}" ${credPage >= credPages - 1 ? 'disabled' : ''}>下一页 ›</button>` +
-      `<button class="sm" data-act="page" data-to="${credPages - 1}" ${credPage >= credPages - 1 ? 'disabled' : ''}>末页 »</button>`
+    ? `<button class="sm" data-act="page" data-to="0" ${credPage === 0 ? 'disabled' : ''}>${_t('pager.first')}</button>` +
+      `<button class="sm" data-act="page" data-to="${credPage - 1}" ${credPage === 0 ? 'disabled' : ''}>${_t('pager.prev')}</button>` +
+      `<span class="muted">${_t('pager.of').replace('{a}', Math.min(credPage + 1, credPages)).replace('{b}', credPages).replace('{c}', CRED_PAGE_SIZE)}</span>` +
+      `<button class="sm" data-act="page" data-to="${credPage + 1}" ${credPage >= credPages - 1 ? 'disabled' : ''}>${_t('pager.next')}</button>` +
+      `<button class="sm" data-act="page" data-to="${credPages - 1}" ${credPage >= credPages - 1 ? 'disabled' : ''}>${_t('pager.last')}</button>`
     : '';
   $('#dataDir').textContent = S.dataDir || '—';
   const sec = S.security || {};
   $('#secCards').innerHTML = [
-    [_t('sec.blacklist'), num(sec.blacklist || 0), '消息 ID 哈希'],
-    [_t('sec.24h'), num(sec.replay || 0), '已见过的 messageId'],
-    [_t('sec.origins'), num(sec.origins || 0), 'Ed25519 公钥'],
+    [_t('sec.blacklist'), num(sec.blacklist || 0), _t('sec.msgHash')],
+    [_t('sec.24h'), num(sec.replay || 0), _t('sec.seenMsg')],
+    [_t('sec.origins'), num(sec.origins || 0), _t('sec.ed25519')],
     [_t('sec.tls'), S.tls && S.tls.secure ? _t('toast.credEnabled') : _t('sec.off'), S.tls && S.tls.fingerprint ? clipFull(S.tls.fingerprint, 24) : '—', 1],
   ].map(([k, v, s, h]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(v)}</div><div class="s">${h ? s : esc(s)}</div></div>`).join('');
   const recent = (SEC && SEC.blacklist && SEC.blacklist.recent) || [];
   $('#secTable').innerHTML =
     `<tr>${_t('tbl.msgId')}${_t('tbl.reason')}${_t('tbl.hits')}${_t('tbl.firstAt')}${_t('tbl.lastAt')}${_t('tbl.origin')}</tr>` +
     (recent.map((b) => `<tr><td><code>${clipFull(b.key, 16)}</code></td><td>${esc(b.reason)}</td><td class="num">${num(b.hits)}</td><td class="muted">${fmtTime(b.firstAt)}</td><td class="muted">${fmtTime(b.lastAt)}</td><td class="muted">${esc(b.origin || '—')}</td></tr>`).join('')
-      || `<tr><td colspan="6" class="empty">黑名单为空。</td></tr>`);
+      || `<tr><td colspan="6" class="empty">${_t('sec.emptyBlacklist')}</td></tr>`);
   if (!cfgDirty) fillCfg();
   if (focusId) { const el = document.getElementById(focusId); if (el && el !== document.activeElement) el.focus(); }
   if (S.firstRunPending && !firstRun) loadFirstRun();
@@ -1693,8 +1723,9 @@ function renderPubIp(p) {
   if (!bar) return;
   if (p.at) {
     // R132：IPv4/IPv6 固定都显示，没有则显示【无】（不能缺省不显示）
+    const none = _t('pubip.none');
     $('#pubIpText').innerHTML =
-      `公网 IP：IPv4 ${p.ipv4 ? `<b>${esc(p.ipv4)}</b>` : '<b>【无】</b>'} · IPv6 ${p.ipv6 ? `<b>${esc(p.ipv6)}</b>` : '<b>【无】</b>'}`;
+      `${_t('pubip.label')}: IPv4 ${p.ipv4 ? `<b>${esc(p.ipv4)}</b>` : `<b>${none}</b>`} · IPv6 ${p.ipv6 ? `<b>${esc(p.ipv6)}</b>` : `<b>${none}</b>`}`;
   } else {
     $('#pubIpText').textContent = _t('pubip.detecting');
   }
@@ -1707,7 +1738,7 @@ async function refreshPublicIp(animate) {
   $('#pubIpText').textContent = _t('pubip.probing');
   const t0 = Date.now();
   let j = null;
-  try { j = await api('/api/admin/public-ip', {}); } catch { $('#pubIpText').textContent = '公网 IP：探测失败'; }
+  try { j = await api('/api/admin/public-ip', {}); } catch { $('#pubIpText').textContent = _t('pubip.fail'); }
   const rest = Math.max(0, 1100 - (Date.now() - t0)); // 点击后动画 ≥1 秒，让用户知道在刷新
   if (rest > 0) await new Promise((r) => setTimeout(r, rest));
   if (ico) ico.classList.remove('spin');
@@ -1823,13 +1854,13 @@ function renderTrayState(t) {
   if (!el) return;
   const st = t.status || 'unknown';
   const map = {
-    ok: ['托盘：已注册（新图标默认在任务栏「^」溢出区，请展开查看）', 'ok'],
-    'no-interactive-session': ['托盘：不可用（无交互桌面会话——需在 RDP 登录的桌面运行）', 'bad'],
-    duplicate: ['托盘：重复实例已退出', 'warn'],
-    error: ['托盘：启动失败（' + ((t.error || '').slice(0, 120)) + '）', 'bad'],
-    stopped: ['托盘：已随主进程退出', 'warn'],
+    ok: [_t('tray.ok'), 'ok'],
+    'no-interactive-session': [_t('tray.noSession'), 'bad'],
+    duplicate: [_t('tray.duplicate'), 'warn'],
+    error: [_t('tray.error').replace('{e}', (t.error || '').slice(0, 120)), 'bad'],
+    stopped: [_t('tray.stopped'), 'warn'],
   };
-  const m = map[st] || ['托盘：未启动', 'warn'];
+  const m = map[st] || [_t('tray.unknown'), 'warn'];
   el.textContent = m[0];
   el.className = 'pill ' + m[1];
 }
@@ -1932,17 +1963,17 @@ function renderPorts() {
       if (it.main) {
         // R135：管理入口端口不可暂停/删除/强制启用，只能更改端口号
         btns.push(`<input id="ptEntryNew" type="number" min="1" max="65535" step="1" value="${it.port}" style="width:76px" title="新的管理入口端口">`);
-        btns.push(`<button class="sm good" id="ptEntrySave">更改</button>`);
+        btns.push(`<button class="sm good" id="ptEntrySave">${_t('btn.change')}</button>`);
       } else {
-        if (it.status === 'listening') btns.push(`<button class="sm" data-pt-act="pause" data-port="${it.port}" data-pt-proto="${it.protocol}">暂停</button>`);
-        else btns.push(`<button class="sm good" data-pt-act="resume" data-port="${it.port}" data-pt-proto="${it.protocol}">启用</button>`);
-        if (it.status === 'error' && it.error === 'occupied' && it.protocol === 'tcp') btns.push(`<button class="sm danger" data-pt-act="force" data-port="${it.port}" data-pt-proto="tcp">强制启用</button>`);
-        btns.push(`<button class="sm danger" data-pt-act="remove" data-port="${it.port}" data-pt-proto="${it.protocol}">删除</button>`);
+        if (it.status === 'listening') btns.push(`<button class="sm" data-pt-act="pause" data-port="${it.port}" data-pt-proto="${it.protocol}">${_t('btn.pause')}</button>`);
+        else btns.push(`<button class="sm good" data-pt-act="resume" data-port="${it.port}" data-pt-proto="${it.protocol}">${_t('btn.resume')}</button>`);
+        if (it.status === 'error' && it.error === 'occupied' && it.protocol === 'tcp') btns.push(`<button class="sm danger" data-pt-act="force" data-port="${it.port}" data-pt-proto="tcp">${_t('btn.force')}</button>`);
+        btns.push(`<button class="sm danger" data-pt-act="remove" data-port="${it.port}" data-pt-proto="${it.protocol}">${_t('btn.remove')}</button>`);
       }
-      return `<tr><td><code>${it.port}</code>${it.main ? _t('st.entry') : ''}</td><td>${it.protocol === 'udp' ? '<span class="tag">UDP·DHT</span>' : 'TCP'}</td><td>${stTag}</td><td class="num">${it.creds}</td><td class="muted">${it.status === 'error' && it.error ? esc(it.error) : (it.main ? '管理入口端口（不可暂停/删除，仅可更改）' : '')}</td><td><div class="toolbar" style="margin:0">${btns.join('')}</div></td></tr>`;
-    }).join('') || '<tr><td colspan="6" class="empty">没有端口。点「添加新的端口」。</td></tr>');
+      return `<tr><td><code>${it.port}</code>${it.main ? _t('st.entry') : ''}</td><td>${it.protocol === 'udp' ? '<span class="tag">UDP·DHT</span>' : 'TCP'}</td><td>${stTag}</td><td class="num">${it.creds}</td><td class="muted">${it.status === 'error' && it.error ? esc(it.error) : (it.main ? _t('ports.entryNote') : '')}</td><td><div class="toolbar" style="margin:0">${btns.join('')}</div></td></tr>`;
+    }).join('') || `<tr><td colspan="6" class="empty">${_t('empty.noPorts')}</td></tr>`);
   $('#ptEntryHint').textContent = P.entryPort
-    ? `当前管理入口：${location.protocol}//127.0.0.1:${P.entryPort}/——更改后下次访问用新端口；旧端口继续作为普通业务端口监听。`
+    ? _t('ports.entryHint').replace('{u}', location.protocol + '//127.0.0.1:' + P.entryPort + '/')
     : '';
 }
 async function ptEntryChange() {
@@ -2494,7 +2525,7 @@ function clampAdditionLines() {
     ta.setSelectionRange(Math.min(newSel, ta.value.length), Math.min(newSel, ta.value.length));
   }
   const texts = out.map((x) => x.trim()).filter(Boolean);
-  $('#addCount').textContent = `${texts.length} / ${(ADD && ADD.max) || 1000} 条 · 单条 ≤ ${max} 字节` + (cutAny ? ' · 超长行已截断' : '');
+  $('#addCount').textContent = _t('add.count').replace('{a}', texts.length).replace('{b}', (ADD && ADD.max) || 1000).replace('{c}', max) + (cutAny ? (LANG === 'en-US' ? ' · overlong lines truncated' : ' · 超长行已截断') : '');
   $('#addCount').style.color = cutAny ? 'var(--warn)' : '';
 }
 $('#addTexts').addEventListener('input', clampAdditionLines); // R135v：输入即截断，超长无法继续输入
@@ -2502,14 +2533,17 @@ async function loadAddition() {
   try {
     ADD = await api('/api/admin/addition-config');
     $('#addTexts').value = (ADD.texts || []).join('\n');
-    $('#addCount').textContent = `${(ADD.texts || []).length} / ${ADD.max} 条 · 单条 ≤ ${ADD.maxBytes} 字节`;
+    $('#addCount').textContent = _t('add.count').replace('{a}', (ADD.texts || []).length).replace('{b}', ADD.max).replace('{c}', ADD.maxBytes);
     await refreshAdditionAudit();
   } catch (e) { toast('附加内容读取失败：' + e.message, true); }
 }
 async function refreshAdditionAudit() {
   try {
     const a = await api('/api/admin/addition-audit');
-    $('#addAudit').innerHTML = `审计链：${a.count} 条 · 链头 <code>${clipFull(a.head, 16)}</code> · 上次签名检查点 ${a.lastSignedAt ? fmtTime(a.lastSignedAt) : '—'} <button class="sm" id="addAuditPub" title="立即把审计链根签名发布到 DHT（防回滚检查点，每 5 分钟自动执行一次）">立即发布检查点</button> <button class="sm" id="addAuditRefresh" title="刷新审计链状态">刷新</button>`;
+    $('#addAudit').innerHTML = (LANG === 'en-US'
+      ? `Audit chain: ${a.count} entries · head <code>${clipFull(a.head, 16)}</code> · last signed checkpoint ${a.lastSignedAt ? fmtTime(a.lastSignedAt) : '—'} `
+      : `审计链：${a.count} 条 · 链头 <code>${clipFull(a.head, 16)}</code> · 上次签名检查点 ${a.lastSignedAt ? fmtTime(a.lastSignedAt) : '—'} `) +
+      `<button class="sm" id="addAuditPub" title="${_t('add.auditPub')}">${_t('add.auditPub')}</button> <button class="sm" id="addAuditRefresh" title="${_t('btn.refresh')}">${_t('btn.refresh')}</button>`;
     const pb = $('#addAuditPub');
     if (pb) pb.addEventListener('click', async () => {
       try {
@@ -2527,7 +2561,7 @@ $('#addSave').addEventListener('click', async () => {
   const lines = $('#addTexts').value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
   try {
     const j = await api('/api/admin/addition-config', { texts: lines });
-    $('#addCount').textContent = `${j.texts.length} / ${j.max} 条 · 单条 ≤ ${ADD.maxBytes} 字节`;
+    $('#addCount').textContent = _t('add.count').replace('{a}', j.texts.length).replace('{b}', j.max).replace('{c}', ADD.maxBytes);
     $('#addCount').style.color = '';
     toast(`内容库已保存：${j.texts.length} 条（HTML 字符/换行已过滤；超长已强制截断到 ${ADD.maxBytes} 字节）`);
     await refreshAdditionAudit();
