@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.30';
+export const VERSION = '0.7.31';
 
 /** R153：内置公用中继凭据——所有 FWArmy 出厂默认携带，明文显示在管理页（点击可查看完整/复制）；其余自创凭据仍只存 sha256 不可回看。 */
 const BUILTIN_CREDENTIALS = [
@@ -511,9 +511,9 @@ function resolveDataDir(optData) {
   return path.join(APP_DIR, 'data');
 }
 
-function writeJsonAtomic(file, obj, mode = 0o600) {
+function writeJsonAtomic(file, obj, mode = 0o600, compact = false) {
   const tmp = `${file}.${process.pid}.${crypto.randomBytes(3).toString('hex')}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), { encoding: 'utf8', mode });
+  fs.writeFileSync(tmp, compact ? JSON.stringify(obj) : JSON.stringify(obj, null, 2), { encoding: 'utf8', mode });
   try {
     fs.renameSync(tmp, file);
   } catch (e) {
@@ -1051,7 +1051,10 @@ export async function startServer(options = {}) {
     migrated = true;
   }
   /** 返回是否落盘成功；失败只记日志、不抛出（后台调用点安全），管理接口必须检查返回值。 */
+  /** R161：聚合缓存（buildStats 用；结构性变更 saveCreds/saveCfg 时失效——声明在二者之前避免 TDZ）。 */
+  let statsAggCache = new Map(); // "offset:limit" → { at, out }
   function saveCreds() {
+    statsAggCache.clear();
     try {
       writeJsonAtomic(CK, { items: creds });
       return true;
@@ -1205,6 +1208,7 @@ export async function startServer(options = {}) {
     try { fs.rmSync(FIRST_CRED, { force: true }); } catch { /* noop */ }
   }
   function saveCfg() {
+    statsAggCache.clear(); // R161：配置变更使聚合缓存失效（管理页立即看到新值）
     try { writeJsonAtomic(CFG_FILE, cfg); return true; } catch (e) { log('WARN', '写 config.json 失败：' + (e && e.message || e)); return false; }
   }
   saveCfg();
@@ -1236,21 +1240,28 @@ export async function startServer(options = {}) {
   let statsTimer = null;
   function flushStats(force = false) {
     if (!statsDirty && !force) return;
-    // 长期运行也要有界：只保留约 400 天 / 36 月 / 10 年
-    for (const s of Object.values(stats.credentials)) {
-      pruneMap(s.days, 400); pruneMap(s.months, 36); pruneMap(s.years, 10);
-    }
-    try { writeJsonAtomic(STATS_FILE, stats); statsDirty = false; return true; }
+    // R161：统计桶 prune 已移出落盘路径（见 pruneStatsTimer）——100k 表全量 prune 每次数百 ms 阻塞
+    try { writeJsonAtomic(STATS_FILE, stats, 0o600, true); statsDirty = false; return true; }
     catch (e) { log('WARN', '写 stats.json 失败：' + (e && e.message || e)); return false; } // 失败保留脏标记，下次再试
   }
   function markStatsDirty() {
     statsDirty = true;
     if (statsTimer) return;
-    statsTimer = setTimeout(() => { statsTimer = null; flushStats(); }, 3000);
+    // R161：落盘防抖 3s → 15s——高 QPS 下每 3s 全量写大表是 IO 风暴；崩溃最多丢 15s 展示性统计
+    statsTimer = setTimeout(() => { statsTimer = null; flushStats(); }, 15_000);
     if (statsTimer.unref) statsTimer.unref();
   }
-  const statsInterval = setInterval(() => flushStats(), 10_000);
+  const statsInterval = setInterval(() => flushStats(), 30_000);
   statsInterval.unref();
+  /** R161：统计桶有界化（400 天 / 36 月 / 10 年）——独立低频执行，不再在每次落盘时全量遍历。 */
+  function pruneStatsBuckets() {
+    for (const s of Object.values(stats.credentials)) {
+      pruneMap(s.days, 400); pruneMap(s.months, 36); pruneMap(s.years, 10);
+    }
+    markStatsDirty();
+  }
+  const pruneStatsTimer = setInterval(() => { try { pruneStatsBuckets(); } catch { /* noop */ } }, 3600_000);
+  pruneStatsTimer.unref();
   saveCreds();
 
   // ── 扩网 / 被扩网状态 ──
@@ -1771,6 +1782,13 @@ export async function startServer(options = {}) {
     securityTimer = setTimeout(() => { securityTimer = null; saveSecurity(); }, 2000);
     if (securityTimer.unref) securityTimer.unref();
   }
+  /** R161：重放计数到上限的落盘 300ms 防抖（与 markSecurityDirty 共用 securityTimer）——高频重复消息下
+   * 每次全量写盘是 IO 热点；优雅关闭 close() 同步 saveSecurity()，崩溃最多丢 300ms 计数（24h 窗口内多放行 ≤1 次）。 */
+  function scheduleSecurityFlush() {
+    if (securityTimer) { clearTimeout(securityTimer); securityTimer = null; }
+    securityTimer = setTimeout(() => { securityTimer = null; saveSecurity(); }, 300);
+    if (securityTimer.unref) securityTimer.unref();
+  }
   function pruneMapSize(map, max) {
     const keys = Object.keys(map);
     if (keys.length <= max) return 0;
@@ -1833,7 +1851,8 @@ export async function startServer(options = {}) {
     e.last = at;
     if (origin) e.origin = String(origin).slice(0, 64);
     // 到上限必须立即落盘，避免重启把“已放行 2 次”忘掉（环形转圈不会因重启被重置）；普通第一次攒批写。
-    if (e.count >= REPLAY_MAX_PASSES) saveSecurity(); else markSecurityDirty();
+    // R161：到上限的落盘改 300ms 防抖（优雅关闭时 close() 同步落盘兜底）。
+    if (e.count >= REPLAY_MAX_PASSES) scheduleSecurityFlush(); else markSecurityDirty();
     return { ok: true, count: e.count };
   }
   function pinOrigin(origin, pub) {
@@ -2492,32 +2511,44 @@ export async function startServer(options = {}) {
     return true;
   }
   const recent = new Map(); // cid → Map(sec → {r,b})
+  /** R161：限速滑动窗口（Redis「主循环只做 O(1) 内存操作」实践）。
+   * recent: Map<cid, { newest, sum:{r,b}, buckets:Map<sec,{r,b}> }> —— sum 为 60s 窗口内总和，
+   * speedAdd 按秒推进窗口并扣减刚过期桶，speedFor 读 sum（O(1)）；时间回拨不推进窗口（sum 偏大=保守限速）。 */
+  function advanceSpeedWindow(m, sec) {
+    for (let s = m.newest + 1; s <= sec; s++) {
+      const old = m.buckets.get(s - 60);
+      if (old) { m.sum.r -= old.r; m.sum.b -= old.b; m.buckets.delete(s - 60); }
+    }
+    m.newest = sec;
+  }
   function speedAdd(cid, requests, bytes, now) {
     const sec = Math.floor(now / 1000);
     let m = recent.get(cid);
-    if (!m) { m = new Map(); recent.set(cid, m); }
-    const b = m.get(sec) || { r: 0, b: 0 };
+    if (!m) { m = { newest: sec, sum: { r: 0, b: 0 }, buckets: new Map() }; recent.set(cid, m); }
+    if (sec > m.newest) advanceSpeedWindow(m, sec);
+    const b = m.buckets.get(sec) || { r: 0, b: 0 };
     b.r += requests; b.b += bytes;
-    m.set(sec, b);
+    m.buckets.set(sec, b);
+    m.sum.r += requests; m.sum.b += bytes;
   }
   function speedFor(cid, at = Date.now()) {
     const now = Math.floor(at / 1000);
-    let r = 0, b = 0;
     const m = recent.get(cid);
-    if (m) for (const [sec, v] of m) if (sec > now - 60) { r += v.r; b += v.b; }
-    return { reqPerMin: r, bytesPerMin: b };
+    if (!m) return { reqPerMin: 0, bytesPerMin: 0 };
+    if (now > m.newest) advanceSpeedWindow(m, now);
+    return { reqPerMin: m.sum.r, bytesPerMin: m.sum.b };
   }
   function totalSpeed() {
     const now = Math.floor(Date.now() / 1000);
     let r = 0, b = 0;
-    for (const m of recent.values()) for (const [sec, v] of m) if (sec > now - 60) { r += v.r; b += v.b; }
+    for (const m of recent.values()) for (const [sec, v] of m.buckets) if (sec > now - 60) { r += v.r; b += v.b; }
     return { reqPerMin: r, bytesPerMin: b };
   }
   const pruneTimer = setInterval(() => {
     const cutoff = Math.floor(Date.now() / 1000) - 90;
     for (const [cid, m] of recent) {
-      for (const sec of m.keys()) if (sec < cutoff) m.delete(sec);
-      if (!m.size) recent.delete(cid);
+      for (const [sec, v] of m.buckets) if (sec < cutoff) { m.sum.r -= v.r; m.sum.b -= v.b; m.buckets.delete(sec); }
+      if (!m.buckets.size) recent.delete(cid);
     }
     for (const [cid, m] of inboundRecent) {
       for (const sec of m.keys()) if (sec < cutoff) m.delete(sec);
@@ -2629,7 +2660,13 @@ export async function startServer(options = {}) {
     if (!cfg.accepting) return { ok: false, code: 'not-accepting', body: { ok: false, error: 'not-accepting' }, rejected: 1 };
     const y = ren.get(to);
     if (!y || now - y.lastSeen >= zaiXianTtl()) return { ok: false, code: 'offline', body: { ok: false, offline: true }, offline: 1 };
-    const queue = y.queue.filter((x) => x.exp > now);
+    const queue = y.queue;
+    // R161：惰性清理——exp 随 now 单调，队首最早过期，只 shift 队首（原 filter 全队列扫描是 O(n) 算法 DoS 面）；
+    // 时钟回拨乱序时由 queueClean 5s 全量兜底。
+    while (queue.length && queue[0].exp <= now) {
+      queuedBytes = Math.max(0, queuedBytes - Buffer.byteLength(queue[0].env, 'utf8'));
+      queue.shift();
+    }
     if (queue.length >= cfg.queuePerUser) return { ok: false, code: 'queue-full', body: { ok: false, error: 'queue-full' }, rejected: 1 };
     const envBytes = Buffer.byteLength(env, 'utf8');
     if (queuedBytes + envBytes > QUEUE_BYTE_BUDGET) return { ok: false, code: 'queue-full', body: { ok: false, error: 'queue-full', budgetExceeded: true }, rejected: 1 };
@@ -3010,9 +3047,14 @@ export async function startServer(options = {}) {
     // 名称按创建时刻语言（cfg.lang || zh-CN），创建后不因换语言改名。首启弹窗未展示前不创建（等用户选定语言，
     // 名称跟随所选语言）。
     if (cfg.lang || cfg.langAsked) ensureBuiltinCredentials(cfg.lang || 'zh-CN');
+    const page = adminPage(u);
+    // R161：聚合缓存——record() 使全部失效；同分页 15s 窗口内重复查询直接返回（100k 表从 ~170ms → ~0ms）。
+    const nowMs = Date.now();
+    const ck = page.offset + ':' + page.limit;
+    const hit = statsAggCache.get(ck);
+    if (hit && nowMs - hit.at < 15_000) return hit.out;
     const now = Date.now();
     const all = Object.values(creds);
-    const page = adminPage(u);
     const list = credsNewestFirst().slice(page.offset, page.offset + page.limit).map(viewCred);
     const st = Object.values(stats.credentials);
     const total = aggTotal(st.map((s) => s.total));
@@ -3021,7 +3063,7 @@ export async function startServer(options = {}) {
     const year = aggTotal(st.map((s) => s.years[yearKey()]));
     const withBytes = (b) => ({ ...b, bytes: (b.bytesIn || 0) + (b.bytesOut || 0) });
     const peak = Math.max(stats.peakPerMin, ...st.map((s) => s.peakPerMin || 0));
-    return {
+    const out = {
       ok: true,
       server: 'fwarmy-relay',
       product: PRODUCT,
@@ -3052,6 +3094,8 @@ export async function startServer(options = {}) {
       entryPort: cfg.ports[0],
       update: updateSummary(),
     };
+    statsAggCache.set(ck, { at: nowMs, out });
+    return out;
   }
 
   // ── 自动更新（只在单文件运行时可执行替换；源码运行只允许检查）──
@@ -4446,6 +4490,24 @@ export async function startServer(options = {}) {
     return send(res, 404, { ok: false, error: 'not-found' });
   }
 
+  /** R161：请求日志批量落盘（250ms 合并写，行格式与 log() 一致）——高 QPS 下逐条 write 是 IO 热点。 */
+  const reqLogBuf = [];
+  let reqLogTimer = null;
+  function flushReqLog() {
+    reqLogTimer = null;
+    const lines = reqLogBuf.splice(0);
+    if (!lines.length) return;
+    const chunk = lines.join('');
+    if (!opt.quiet) { try { process.stdout.write(chunk); } catch { /* noop */ } }
+    if (logStream) {
+      try {
+        if (logLines % 256 === 0) rotateLog();
+        if (logStream.writableLength > 4 * 1024 * 1024) { logDropped += lines.length; return; } // 背压：丢弃并计数
+        logStream.write(chunk);
+        logLines += lines.length;
+      } catch { /* noop */ }
+    }
+  }
   const requestListener = async (req, res) => {
     const t0 = Date.now();
     let u;
@@ -4458,7 +4520,8 @@ export async function startServer(options = {}) {
     const fail = (code, error, extra = {}) => reply(code, { ok: false, error, ...extra }, { rejected: 1 });
     res.on('finish', () => {
       // 只记路径，不记 query/正文（query 里有 did/签名，正文可能有信封）
-      log('INFO', `req ${req.method} ${u.pathname} ${res.statusCode} ${Date.now() - t0}ms cred=${c ? c.hash8 : '-'}`);
+      reqLogBuf.push(`${new Date().toISOString()} INFO req ${req.method} ${u.pathname} ${res.statusCode} ${Date.now() - t0}ms cred=${c ? c.hash8 : '-'}\n`);
+      if (!reqLogTimer) reqLogTimer = setTimeout(flushReqLog, 250);
     });
     try {
       const logoLu = ['/assets/logo.svg', '/logo.svg', '/favicon.svg', '/favicon.ico'].includes(u.pathname);
@@ -4522,7 +4585,10 @@ export async function startServer(options = {}) {
         if (!v) return fail(404, 'unknown-did');
         if (Date.now() - v.lastSeen >= zaiXianTtl()) return reply(410, { ok: false, error: 'offline' }, { offline: 1 });
         const now = Date.now();
-        const cand = v.queue.filter((x) => x.exp > now).slice(0, 50);
+        const q = v.queue;
+        // R161：惰性清理队首过期（exp 单调有序）；原 filter+slice 每次 O(队列长)
+        while (q.length && q[0].exp <= now) { queuedBytes = Math.max(0, queuedBytes - Buffer.byteLength(q[0].env, 'utf8')); q.shift(); }
+        const cand = q.slice(0, 50);
         if (!cand.length) {
           v.lastSeen = now;
           return reply(200, { ok: true, envelopes: [] }, {});
@@ -4543,7 +4609,7 @@ export async function startServer(options = {}) {
           return fail(g.code, g.error, { scope: g.scope, limit: g.limit, used: g.used });
         }
         v.lastSeen = now;
-        v.queue = v.queue.filter((x) => !yi.includes(x));
+        q.splice(0, yi.length); // R161：yi 是 q 的连续前缀，直接删队首（原 includes 式 filter 是 O(n×m)）
         queuedBytes = Math.max(0, queuedBytes - outBytes);
         // R135g：附加内容与信封同序返回（无附加 = null），WArmy 客户端据此渲染提示消息
         return reply(200, { ok: true, envelopes: yi.map((x) => x.env), additions: yi.map((x) => x.addition || null) }, { delivered: yi.length, bytesOut: outBytes });
@@ -4641,6 +4707,20 @@ export async function startServer(options = {}) {
       return fail(400, msg);
     }
   };
+  // R161：连接硬上限 + 完整请求超时（NATS max_connections / write_deadline 防滥用实践；
+  // 慢客户端把请求体挂死连接由 requestTimeout 兜底；超限拒绝新连接，超限日志 10s 节流）
+  const MAX_CONNECTIONS = 4096;
+  let connWarnAt = 0;
+  function guardServer(s) {
+    s.maxConnections = MAX_CONNECTIONS;
+    s.requestTimeout = 60_000;
+    s.on('connection', () => {
+      if (s.connections >= MAX_CONNECTIONS && Date.now() - connWarnAt > 10_000) {
+        connWarnAt = Date.now();
+        log('WARN', `连接数达上限 ${MAX_CONNECTIONS}，新连接将被拒绝`);
+      }
+    });
+  }
   const httpSrv = http.createServer(requestListener);
   const httpsSrv = tlsInfo
     ? https.createServer({ key: tlsInfo.keyPem, cert: tlsInfo.certPem, minVersion: 'TLSv1.2' }, requestListener)
@@ -4650,6 +4730,7 @@ export async function startServer(options = {}) {
     if (!s) continue;
     s.keepAliveTimeout = 30_000;
     s.headersTimeout = 31_000;
+    guardServer(s);
   }
   /**
    * 同一端口按首字节分流（0x16=TLS），这样管理页/旧客户端仍能走回环 HTTP，
@@ -4657,7 +4738,7 @@ export async function startServer(options = {}) {
    * 否则 TLS server 还没挂好监听就被恢复流动，握手会超时。
    */
   function makeSrv() {
-    return net.createServer((socket) => {
+    const srv = net.createServer((socket) => {
       socket.on('error', () => { /* 连接级错误不影响服务 */ });
       socket.once('data', (buf) => {
         if (!buf || !buf.length) { socket.destroy(); return; }
@@ -4668,6 +4749,8 @@ export async function startServer(options = {}) {
         process.nextTick(() => { try { socket.resume(); } catch { /* noop */ } });
       });
     });
+    guardServer(srv);
+    return srv;
   }
   /** R133 多业务端口：每端口一个分流器；状态 listening/paused/error（occupied）。 */
   const portStates = new Map(); // port → { srv, status, error }
@@ -4870,15 +4953,20 @@ export async function startServer(options = {}) {
   }
   /** 第二个实例只打开管理页就退出；先关掉日志流，否则 Windows 上可能一直挂着。 */
   /** R146：读托盘状态文件（fwarmy-tray.ps1 写），供管理页/health 显示诊断信息。PS 5.1 的 Set-Content -Encoding UTF8 带 BOM——读取时剥掉。 */
+  let trayCache = null; // R161：托盘状态 2s 缓存——health 热路径每请求同步读盘会阻塞事件循环（并发时放大）
   function trayStatus() {
+    const now = Date.now();
+    if (trayCache && now - trayCache.at < 2000) return trayCache.val;
+    let val = { status: 'unknown', error: '' };
     try {
       const f = path.join(DATA, 'tray-state.json');
       if (fs.existsSync(f)) {
         const j = JSON.parse(fs.readFileSync(f, 'utf8').replace(/^\uFEFF/, ''));
-        if (j && typeof j === 'object') return { status: String(j.status || 'unknown'), error: String(j.error || ''), at: Number(j.at) ? String(j.at) : '' };
+        if (j && typeof j === 'object') val = { status: String(j.status || 'unknown'), error: String(j.error || ''), at: Number(j.at) ? String(j.at) : '' };
       }
     } catch { /* noop */ }
-    return { status: 'unknown', error: '' };
+    trayCache = { at: now, val };
+    return val;
   }
   function finishAlreadyRunning(url) {
     if (url && opt.open !== false) openBrowser(url);
