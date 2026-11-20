@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.28';
+export const VERSION = '0.7.29';
 
 /** R153：内置公用中继凭据——所有 FWArmy 出厂默认携带，明文显示在管理页（点击可查看完整/复制）；其余自创凭据仍只存 sha256 不可回看。 */
 const BUILTIN_CREDENTIALS = [
@@ -1367,17 +1367,28 @@ export async function startServer(options = {}) {
     ['ipv6.icanhazip.com', '/'],         // 纯文本
   ];
   /** R158：单端点探测——强制 family 直连与系统栈 fetch 并行竞速（任一成功即用）。
-   * 原实现串行（直连 4s 超时后才 fetch 回退 4s）：慢速 IPv6 路径（隧道/NAT64）两次都超时 → v6 显示【无】。 */
+   * 原实现串行（直连 4s 超时后才 fetch 回退 4s）：慢速 IPv6 路径（隧道/NAT64）两次都超时 → v6 显示【无】。
+   * R159：严格按 family 过滤返回 IP——双栈机器上 fetch 系统栈可能走错 family（连 api4 却经 IPv6 返回 v6），
+   * 旧逻辑未校验 family 导致「双栈时只显示 v6、v4 显示无」。 */
   async function probeOne(host, path, family, parseJson) {
+    const isV4 = (s) => { const p = String(s).split('.'); return p.length === 4 && p.every((x) => x !== '' && !isNaN(Number(x)) && Number(x) >= 0 && Number(x) <= 255); };
+    const isV6 = (s) => /^[0-9a-fA-F:]+$/.test(String(s)) && String(s).includes(':') && !isV4(s);
     const results = await Promise.all([
       httpsGetFixedFamily(host, path, family, 5000),
       fetch(`https://${host}${path}`, { signal: AbortSignal.timeout(5000) }).then((r) => r.text()).catch(() => ''),
     ]);
-    const txt = results.find((x) => String(x || '').trim().length > 0) || '';
-    if (parseJson) {
-      try { return String((JSON.parse(txt) || {}).ip || '').trim(); } catch { return ''; }
+    for (const txt of results) {
+      if (!String(txt || '').trim()) continue;
+      let ip = '';
+      if (parseJson) {
+        try { ip = String((JSON.parse(txt) || {}).ip || '').trim(); } catch { continue; }
+      } else ip = txt.trim();
+      if (!ip) continue;
+      // R159：严格 family 过滤——返回 IP 的 family 必须与请求一致（防双栈走错出口污染另一族）
+      if (family === 4 && isV4(ip)) return ip;
+      if (family === 6 && isV6(ip)) return ip;
     }
-    return txt.trim();
+    return '';
   }
   async function probePublicIp() {
     // IPv4：多端点并行竞速（强制 IPv4 出口 + 系统栈），任一成功即停
