@@ -57,6 +57,8 @@ button:disabled{opacity:.45;cursor:not-allowed}
 button.sm{padding:5px 9px;font-size:12px}
 .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
 .tablewrap{overflow:auto;border:1px solid var(--line);border-radius:8px}
+.progress{width:100%;height:14px;background:#1a2230;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.progress-bar{height:100%;width:0;background:linear-gradient(90deg,#10b981,#22d3ee);transition:width .3s ease}
 table{border-collapse:collapse;width:100%;min-width:980px}
 th,td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;font-size:12.5px}
 th{color:var(--muted);font-weight:600;background:#131920;position:sticky;top:0;white-space:nowrap}
@@ -327,6 +329,10 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
       <button class="primary" id="updCheck" title="立即检查 GitHub Releases 是否有新版本" data-i18n="upd.checkBtn">检查更新</button>
       <button id="updInstall" title="下载新版本并替换重启（校验 SHA-256，失败自动回滚；队列非空时可能被拒绝）" data-i18n="upd.installBtn">下载并重启</button>
       <span class="muted" id="updMsg"></span>
+    </div>
+    <div id="updProgressWrap" hidden style="margin:10px 0;display:flex;flex-direction:column;gap:4px">
+      <div class="progress"><div class="progress-bar" id="updBar"></div></div>
+      <span class="muted" id="updPhase"></span>
     </div>
     <div class="hint" id="updHint"></div>
     <pre class="log" id="updNotes" style="max-height:260px" data-i18n="upd.notes">尚未检查更新。</pre>
@@ -2848,8 +2854,27 @@ $('#updInstall').addEventListener('click', async () => {
   b.disabled = true;
   const um = document.getElementById('updMsg');
   if (um) um.textContent = '开始下载并校验…';
+  // R158：进度条——安装请求异步发起，轮询 /api/admin/update 渲染服务端进度
+  const wrap = document.getElementById('updProgressWrap');
+  const bar = document.getElementById('updBar');
+  const phase = document.getElementById('updPhase');
+  const renderPr = (pr) => {
+    if (!wrap || !bar || !phase) return;
+    if (!pr || pr.pct == null) { wrap.hidden = true; return; }
+    wrap.hidden = false;
+    const pct = Math.max(0, Math.min(100, Number(pr.pct) || 0));
+    bar.style.width = pct + '%';
+    const phName = pr.phase === 'download' ? '下载' : pr.phase === 'verify' ? '校验' : pr.phase === 'extract' ? '解压' : pr.phase === 'stage' ? '暂存' : pr.phase === 'restart' ? '重启' : '安装';
+    phase.textContent = `${phName} ${pct}%${pr.detail ? ' · ' + pr.detail : ''}`;
+  };
+  const installP = api('/api/admin/update-install', { force: U.queue > 0 });
+  const progressTimer = setInterval(async () => {
+    try { const u = await api('/api/admin/update'); renderPr(u.progress); } catch { /* 服务重启中 */ }
+  }, 800);
   try {
-    await api('/api/admin/update-install', { force: U.queue > 0 });
+    await installP;
+    clearInterval(progressTimer);
+    if (wrap) wrap.hidden = true;
     toast(_t('toast.updateStarted'));
     for (let i = 0; i < 60; i++) {
       await new Promise((r) => setTimeout(r, 800));
@@ -2865,18 +2890,20 @@ $('#updInstall').addEventListener('click', async () => {
     }
     toast(_t('toast.waitTimeout'), true);
   } catch (e) {
+    clearInterval(progressTimer);
+    if (wrap) wrap.hidden = true;
     const m = String(e.message || '');
     if (m === 'already-latest') toast('已是最新版本');
     else if (m === 'update-pending-restart') toast(_t('toast.updating'));
     else toast(_t('toast.updateFailed') + m, true);
     b.disabled = false;
-    const um = document.getElementById('updMsg');
+    const um2 = document.getElementById('updMsg');
     // R153b：失败原因显示在「检测更新」右侧（含网络诊断提示）
-    if (um) {
+    if (um2) {
       const why = /fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|network/i.test(m)
         ? '（网络问题：检查本机能否访问 GitHub 与 assets CDN，防火墙/代理是否拦截）'
         : '';
-      um.textContent = `更新失败：${m}${why}`;
+      um2.textContent = `更新失败：${m}${why}`;
     }
     await loadUpdate();
   }

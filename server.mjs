@@ -46,7 +46,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.27';
+export const VERSION = '0.7.28';
 
 /** R153：内置公用中继凭据——所有 FWArmy 出厂默认携带，明文显示在管理页（点击可查看完整/复制）；其余自创凭据仍只存 sha256 不可回看。 */
 const BUILTIN_CREDENTIALS = [
@@ -1366,27 +1366,31 @@ export async function startServer(options = {}) {
     ['api6.ipify.org', '/?format=json'], // 纯 IPv6 端点
     ['ipv6.icanhazip.com', '/'],         // 纯文本
   ];
+  /** R158：单端点探测——强制 family 直连与系统栈 fetch 并行竞速（任一成功即用）。
+   * 原实现串行（直连 4s 超时后才 fetch 回退 4s）：慢速 IPv6 路径（隧道/NAT64）两次都超时 → v6 显示【无】。 */
+  async function probeOne(host, path, family, parseJson) {
+    const results = await Promise.all([
+      httpsGetFixedFamily(host, path, family, 5000),
+      fetch(`https://${host}${path}`, { signal: AbortSignal.timeout(5000) }).then((r) => r.text()).catch(() => ''),
+    ]);
+    const txt = results.find((x) => String(x || '').trim().length > 0) || '';
+    if (parseJson) {
+      try { return String((JSON.parse(txt) || {}).ip || '').trim(); } catch { return ''; }
+    }
+    return txt.trim();
+  }
   async function probePublicIp() {
-    // IPv4：强制 IPv4 出口 + 多端点回退（任一成功即停）；强制出口失败时回退系统栈 fetch（多网卡/隧道环境兜底）
+    // IPv4：多端点并行竞速（强制 IPv4 出口 + 系统栈），任一成功即停
     let v4 = '';
     for (const [host, path] of IPV4_ENDPOINTS) {
-      try {
-        let txt = await httpsGetFixedFamily(host, path, 4);
-        if (!txt) { const r = await fetch(`https://${host}${path}`, { signal: AbortSignal.timeout(4000) }).catch(() => null); txt = r ? await r.text().catch(() => '') : ''; }
-        const ip = (txt.includes('{') ? String((JSON.parse(txt) || {}).ip || '') : txt).trim();
-        if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) { v4 = ip; break; }
-      } catch { /* 下一端点 */ }
+      const ip = await probeOne(host, path, 4, true);
+      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) { v4 = ip; break; }
     }
-    // IPv6：多端点 + 强制 IPv6 出口优先；失败回退系统栈 fetch——多网卡机器（默认路由无 IPv6、WiFi 有）
-    // 强制直连会走默认路由超时，系统栈选路反而能通（R156 修复：0.7.24 起 v6 显示【无】的根因）
+    // IPv6：多端点并行竞速（强制 IPv6 出口 + 系统栈），任一成功即停
     let v6 = '';
     for (const [host, path] of IPV6_ENDPOINTS) {
-      try {
-        let txt = await httpsGetFixedFamily(host, path, 6);
-        if (!txt) { const r = await fetch(`https://${host}${path}`, { signal: AbortSignal.timeout(4000) }).catch(() => null); txt = r ? await r.text().catch(() => '') : ''; }
-        const ip = (txt.includes('{') ? String((JSON.parse(txt) || {}).ip || '') : txt).trim();
-        if (/^[0-9A-Fa-f:]+$/.test(ip) && ip.includes(':') && !/^\d+\.\d+\.\d+\.\d+$/.test(ip)) { v6 = ip; break; }
-      } catch { /* 下一端点 */ }
+      const ip = await probeOne(host, path, 6, path.includes('format=json'));
+      if (/^[0-9A-Fa-f:]+$/.test(ip) && ip.includes(':') && !/^\d+\.\d+\.\d+\.\d+$/.test(ip)) { v6 = ip; break; }
     }
     const v4b = v4 || v6; // 只有 v6 时也让默认地址可用
     lastPub = { ipv4: v4, ipv6: v6, at: Date.now(), via: v4 || v6 ? 'ipify' : 'none' };
@@ -2925,7 +2929,7 @@ export async function startServer(options = {}) {
 
   // ── 自动更新（只在单文件运行时可执行替换；源码运行只允许检查）──
   function emptyUpdate() {
-    return { auto: 'check', intervalHours: 6, lastCheck: 0, latest: null, lastError: '', lastInstall: null, triedVersion: '', triedAt: 0 };
+    return { auto: 'check', intervalHours: 6, lastCheck: 0, latest: null, lastError: '', lastInstall: null, triedVersion: '', triedAt: 0, progress: null };
   }
   function normUpdate(raw) {
     const o = emptyUpdate();
@@ -3044,6 +3048,7 @@ export async function startServer(options = {}) {
       staged: !!staged,
       queue: queuedTotal(),
       lastInstall: upd.lastInstall,
+      progress: upd.progress || null, // R158：下载/安装进度（前端进度条轮询）
     };
   }
   /** 更新源白名单：初始 URL 与每一跳重定向都必须过（F12）。Release 资产会 302 到 GitHub CDN。 */
@@ -3089,6 +3094,7 @@ export async function startServer(options = {}) {
   }
   async function fetchToFile(url, dest) {
     // R152：下载失败自动重试 3 次（网络瞬断/GitHub CDN 抖动常见；指数退避 2s/4s）
+    // R158：流式下载并更新 upd.progress（前端进度条轮询展示）
     let lastErr = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
@@ -3097,14 +3103,32 @@ export async function startServer(options = {}) {
           timeoutMs: 10 * 60_000,
         });
         if (!r.ok) throw new Error('HTTP ' + r.status);
+        const total = Number(r.headers.get('content-length')) || 0;
+        upd.progress = { phase: 'download', pct: 5, got: 0, total, detail: '下载中…' };
         if (!r.body) {
           fs.writeFileSync(dest, Buffer.from(await r.arrayBuffer()));
+          upd.progress = null;
           return;
         }
-        await pipeline(Readable.fromWeb(r.body), fs.createWriteStream(dest));
+        // R158：进度统计用 Transform 中间件（pipeline 单消费者，避免 on('data') 双消费竞争导致写入不完整）
+        const ws = fs.createWriteStream(dest);
+        const fmtB = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + 'MB' : Math.round(n / 1024) + 'KB');
+        let got = 0;
+        const counter = new Transform({
+          transform(chunk, _enc, cb) {
+            got += chunk.length;
+            if (total > 0 && got % (1 << 20) < 65536) {
+              upd.progress = { phase: 'download', pct: Math.min(80, 5 + Math.round((got / total) * 75)), got, total, detail: `下载中… ${fmtB(got)} / ${fmtB(total)}` };
+            }
+            cb(null, chunk);
+          },
+        });
+        await pipeline(Readable.fromWeb(r.body), counter, ws);
+        upd.progress = null;
         return;
       } catch (e) {
         lastErr = e;
+        upd.progress = null;
         if (attempt < 3) {
           log('WARN', `更新：下载第 ${attempt} 次失败（${String(e && e.message || e).slice(0, 120)}），${attempt * 2}s 后重试`);
           await sleep(attempt * 2000);
@@ -3253,7 +3277,9 @@ export async function startServer(options = {}) {
       fs.mkdirSync(work, { recursive: true });
       const archive = path.join(work, String(latest.asset.name).replace(/[\\/:*?"<>|]/g, '_'));
       log('INFO', `更新：下载 ${latest.version} ${latest.asset.name}`);
+      upd.progress = { phase: 'download', pct: 2, got: 0, total: 0, detail: '连接下载…' };
       await fetchToFile(latest.asset.url, archive);
+      upd.progress = { phase: 'verify', pct: 85, detail: '校验 SHA-256…' };
       if (latest.asset.size && fs.statSync(archive).size !== latest.asset.size) throw new Error('size-mismatch');
       let want = String(latest.asset.sha256 || '').toLowerCase();
       if (!want && latest.sumsUrl) {
@@ -3264,6 +3290,7 @@ export async function startServer(options = {}) {
       if (!want) throw new Error('sha256-missing');
       const got = await hashFile(archive);
       if (got !== want) throw new Error('sha256-mismatch');
+      upd.progress = { phase: 'extract', pct: 90, detail: '解压安装包…' };
       const extract = path.join(work, 'extract');
       fs.mkdirSync(extract, { recursive: true });
       // F12：解压前先列条目——拒绝绝对路径/盘符/上级逃逸/条目数爆炸（可离线用合成恶意包测试）。
@@ -3322,6 +3349,7 @@ export async function startServer(options = {}) {
       if (process.env.FWARMY_UPDATE_TEST !== '1' && !String(newVer.stdout).includes(`FWArmy ${latest.version}`)) {
         throw new Error('new-binary-version-mismatch');
       }
+      upd.progress = { phase: 'stage', pct: 95, detail: '暂存新程序…' };
       const staged = path.join(work, binName + '.new');
       fs.rmSync(staged, { force: true });
       fs.copyFileSync(found, staged);
@@ -3329,6 +3357,7 @@ export async function startServer(options = {}) {
       pendingUpdatePath = staged;
       log('INFO', `更新：已暂存 ${staged} exists=${fs.existsSync(staged)} size=${fs.existsSync(staged) ? fs.statSync(staged).size : 0}`);
       // F04：替换前排空队列并再次核对；成功标记只在新进程真正健康后由 applyUpdate 写。
+      upd.progress = { phase: 'restart', pct: 98, detail: '排空队列，准备重启…' };
       const drainDeadline = Date.now() + 35_000;
       while (queuedTotal() > 0 && Date.now() < drainDeadline) await sleep(500);
       if (!force && queuedTotal() > 0) throw new Error('queue-not-empty');
@@ -3343,6 +3372,7 @@ export async function startServer(options = {}) {
       updateFreeze = false;
       upd.lastError = msg;
       upd.lastInstall = { version: latest.version, at: Date.now(), ok: false, error: msg };
+      upd.progress = null; // R158：失败清除进度
       saveUpdate();
       log('WARN', '更新失败：' + msg);
       throw e;
