@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.33';
+export const VERSION = '0.7.34';
 
 /** R153：内置公用中继凭据——所有 FWArmy 出厂默认携带，明文显示在管理页（点击可查看完整/复制）；其余自创凭据仍只存 sha256 不可回看。 */
 const BUILTIN_CREDENTIALS = [
@@ -3283,10 +3283,11 @@ export async function startServer(options = {}) {
     return Object.values(creds).sort((a, b) => (a.createdAt === b.createdAt ? 0 : a.createdAt < b.createdAt ? 1 : -1));
   }
   function buildStats(u) {
-    // R153b：兜底——内置公用凭据惰性确保。仅在「语言已选定」或「首启弹窗已展示（含跳过）」后创建：
-    // 名称按创建时刻语言（cfg.lang || zh-CN），创建后不因换语言改名。首启弹窗未展示前不创建（等用户选定语言，
-    // 名称跟随所选语言）。
-    if (cfg.lang || cfg.langAsked) ensureBuiltinCredentials(cfg.lang || 'zh-CN');
+    // R153b：兜底——内置公用凭据惰性确保；名称按创建时刻语言（cfg.lang || zh-CN），创建后不因换语言改名。
+    // R168b：新实例（从未选语言/从未展示弹窗）也直接创建——否则浏览器已有旧语言记录时服务端 lang 永远为
+    // null/asked=false，内置公用凭据永不出现（中继页没有默认「公用/公用1」）。
+    // ensureBuiltinCredentials 幂等（已存在跳过；R167b 用户删除标记仍阻止补回）。
+    ensureBuiltinCredentials(cfg.lang || 'zh-CN');
     const page = adminPage(u);
     // R161：聚合缓存——record() 使全部失效；同分页 15s 窗口内重复查询直接返回（100k 表从 ~170ms → ~0ms）。
     const nowMs = Date.now();
