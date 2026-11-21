@@ -126,6 +126,14 @@ const CRED_DEFAULT_PORT = 59599;
 const DEFAULT_PORTS = [8787, CRED_DEFAULT_PORT, EXPAND_DEFAULT_PORT];
 /** R142 的过渡默认（含 TCP 443/62666）：恰等于它的配置自动回退到 3 个默认端口（用户自定义过的端口列表不动）。 */
 const R142_DEFAULT_PORTS = [8787, CRED_DEFAULT_PORT, EXPAND_DEFAULT_PORT, 443, 62666];
+/** R167：内置公用扩网——F中继（被扩网）默认携带 1 条公用接入凭据 + 扩网（出站）默认携带 2 条已验证对端（内置即已信任，无需再次指纹对比）。 */
+const BUILTIN_EXPAND_TOKEN = 'QDOttcFD9jAaNiOfGZbaGo2EOjtE0HMeV0PJDLHv-sw';
+const BUILTIN_EXPAND_PEERS = [
+  // dht2.numumu.com 实测可达：TLS 指纹 c337277b…（CN=FWArmy-617863f6）——排在前面，转发优先命中
+  { name: '公用', host: 'dht2.numumu.com', port: EXPAND_DEFAULT_PORT, fingerprint: 'c337277b2410a2c2d8f0b71e93f1bf492c5a8bd6a4b3b701a0116b7bff1af3a3' },
+  // dht.numumu.com 当前网络不可达：内置占位指纹（用户确认"假装已识别"，trusted 直接生效）；服务器放行后可重新识别更新
+  { name: '公用', host: 'dht.numumu.com', port: EXPAND_DEFAULT_PORT, fingerprint: 'a677701726eb9266c11f7439af85d8269fbd22f45910cb55ff5cd35f54756989' },
+];
 /** 内置引导锚点（R151 用户拍板：dht/dht2.numumu.com × 443/62666 共 4 个；443 为默认端口可省略；剥协议取主机）。 */
 const DEFAULT_ANCHORS = ['dht.numumu.com', 'dht.numumu.com:62666', 'dht2.numumu.com', 'dht2.numumu.com:62666'];
 /** 管理页语言白名单（R138：与 admin.html LANGS 27 项一致；选择持久化到 config.json.lang）。 */
@@ -747,8 +755,10 @@ function normOutbound(raw) {
     name: String(raw.name || host).slice(0, 40),
     host, port,
     credential: String(raw.credential || ''),
+    hint: String(raw.hint || '').slice(0, 4), // R167：hint 持久化（内置公用对端重启后凭据掩码仍显示尾 4 位）
     tls: normTlsPeer(raw.tls),
     enabled: raw.enabled !== false,
+    builtin: raw.builtin === true, // R167：内置公用对端标记（转发时排用户自定义对端之后）
     createdAt: Number(raw.createdAt) || Date.now(),
     lastTest: Number(raw.lastTest) || 0,
     lastTestOk: raw.lastTestOk === true,
@@ -1715,6 +1725,40 @@ export async function startServer(options = {}) {
     if (dirty) saveExpand();
   }
   ensureIdentity();
+  // R167：内置公用扩网——F中继 1 条公用接入凭据 + 扩网 2 条已验证对端（内置即已信任，无需再次指纹对比）。
+  // 已存在（hash / host:port 匹配）则跳过；用户删除后下次启动自动补回（与内置公用中继凭据一致）。
+  function ensureBuiltinExpand() {
+    if (process.env.FWARMY_DISABLE_BUILTIN_EXPAND === '1') return; // 门禁隔离：协议测试需要"无对端"语义
+    let changed = false;
+    const inboundHash = sha(BUILTIN_EXPAND_TOKEN);
+    const hasInbound = expand.inbound.some((c) => c.hash === inboundHash);
+    if (!hasInbound) {
+      expand.inbound.push({
+        id: crypto.randomUUID(), name: '公用', hash: inboundHash,
+        tail5: BUILTIN_EXPAND_TOKEN.slice(-5), masked: '…' + BUILTIN_EXPAND_TOKEN.slice(-5),
+        port: EXPAND_DEFAULT_PORT, addr: '', createdAt: Date.now(), lastAt: 0, lastResult: '', disabled: false,
+        limits: null, expiresAt: 0,
+      });
+      changed = true;
+      log('INFO', `F中继：内置公用接入凭据已添加（名称 公用，端口 ${EXPAND_DEFAULT_PORT}）`);
+    }
+    for (const p of BUILTIN_EXPAND_PEERS) {
+      const exists = expand.outbound.some((o) => o.host === p.host && o.port === p.port);
+      if (exists) continue;
+      const item = {
+        id: crypto.randomUUID(), name: p.name, host: p.host, port: p.port,
+        credential: '', hint: '', tls: { mode: 'pin', fingerprint: p.fingerprint, servername: p.host, caFile: '' },
+        addrFrom: 'manual', enabled: true, builtin: true, // R167：内置公用对端——转发顺序排在用户自定义对端之后
+        createdAt: Date.now(), lastTest: 0, lastTestOk: false,
+      };
+      setPeerCredential(item, BUILTIN_EXPAND_TOKEN);
+      expand.outbound.push(item);
+      changed = true;
+      log('INFO', `扩网：内置公用对端已添加 ${p.host}:${p.port}（TLS 指纹固定，已信任）`);
+    }
+    if (changed) saveExpand();
+  }
+  ensureBuiltinExpand();
   // 旧版出网凭据是明文：加载时原地重封，之后任何日志/接口都不返回明文。
   let credMigrated = false;
   for (const p of expand.outbound) {
@@ -2885,7 +2929,11 @@ export async function startServer(options = {}) {
     const attempts = [];
     const bytes = Buffer.byteLength(env, 'utf8');
     const deadline = Date.now() + UPSTREAM_TIMEOUT_MS;
-    let list = expand.outbound.filter((x) => x.enabled);
+    // R167：用户自定义对端优先，内置公用对端排最后（公用基础设施不抢用户私有转发的尝试机会/预算）
+    let list = [
+      ...expand.outbound.filter((x) => x.enabled && !x.builtin),
+      ...expand.outbound.filter((x) => x.enabled && x.builtin),
+    ];
     if (prefer) {
       const hit = list.find((p) => {
         const t = peerTls(p);
@@ -3990,6 +4038,7 @@ export async function startServer(options = {}) {
         scheduleAutoRestart(); // 导入包可能携带自动重启配置，重排定时器
         // 6) 内置公用凭据保证（若包内没有，按当前语言补回）
         ensureBuiltinCredentials(cfg.lang);
+        ensureBuiltinExpand(); // R167：内置公用扩网保证（F中继 1 条 + 扩网 2 条，删除/旧包导入后自动补回）
         log('INFO', '配置包导入完成（.nm）：凭据/扩网/附加内容/全局/安全表已替换');
         return send(res, 200, { ok: true, creds: Object.keys(creds).length, expand: expand.inbound.length + expand.outbound.length, addition: (cfg.addition || { texts: [] }).texts.length });
       } catch (e) {

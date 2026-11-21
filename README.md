@@ -63,7 +63,7 @@ The built-in web console (27 UI languages) covers:
 
 - **Credentials** — create, rename, limit, pause, or delete; usage counters per credential.
 - **Ports** — manage the listening ports (relay, expansion, admin entry) and see their live status.
-- **Expansion** — connect several relays into a network; messages find their way between servers.
+- **Expansion** — connect several relays into a network; messages find their way between servers. Two built-in public peers (dht2.numumu.com / dht.numumu.com, port 58588, fingerprint-pinned and pre-trusted) ship with every install.
 - **Status** — public IP (IPv4/IPv6), online users, queued messages, throughput, uptime.
 - **Updates** — check and install new versions with a progress bar.
 - **Auto restart** — schedule periodic restarts (interval in hours, up to 100,000 h) with an optional exact next-restart time; after each restart the next time is recomputed from the interval.
