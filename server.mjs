@@ -997,6 +997,7 @@ export async function startServer(options = {}) {
   const EXPAND_FILE = path.join(DATA, 'expand.json');
   const SECURITY_FILE = path.join(DATA, 'security.json');
   const UPDATE_FILE = path.join(DATA, 'update.json');
+  const SUPPRESSED_FILE = path.join(DATA, 'suppressed-builtins.json'); // R167b：用户主动删除的内置公用项（删除后不再补回；不随 .nm 导入/更新清除）
   const TLS_DIR = path.join(DATA, 'tls');
   const STARTED = Date.now();
   let actualPort = 0;
@@ -1208,6 +1209,8 @@ export async function startServer(options = {}) {
     for (let i = 0; i < BUILTIN_CREDENTIALS.length; i++) {
       const b = BUILTIN_CREDENTIALS[i];
       const hash = sha(b.token);
+      // R167b：用户主动删除过该内置公用凭据 ⇒ 不再补回（重启/导入/更新都不会再出现）
+      if (suppressedBuiltins.relayCreds.includes(hash)) continue;
       const existing = hashIndex.get(hash);
       if (existing) {
         // R154b：升级兼容——已存在的内置条目补齐端点/限额（首次创建时可能没有这些字段）
@@ -1305,6 +1308,23 @@ export async function startServer(options = {}) {
   cfg.langAsked = !!(cfgRaw && cfgRaw.langAsked === true);
   // R153b：语言未定（首启弹窗未选）时不在启动创建内置公用凭据——等用户选定语言后再建（名称跟随首次语言）；
   // 老实例（cfg.lang 已有值）启动即建，名称 = 已选语言；已建后不因换语言改名。
+  // R167b：内置公用项删除标记（relayCreds=中继公用凭据哈希 / expandInbound=F中继公用凭证哈希 / expandPeers=host:port）
+  // 用户主动删除后写入，此后重启 / .nm 导入 / 更新都不再补回；全新安装无此文件 ⇒ 默认内置。
+  let suppressedBuiltins = { relayCreds: [], expandInbound: [], expandPeers: [] };
+  try {
+    const s = JSON.parse(fs.readFileSync(SUPPRESSED_FILE, 'utf8'));
+    if (s && typeof s === 'object') {
+      suppressedBuiltins = {
+        relayCreds: Array.isArray(s.relayCreds) ? s.relayCreds.map(String).filter((x) => /^[0-9a-f]{64}$/.test(x)) : [],
+        expandInbound: Array.isArray(s.expandInbound) ? s.expandInbound.map(String).filter((x) => /^[0-9a-f]{64}$/.test(x)) : [],
+        expandPeers: Array.isArray(s.expandPeers) ? s.expandPeers.map(String).filter(Boolean).slice(0, 64) : [],
+      };
+    }
+  } catch { /* 默认空 */ }
+  function saveSuppressedBuiltins() {
+    try { writeJsonAtomic(SUPPRESSED_FILE, suppressedBuiltins); return true; }
+    catch (e) { log('WARN', '写 suppressed-builtins.json 失败：' + (e && e.message || e)); return false; }
+  }
   if (cfg.lang) ensureBuiltinCredentials(cfg.lang);
   if (cfg.tls.mode === 'off') log('WARN', 'TLS 已关闭：业务凭据会以明文跨网传输，只建议在回环/VPN 内使用');
   const secret = createSecretBox(DATA);
@@ -1732,7 +1752,8 @@ export async function startServer(options = {}) {
     let changed = false;
     const inboundHash = sha(BUILTIN_EXPAND_TOKEN);
     const hasInbound = expand.inbound.some((c) => c.hash === inboundHash);
-    if (!hasInbound) {
+    // R167b：用户主动删除过该内置公用接入凭证 ⇒ 不再补回
+    if (!hasInbound && !suppressedBuiltins.expandInbound.includes(inboundHash)) {
       expand.inbound.push({
         id: crypto.randomUUID(), name: '公用', hash: inboundHash,
         tail5: BUILTIN_EXPAND_TOKEN.slice(-5), masked: '…' + BUILTIN_EXPAND_TOKEN.slice(-5),
@@ -1743,6 +1764,9 @@ export async function startServer(options = {}) {
       log('INFO', `F中继：内置公用接入凭据已添加（名称 公用，端口 ${EXPAND_DEFAULT_PORT}）`);
     }
     for (const p of BUILTIN_EXPAND_PEERS) {
+      const peerKey = `${p.host}:${p.port}`;
+      // R167b：用户主动删除过该内置公用对端 ⇒ 不再补回
+      if (suppressedBuiltins.expandPeers.includes(peerKey)) continue;
       const exists = expand.outbound.some((o) => o.host === p.host && o.port === p.port);
       if (exists) continue;
       const item = {
@@ -3996,6 +4020,8 @@ export async function startServer(options = {}) {
         for (const [id, raw] of Object.entries(pkg.credentials && pkg.credentials.items || {})) {
           const c = raw && typeof raw === 'object' ? { ...raw } : {};
           if (!c.hash || !/^[0-9a-f]{64}$/.test(String(c.hash))) continue;
+          // R167b：本机已删除的内置公用凭据 ⇒ 导入包携带也不复活
+          if (c.public === true && suppressedBuiltins.relayCreds.includes(String(c.hash))) continue;
           c.id = String(c.id || id); c.name = String(c.name || '未命名').slice(0, 40);
           c.hash8 = String(c.hash8 || String(c.hash).slice(0, 8));
           c.createdAt = String(c.createdAt || new Date().toISOString());
@@ -4009,7 +4035,12 @@ export async function startServer(options = {}) {
         // 2) 扩网（inbound/outbound/identity/stats）
         if (pkg.expand && typeof pkg.expand === 'object') {
           const ne = normExpand(pkg.expand);
-          if (ne && ne.identity && ne.identity.pub) { expand = ne; saveExpand(); }
+          if (ne && ne.identity && ne.identity.pub) {
+            // R167b：本机已删除的内置公用接入凭证/对端 ⇒ 导入包携带也不复活
+            ne.inbound = ne.inbound.filter((c) => !suppressedBuiltins.expandInbound.includes(c.hash));
+            ne.outbound = ne.outbound.filter((p) => !(p.builtin === true && suppressedBuiltins.expandPeers.includes(`${p.host}:${p.port}`)));
+            expand = ne; saveExpand();
+          }
         }
         // 3) 附加内容库
         if (pkg.addition && Array.isArray(pkg.addition.texts)) {
@@ -4187,6 +4218,14 @@ export async function startServer(options = {}) {
       if (i < 0) return send(res, 404, { ok: false, error: 'not-found' });
       const [removed] = expand.inbound.splice(i, 1);
       delete expand.stats.perInbound[removed.id];
+      // R167b：删除内置公用接入凭证 ⇒ 写删除标记，此后不再补回（重启/导入/更新都不会再出现）
+      if (removed.hash === sha(BUILTIN_EXPAND_TOKEN)) {
+        if (!suppressedBuiltins.expandInbound.includes(removed.hash)) {
+          suppressedBuiltins.expandInbound.push(removed.hash);
+          saveSuppressedBuiltins();
+        }
+        log('INFO', '被扩网：内置公用接入凭证已删除（已记录，不再自动补回）');
+      }
       if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' });
       log('INFO', `被扩网：删除接入凭据 ${removed.id.slice(0, 8)}`);
       return send(res, 200, { ok: true });
@@ -4271,6 +4310,15 @@ export async function startServer(options = {}) {
       const i = expand.outbound.findIndex((x) => x.id === String(j.id || ''));
       if (i < 0) return send(res, 404, { ok: false, error: 'not-found' });
       const [removed] = expand.outbound.splice(i, 1);
+      // R167b：删除内置公用对端 ⇒ 写删除标记，此后不再补回（重启/导入/更新都不会再出现）
+      const removedKey = `${removed.host}:${removed.port}`;
+      if (BUILTIN_EXPAND_PEERS.some((p) => `${p.host}:${p.port}` === removedKey)) {
+        if (!suppressedBuiltins.expandPeers.includes(removedKey)) {
+          suppressedBuiltins.expandPeers.push(removedKey);
+          saveSuppressedBuiltins();
+        }
+        log('INFO', `扩网：内置公用对端已删除 ${removedKey}（已记录，不再自动补回）`);
+      }
       if (!saveExpand()) return send(res, 500, { ok: false, error: 'persist-failed' });
       log('INFO', `扩网：移除 ${removed.name || removed.host}`);
       return send(res, 200, { ok: true });
@@ -4699,6 +4747,14 @@ export async function startServer(options = {}) {
       const c = findCred(j.id);
       if (!c) return send(res, 404, { ok: false, error: 'not-found' });
       if (String(j.confirmName || '') !== c.name) return send(res, 400, { ok: false, error: 'confirm-name-mismatch' });
+      // R167b：删除内置公用中继凭据 ⇒ 写删除标记，此后不再补回（重启/导入/更新都不会再出现）
+      if (BUILTIN_CREDENTIALS.some((b) => sha(b.token) === c.hash)) {
+        if (!suppressedBuiltins.relayCreds.includes(c.hash)) {
+          suppressedBuiltins.relayCreds.push(c.hash);
+          saveSuppressedBuiltins();
+        }
+        log('INFO', `删除内置公用凭据 ${c.name}（已记录，不再自动补回）`);
+      }
       delete creds[c.id];
       additionSeq.delete(c.id);
       const s = credStat(c); s.deletedAt = Date.now();
