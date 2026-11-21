@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.32';
+export const VERSION = '0.7.33';
 
 /** R153：内置公用中继凭据——所有 FWArmy 出厂默认携带，明文显示在管理页（点击可查看完整/复制）；其余自创凭据仍只存 sha256 不可回看。 */
 const BUILTIN_CREDENTIALS = [
