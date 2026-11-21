@@ -83,7 +83,7 @@ const SELF_FILE = (() => {
 const HERE = SELF_FILE ? path.dirname(SELF_FILE) : (IS_SEA ? path.dirname(process.execPath) : process.cwd());
 /** 单文件运行时，数据目录跟随可执行文件；源码运行时跟随本文件。 */
 const APP_DIR = IS_SEA ? path.dirname(process.execPath) : HERE;
-export const VERSION = '0.7.34';
+export const VERSION = '0.7.35';
 
 /** R153：内置公用中继凭据——所有 FWArmy 出厂默认携带，明文显示在管理页（点击可查看完整/复制）；其余自创凭据仍只存 sha256 不可回看。 */
 const BUILTIN_CREDENTIALS = [
@@ -129,10 +129,10 @@ const R142_DEFAULT_PORTS = [8787, CRED_DEFAULT_PORT, EXPAND_DEFAULT_PORT, 443, 6
 /** R167：内置公用扩网——F中继（被扩网）默认携带 1 条公用接入凭据 + 扩网（出站）默认携带 2 条已验证对端（内置即已信任，无需再次指纹对比）。 */
 const BUILTIN_EXPAND_TOKEN = 'QDOttcFD9jAaNiOfGZbaGo2EOjtE0HMeV0PJDLHv-sw';
 const BUILTIN_EXPAND_PEERS = [
-  // dht2.numumu.com 实测可达：TLS 指纹 c337277b…（CN=FWArmy-617863f6）——排在前面，转发优先命中
-  { name: '公用', host: 'dht2.numumu.com', port: EXPAND_DEFAULT_PORT, fingerprint: 'c337277b2410a2c2d8f0b71e93f1bf492c5a8bd6a4b3b701a0116b7bff1af3a3' },
-  // dht.numumu.com 当前网络不可达：内置占位指纹（用户确认"假装已识别"，trusted 直接生效）；服务器放行后可重新识别更新
-  { name: '公用', host: 'dht.numumu.com', port: EXPAND_DEFAULT_PORT, fingerprint: 'a677701726eb9266c11f7439af85d8269fbd22f45910cb55ff5cd35f54756989' },
+  // dht2.numumu.com 实测可达：TLS 指纹 a6e608b4…（0.7.34 重新部署后的新证书，CN=FWArmy-7786d5acb54b10e3）——排在前面，转发优先命中
+  { name: '公用', host: 'dht2.numumu.com', port: EXPAND_DEFAULT_PORT, fingerprint: 'a6e608b4b3cd5b1a0f8d9e169a197786917d5d866a55b14ffd533f23029292b6' },
+  // dht.numumu.com 用户提供实测指纹 5647e9…（重新部署后新证书；WiFi/有线均暂不可达，待服务器放行）
+  { name: '公用', host: 'dht.numumu.com', port: EXPAND_DEFAULT_PORT, fingerprint: '5647e9a05a7b9b0802827c2e5119ec07df6c1d9b80c0b86af0f0388b528af4d8' },
 ];
 /** 内置引导锚点（R151 用户拍板：dht/dht2.numumu.com × 443/62666 共 4 个；443 为默认端口可省略；剥协议取主机）。 */
 const DEFAULT_ANCHORS = ['dht.numumu.com', 'dht.numumu.com:62666', 'dht2.numumu.com', 'dht2.numumu.com:62666'];
