@@ -105,9 +105,12 @@ pre.log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;paddin
 <header>
   <div class="brand"><img src="assets/logo.svg" alt="FWArmy logo"><b>FWArmy</b><span data-i18n="app.tagline">WArmy专属服务器</span></div>
   <div class="hright">
-    <div class="pubip" id="pubIpBar" title="本机探测到的公网 IP（IPv6 优先）。点击重新探测">
-      <span class="ico" id="pubIpIco">⟳</span>
-      <span id="pubIpText"></span><!-- R157：无 data-i18n——renderPubIp 全权负责文本；applyI18n 会替换首文本节点导致「检测中…」混入显示 -->
+    <div class="hrow" style="gap:8px">
+      <button class="sm" id="feedbackBtn" data-i18n="btn.feedback" title="在 GitHub 上反馈问题或建议（打开项目 Issues 页面）">反馈建议</button>
+      <div class="pubip" id="pubIpBar" title="本机探测到的公网 IP（IPv6 优先）。点击重新探测">
+        <span class="ico" id="pubIpIco">⟳</span>
+        <span id="pubIpText"></span><!-- R157：无 data-i18n——renderPubIp 全权负责文本；applyI18n 会替换首文本节点导致「检测中…」混入显示 -->
+      </div>
     </div>
     <div class="hrow">
       <div class="pills"><div class="pills" id="pills"></div><button id="powerBtn" class="good" disabled data-i18n="power.loading">加载状态…</button></div>
@@ -596,7 +599,7 @@ document.addEventListener('DOMContentLoaded', () => {
 /* ── 翻译表：zh-CN 为基准；en-US/zh-TW 完整；其余语言核心键同源翻译，缺失回退 en-US ── */
 const I18N = {
 'zh-CN': {
-'app.tagline':'WArmy专属服务器','foot.note':'WArmy专属服务器，和 WArmy 主应用分开安装。数据目录：','lang.title':'选择语言 / Choose language','btn.ok':'确定','btn.cancel':'取消','btn.save':'保存','btn.add':'添加','btn.copy':'复制','btn.close':'关闭','btn.delete':'删除','btn.generate':'生成凭据','btn.refresh':'刷新','btn.help':'帮助',
+'app.tagline':'WArmy专属服务器','foot.note':'WArmy专属服务器，和 WArmy 主应用分开安装。数据目录：','lang.title':'选择语言 / Choose language','btn.ok':'确定','btn.cancel':'取消','btn.save':'保存','btn.add':'添加','btn.copy':'复制','btn.close':'关闭','btn.delete':'删除','btn.generate':'生成凭据','btn.refresh':'刷新','btn.help':'帮助','btn.feedback':'反馈建议',
 'tab.relay':'中继','tab.frelay':'F中继','tab.expand':'扩网','tab.dht':'DHT 组网','tab.logs':'日志','tab.update':'更新','tab.ports':'端口',
 'pubip.detecting':'公网 IP：检测中…','pubip.probing':'公网 IP：探测中…','pubip.label':'公网 IP','pubip.none':'【无】','pubip.fail':'公网 IP：探测失败','power.loading':'加载状态…','power.running':'正在运行','power.stopped':'已停止',
 'pill.accepting':'接客中','pill.paused':'已暂停新投递','pill.online':'在线','pill.queue':'队列','pill.uptime':'运行','pill.update':'更新',
@@ -637,7 +640,7 @@ const I18N = {
 'ports.entryNote':'管理入口端口（不可暂停/删除，仅可更改）','ports.entryHint':'当前管理入口：{u}——更改后下次访问用新端口；旧端口继续作为普通业务端口监听。',
 },
 'en-US': {
-'app.tagline':'WArmy relay server','foot.note':'Dedicated relay server for WArmy, installed separately. Data:','lang.title':'Choose language','btn.ok':'OK','btn.cancel':'Cancel','btn.save':'Save','btn.add':'Add','btn.copy':'Copy','btn.close':'Close','btn.delete':'Delete','btn.generate':'Generate credential','btn.refresh':'Refresh','btn.help':'Help',
+'app.tagline':'WArmy relay server','foot.note':'Dedicated relay server for WArmy, installed separately. Data:','lang.title':'Choose language','btn.ok':'OK','btn.cancel':'Cancel','btn.save':'Save','btn.add':'Add','btn.copy':'Copy','btn.close':'Close','btn.delete':'Delete','btn.generate':'Generate credential','btn.refresh':'Refresh','btn.help':'Help','btn.feedback':'Feedback',
 'tab.relay':'Relay','tab.frelay':'F-relay','tab.expand':'Expand','tab.dht':'DHT network','tab.logs':'Logs','tab.update':'Update','tab.ports':'Ports',
 'pubip.detecting':'Public IP: detecting…','pubip.probing':'Public IP: probing…','pubip.label':'Public IP','pubip.none':'none','pubip.fail':'Public IP: probe failed','power.loading':'Loading…','power.running':'Running','power.stopped':'Stopped',
 'pill.accepting':'Accepting','pill.paused':'New deliveries paused','pill.online':'Online','pill.queue':'Queued','pill.uptime':'Uptime','pill.update':'Update',
@@ -678,7 +681,7 @@ const I18N = {
 'ports.entryNote':'Admin entry port (cannot pause/delete; change number only)','ports.entryHint':'Current admin entry: {u} — next visit uses the new port; the old port keeps listening as a normal business port.',
 },
 'zh-TW': {
-'app.tagline':'WArmy專屬伺服器','foot.note':'WArmy專屬伺服器，與 WArmy 主應用分開安裝。資料目錄：','lang.title':'選擇語言 / Choose language','btn.ok':'確定','btn.cancel':'取消','btn.save':'儲存','btn.add':'新增','btn.copy':'複製','btn.close':'關閉','btn.delete':'刪除','btn.generate':'產生憑證','btn.refresh':'重新整理','btn.help':'說明',
+'app.tagline':'WArmy專屬伺服器','foot.note':'WArmy專屬伺服器，與 WArmy 主應用分開安裝。資料目錄：','lang.title':'選擇語言 / Choose language','btn.ok':'確定','btn.cancel':'取消','btn.save':'儲存','btn.add':'新增','btn.copy':'複製','btn.close':'關閉','btn.delete':'刪除','btn.generate':'產生憑證','btn.refresh':'重新整理','btn.help':'說明','btn.feedback':'意見回饋',
 'tab.relay':'中繼','tab.frelay':'F中繼','tab.expand':'擴網','tab.dht':'DHT 組網','tab.logs':'日誌','tab.update':'更新','tab.ports':'連接埠',
 'pubip.detecting':'公網 IP：偵測中…','pubip.probing':'公網 IP：探測中…','power.loading':'載入狀態…','power.running':'執行中','power.stopped':'已停止',
 'firstrun.title':'舊版遺留憑證待儲存','firstrun.desc':'填入 WArmy 用戶端的「伺服器憑證」即可。明文僅在本機顯示；儲存後請按下方的按鈕，伺服器會刪除明文引導檔案。','firstrun.ack':'我已儲存，刪除明文',
@@ -1777,6 +1780,11 @@ function fillInGenHost() {
   }
 }
 $('#pubIpBar').addEventListener('click', () => refreshPublicIp(true));
+// 反馈建议：打开项目 GitHub Issues（新窗口）
+$('#feedbackBtn').addEventListener('click', () => {
+  try { window.open('https://github.com/Pondsi/FWArmy/issues', '_blank', 'noopener'); }
+  catch { toast('https://github.com/Pondsi/FWArmy/issues', false); }
+});
 // R135k/l：帮助文档——服务器导出到数据目录并用系统命令打开（file:// 本地路径，程序自行识别）；未连接服务器（静态预览）时直接打开同目录 help.html
 $('#helpBtn').addEventListener('click', async () => {
   try {
